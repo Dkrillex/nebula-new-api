@@ -121,8 +121,8 @@ const Home = () => {
                       </>
                     ) : (
                       <>
-                        统一的<br />
-                        <span className="shine-text">大模型接口网关</span>
+                        Nebula Data<br />
+                        <span className="shine-text">统一大模型接口网关</span>
                       </>
                     )}
                   </h1>
@@ -188,9 +188,9 @@ const Home = () => {
                     )
                   )}
                 </div>
-
+                {/* 20250811 cxx 这里先屏蔽掉不要显示 */}
                 {/* 框架兼容性图标 */}
-                <div className="mt-12 md:mt-16 lg:mt-20 w-full">
+                {/* <div className="mt-12 md:mt-16 lg:mt-20 w-full">
                   <div className="flex items-center mb-6 md:mb-8 justify-center">
                     <Text type="tertiary" className="text-lg md:text-xl lg:text-2xl font-light">
                       {t('支持众多的大模型供应商')}
@@ -261,7 +261,7 @@ const Home = () => {
                       <Typography.Text className="!text-lg sm:!text-xl md:!text-2xl lg:!text-3xl font-bold">30+</Typography.Text>
                     </div>
                   </div>
-                </div>
+                </div> */}
               </div>
             </div>
           </div>
