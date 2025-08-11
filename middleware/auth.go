@@ -171,6 +171,64 @@ func WssAuth(c *gin.Context) {
 
 }
 
+// SystemAccessTokenAuth 用于验证系统访问令牌的中间件
+func SystemAccessTokenAuth() func(c *gin.Context) {
+	return func(c *gin.Context) {
+		// 从Authorization头获取访问令牌
+		accessToken := c.Request.Header.Get("Authorization")
+		if accessToken == "" {
+			c.JSON(http.StatusUnauthorized, gin.H{
+				"success": false,
+				"message": "无权进行此操作，未提供 access token",
+			})
+			c.Abort()
+			return
+		}
+
+		// 验证访问令牌
+		user := model.ValidateAccessToken(accessToken)
+		if user == nil || user.Username == "" {
+			c.JSON(http.StatusUnauthorized, gin.H{
+				"success": false,
+				"message": "无权进行此操作，access token 无效",
+			})
+			c.Abort()
+			return
+		}
+
+		// 检查用户状态
+		if user.Status == common.UserStatusDisabled {
+			c.JSON(http.StatusForbidden, gin.H{
+				"success": false,
+				"message": "用户已被封禁",
+			})
+			c.Abort()
+			return
+		}
+
+		// 设置上下文信息
+		c.Set("id", user.Id)
+		c.Set("username", user.Username)
+		c.Set("role", user.Role)
+		c.Set("use_access_token", true)
+
+		// 获取用户缓存
+		userCache, err := model.GetUserCache(user.Id)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{
+				"success": false,
+				"message": err.Error(),
+			})
+			c.Abort()
+			return
+		}
+
+		userCache.WriteContext(c)
+		c.Next()
+	}
+}
+
+// TokenAuth 用于验证API访问令牌的中间件
 func TokenAuth() func(c *gin.Context) {
 	return func(c *gin.Context) {
 		// 先检测是否为ws

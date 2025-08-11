@@ -175,5 +175,14 @@ func SetApiRouter(router *gin.Engine) {
 			taskRoute.GET("/self", middleware.UserAuth(), controller.GetUserTask)
 			taskRoute.GET("/", middleware.AdminAuth(), controller.GetAllTask)
 		}
+
+		// 外部系统同步路由 (使用系统访问令牌验证)
+		syncSystemRoute := apiRouter.Group("/sync/system")
+		syncSystemRoute.Use(middleware.SystemAccessTokenAuth())
+		{
+			syncSystemRoute.POST("/user", controller.SyncUser)
+			syncSystemRoute.POST("/token", controller.SyncGenerateAccessToken)
+			syncSystemRoute.POST("/token/update", controller.SyncUpdateTokenStatus)
+		}
 	}
 }
