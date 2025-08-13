@@ -5,6 +5,7 @@ import (
 	"one-api/common"
 	"one-api/model"
 	"strconv"
+	"time"
 
 	"github.com/gin-gonic/gin"
 )
@@ -285,10 +286,18 @@ func SyncGetUserInfo(c *gin.Context) {
 // @Param channel query int false "通道ID"
 // @Param group query string false "分组"
 // @Param user_id query int false "用户ID"
-// @Success 200 {object} common.Response{data=model.PageInfo{items=[]model.Log}}
+// @Success 200 {object} common.Response{data=model.PageInfo{items=[]LogWithExtra}}
 // @Failure 400 {object} common.Response{message=string}
 // @Failure 500 {object} common.Response{message=string}
 // @Router /api/sync/system/log [get]
+
+type LogWithExtra struct {
+	model.Log
+	CreateTime  string  `json:"createTime"`
+	QuotaDollar float64 `json:"quota_dollar"`
+	QuotaRmb    float64 `json:"quota_rmb"`
+}
+
 func SyncGetLogs(c *gin.Context) {
 	pageInfo := common.GetPageQuery(c)
 	logType, _ := strconv.Atoi(c.Query("type"))
@@ -306,8 +315,24 @@ func SyncGetLogs(c *gin.Context) {
 		common.ApiError(c, err)
 		return
 	}
+
+	// 转换日志列表，添加额外字段
+	extraLogs := make([]*LogWithExtra, len(logs))
+	for i, log := range logs {
+		extraLog := &LogWithExtra{
+			Log: *log,
+		}
+		// 格式化时间戳为yyyy-MM-dd HH:mm:ss
+		extraLog.CreateTime = time.Unix(log.CreatedAt, 0).Format("2006-01-02 15:04:05")
+		// 计算quota_dollar (500000 quota = 1美元)
+		extraLog.QuotaDollar = float64(log.Quota) / 500000
+		// 计算quota_rmb (美元汇率7.3)
+		extraLog.QuotaRmb = extraLog.QuotaDollar * 7.3
+		extraLogs[i] = extraLog
+	}
+
 	pageInfo.SetTotal(int(total))
-	pageInfo.SetItems(logs)
+	pageInfo.SetItems(extraLogs)
 	common.ApiSuccess(c, pageInfo)
 	return
 }
