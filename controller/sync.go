@@ -197,22 +197,16 @@ func SyncGetUserInfo(c *gin.Context) {
 	var userId int64
 	var err error
 	if userIdStr == "" {
-		// 如果查询参数为空，尝试从请求体获取
-		var req struct {
-			UserId int64 `json:"user_id"`
-		}
-		if err := c.ShouldBindJSON(&req); err != nil {
-			c.JSON(http.StatusBadRequest, gin.H{
-				"success": false,
-				"message": "无效的用户ID: 请通过查询参数或JSON请求体提供有效的user_id",
-			})
-			return
-		}
-		userId = req.UserId
+		c.JSON(http.StatusBadRequest, gin.H{
+			"success": false,
+			"message": "无效的用户ID: 请通过查询参数提供有效的user_id",
+		})
+		return
 	} else {
 		// 从查询参数解析user_id
-		_, err := strconv.ParseInt(userIdStr, 10, 64)
-		if err != nil {
+		var parseErr error
+		userId, parseErr = strconv.ParseInt(userIdStr, 10, 64)
+		if parseErr != nil {
 			c.JSON(http.StatusBadRequest, gin.H{
 				"success": false,
 				"message": "无效的用户ID: 必须是有效的整数",
@@ -230,7 +224,7 @@ func SyncGetUserInfo(c *gin.Context) {
 	}
 
 	// 查询用户信息
-	user, err := model.GetUserById(int64(userId), false)
+	user, err := model.GetUserById(userId, false)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{
 			"success": false,
