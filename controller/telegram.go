@@ -41,7 +41,7 @@ func TelegramBind(c *gin.Context) {
 
 	session := sessions.Default(c)
 	id := session.Get("id")
-	user := model.User{Id: id.(int)}
+	user := model.User{Id: int64(id.(int))}
 	if err := user.FillUserById(); err != nil {
 		c.JSON(200, gin.H{
 			"message": err.Error(),

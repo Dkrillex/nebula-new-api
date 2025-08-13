@@ -26,7 +26,7 @@ type Task struct {
 	UpdatedAt  int64                 `json:"updated_at"`
 	TaskID     string                `json:"task_id" gorm:"type:varchar(50);index"`  // 第三方id，不一定有/ song id\ Task id
 	Platform   constant.TaskPlatform `json:"platform" gorm:"type:varchar(30);index"` // 平台
-	UserId     int                   `json:"user_id" gorm:"index"`
+	UserId     int64                 `json:"user_id" gorm:"index"`
 	ChannelId  int                   `json:"channel_id" gorm:"index"`
 	Quota      int                   `json:"quota"`
 	Action     string                `json:"action" gorm:"type:varchar(40);index"` // 任务类型, song, lyrics, description-mode
@@ -89,7 +89,7 @@ func InitTask(platform constant.TaskPlatform, relayInfo *commonRelay.TaskRelayIn
 	return t
 }
 
-func TaskGetAllUserTask(userId int, startIdx int, num int, queryParams SyncTaskQueryParams) []*Task {
+func TaskGetAllUserTask(userId int64, startIdx int, num int, queryParams SyncTaskQueryParams) []*Task {
 	var tasks []*Task
 	var err error
 
@@ -195,7 +195,7 @@ func GetByOnlyTaskId(taskId string) (*Task, bool, error) {
 	return task, exist, err
 }
 
-func GetByTaskId(userId int, taskId string) (*Task, bool, error) {
+func GetByTaskId(userId int64, taskId string) (*Task, bool, error) {
 	if taskId == "" {
 		return nil, false, nil
 	}
@@ -210,7 +210,7 @@ func GetByTaskId(userId int, taskId string) (*Task, bool, error) {
 	return task, exist, err
 }
 
-func GetByTaskIds(userId int, taskIds []any) ([]*Task, error) {
+func GetByTaskIds(userId int64, taskIds []any) ([]*Task, error) {
 	if len(taskIds) == 0 {
 		return nil, nil
 	}
@@ -339,7 +339,7 @@ func TaskCountAllTasks(queryParams SyncTaskQueryParams) int64 {
 }
 
 // TaskCountAllUserTask returns total tasks for given user
-func TaskCountAllUserTask(userId int, queryParams SyncTaskQueryParams) int64 {
+func TaskCountAllUserTask(userId int64, queryParams SyncTaskQueryParams) int64 {
 	var total int64
 	query := DB.Model(&Task{}).Where("user_id = ?", userId)
 	if queryParams.TaskID != "" {

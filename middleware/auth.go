@@ -76,7 +76,8 @@ func authHelper(c *gin.Context, minRole int) {
 		c.Abort()
 		return
 	}
-	apiUserId, err := strconv.Atoi(apiUserIdStr)
+	// 使用ParseInt处理可能的大整数ID
+	apiUserId, err := strconv.ParseInt(apiUserIdStr, 10, 64)
 	if err != nil {
 		c.JSON(http.StatusUnauthorized, gin.H{
 			"success": false,
@@ -86,7 +87,8 @@ func authHelper(c *gin.Context, minRole int) {
 		return
 
 	}
-	if id != apiUserId {
+	// 确保比较时类型一致
+	if id.(int64) != apiUserId {
 		c.JSON(http.StatusUnauthorized, gin.H{
 			"success": false,
 			"message": "无权进行此操作，New-Api-User 与登录用户不匹配",
@@ -124,7 +126,7 @@ func authHelper(c *gin.Context, minRole int) {
 	c.Set("group", session.Get("group"))
 	c.Set("use_access_token", useAccessToken)
 
-	//userCache, err := model.GetUserCache(id.(int))
+	//userCache, err := model.GetUserCache(int(id.(int64)))
 	//if err != nil {
 	//	c.JSON(http.StatusOK, gin.H{
 	//		"success": false,
@@ -282,7 +284,7 @@ func TokenAuth() func(c *gin.Context) {
 		}
 		token, err := model.ValidateUserToken(key)
 		if token != nil {
-			id := c.GetInt("id")
+			id := c.GetInt64("id")
 			if id == 0 {
 				c.Set("id", token.UserId)
 			}

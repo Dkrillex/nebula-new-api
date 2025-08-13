@@ -18,7 +18,7 @@ func GetAllLogs(c *gin.Context) {
 	tokenName := c.Query("token_name")
 	modelName := c.Query("model_name")
 	channel, _ := strconv.Atoi(c.Query("channel"))
-	userId, _ := strconv.Atoi(c.Query("user_id"))
+	userId, _ := strconv.ParseInt(c.Query("user_id"), 10, 64)
 	group := c.Query("group")
 	logs, total, err := model.GetAllLogs(logType, startTimestamp, endTimestamp, modelName, username, tokenName, pageInfo.GetStartIdx(), pageInfo.GetPageSize(), channel, group, userId)
 	if err != nil {
@@ -33,7 +33,7 @@ func GetAllLogs(c *gin.Context) {
 
 func GetUserLogs(c *gin.Context) {
 	pageInfo := common.GetPageQuery(c)
-	userId := c.GetInt("id")
+	userId := c.GetInt64("id")
 	logType, _ := strconv.Atoi(c.Query("type"))
 	startTimestamp, _ := strconv.ParseInt(c.Query("start_timestamp"), 10, 64)
 	endTimestamp, _ := strconv.ParseInt(c.Query("end_timestamp"), 10, 64)
@@ -68,7 +68,7 @@ func SearchAllLogs(c *gin.Context) {
 
 func SearchUserLogs(c *gin.Context) {
 	keyword := c.Query("keyword")
-	userId := c.GetInt("id")
+	userId := c.GetInt64("id")
 	logs, err := model.SearchUserLogs(userId, keyword)
 	if err != nil {
 		common.ApiError(c, err)

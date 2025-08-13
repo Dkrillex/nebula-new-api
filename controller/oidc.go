@@ -208,7 +208,7 @@ func OidcBind(c *gin.Context) {
 	session := sessions.Default(c)
 	id := session.Get("id")
 	// id := c.GetInt("id")  // critical bug!
-	user.Id = id.(int)
+	user.Id = int64(id.(int))
 	err = user.FillUserById()
 	if err != nil {
 		common.ApiError(c, err)

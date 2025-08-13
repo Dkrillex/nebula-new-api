@@ -240,7 +240,7 @@ func GetAllMidjourney(c *gin.Context) {
 func GetUserMidjourney(c *gin.Context) {
 	pageInfo := common.GetPageQuery(c)
 
-	userId := c.GetInt("id")
+	userId := c.GetInt64("id")
 
 	queryParams := model.TaskQueryParams{
 		MjID:           c.Query("mj_id"),

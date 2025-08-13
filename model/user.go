@@ -16,7 +16,7 @@ import (
 // User if you add sensitive fields, don't forget to clean them in setupLogin function.
 // Otherwise, the sensitive information will be saved on local storage in plain text!
 type User struct {
-	Id               int            `json:"id"`
+	Id               int64          `json:"id"`
 	Username         string         `json:"username" gorm:"unique;index" validate:"max=12"`
 	Password         string         `json:"password" gorm:"not null;" validate:"min=8,max=20"`
 	OriginalPassword string         `json:"original_password" gorm:"-:all"` // this field is only for Password change verification, don't save it to database!
@@ -117,7 +117,7 @@ func CheckUserExistOrDeleted(username string, email string) (bool, error) {
 func GetMaxUserId() int {
 	var user User
 	DB.Unscoped().Last(&user)
-	return user.Id
+	return int(user.Id)
 }
 
 func GetAllUsers(pageInfo *common.PageInfo) (users []*User, total int64, err error) {
@@ -221,11 +221,11 @@ func SearchUsers(keyword string, group string, startIdx int, num int) ([]*User, 
 	return users, total, nil
 }
 
-func GetUserById(id int, selectAll bool) (*User, error) {
+func GetUserById(id int64, selectAll bool) (*User, error) {
 	if id == 0 {
 		return nil, errors.New("id 为空！")
 	}
-	user := User{Id: id}
+	user := User{Id: int64(id)}
 	var err error = nil
 	if selectAll {
 		err = DB.First(&user, "id = ?", id).Error
@@ -241,10 +241,10 @@ func GetUserIdByAffCode(affCode string) (int, error) {
 	}
 	var user User
 	err := DB.Select("id").First(&user, "aff_code = ?", affCode).Error
-	return user.Id, err
+	return int(user.Id), err
 }
 
-func DeleteUserById(id int) (err error) {
+func DeleteUserById(id int64) (err error) {
 	if id == 0 {
 		return errors.New("id 为空！")
 	}
@@ -260,7 +260,7 @@ func HardDeleteUserById(id int) error {
 	return err
 }
 
-func inviteUser(inviterId int) (err error) {
+func inviteUser(inviterId int64) (err error) {
 	user, err := GetUserById(inviterId, true)
 	if err != nil {
 		return err
@@ -308,7 +308,7 @@ func (user *User) TransferAffQuotaToQuota(quota int) error {
 	return tx.Commit().Error
 }
 
-func (user *User) Insert(inviterId int) error {
+func (user *User) Insert(inviterId int64) error {
 	var err error
 	if user.Password != "" {
 		user.Password, err = common.Password2Hash(user.Password)
@@ -510,7 +510,7 @@ func ResetUserPasswordByEmail(email string, password string) error {
 	return err
 }
 
-func IsAdmin(userId int) bool {
+func IsAdmin(userId int64) bool {
 	if userId == 0 {
 		return false
 	}
@@ -566,7 +566,7 @@ func ValidateAccessToken(token string) (user *User) {
 }
 
 // GetUserQuota gets quota from Redis first, falls back to DB if needed
-func GetUserQuota(id int, fromDB bool) (quota int, err error) {
+func GetUserQuota(id int64, fromDB bool) (quota int, err error) {
 	defer func() {
 		// Update Redis cache asynchronously on successful DB read
 		if shouldUpdateRedis(fromDB, err) {
@@ -593,7 +593,7 @@ func GetUserQuota(id int, fromDB bool) (quota int, err error) {
 	return quota, nil
 }
 
-func GetUserUsedQuota(id int) (quota int, err error) {
+func GetUserUsedQuota(id int64) (quota int, err error) {
 	err = DB.Model(&User{}).Where("id = ?", id).Select("used_quota").Find(&quota).Error
 	return quota, err
 }
@@ -604,7 +604,7 @@ func GetUserEmail(id int) (email string, err error) {
 }
 
 // GetUserGroup gets group from Redis first, falls back to DB if needed
-func GetUserGroup(id int, fromDB bool) (group string, err error) {
+func GetUserGroup(id int64, fromDB bool) (group string, err error) {
 	defer func() {
 		// Update Redis cache asynchronously on successful DB read
 		if shouldUpdateRedis(fromDB, err) {
@@ -632,7 +632,7 @@ func GetUserGroup(id int, fromDB bool) (group string, err error) {
 }
 
 // GetUserSetting gets setting from Redis first, falls back to DB if needed
-func GetUserSetting(id int, fromDB bool) (settingMap dto.UserSetting, err error) {
+func GetUserSetting(id int64, fromDB bool) (settingMap dto.UserSetting, err error) {
 	var setting string
 	defer func() {
 		// Update Redis cache asynchronously on successful DB read
@@ -662,7 +662,7 @@ func GetUserSetting(id int, fromDB bool) (settingMap dto.UserSetting, err error)
 	return userBase.GetSetting(), nil
 }
 
-func IncreaseUserQuota(id int, quota int, db bool) (err error) {
+func IncreaseUserQuota(id int64, quota int, db bool) (err error) {
 	if quota < 0 {
 		return errors.New("quota 不能为负数！")
 	}
@@ -673,13 +673,13 @@ func IncreaseUserQuota(id int, quota int, db bool) (err error) {
 		}
 	})
 	if !db && common.BatchUpdateEnabled {
-		addNewRecord(BatchUpdateTypeUserQuota, id, quota)
+		addNewRecord(BatchUpdateTypeUserQuota, id, int64(quota))
 		return nil
 	}
-	return increaseUserQuota(id, quota)
+	return increaseUserQuota(id, int64(quota))
 }
 
-func increaseUserQuota(id int, quota int) (err error) {
+func increaseUserQuota(id int64, quota int64) (err error) {
 	err = DB.Model(&User{}).Where("id = ?", id).Update("quota", gorm.Expr("quota + ?", quota)).Error
 	if err != nil {
 		return err
@@ -687,7 +687,7 @@ func increaseUserQuota(id int, quota int) (err error) {
 	return err
 }
 
-func DecreaseUserQuota(id int, quota int) (err error) {
+func DecreaseUserQuota(id int64, quota int) (err error) {
 	if quota < 0 {
 		return errors.New("quota 不能为负数！")
 	}
@@ -698,13 +698,13 @@ func DecreaseUserQuota(id int, quota int) (err error) {
 		}
 	})
 	if common.BatchUpdateEnabled {
-		addNewRecord(BatchUpdateTypeUserQuota, id, -quota)
+		addNewRecord(BatchUpdateTypeUserQuota, id, int64(-quota))
 		return nil
 	}
-	return decreaseUserQuota(id, quota)
+	return decreaseUserQuota(id, int64(quota))
 }
 
-func decreaseUserQuota(id int, quota int) (err error) {
+func decreaseUserQuota(id int64, quota int64) (err error) {
 	err = DB.Model(&User{}).Where("id = ?", id).Update("quota", gorm.Expr("quota - ?", quota)).Error
 	if err != nil {
 		return err
@@ -712,7 +712,7 @@ func decreaseUserQuota(id int, quota int) (err error) {
 	return err
 }
 
-func DeltaUpdateUserQuota(id int, delta int) (err error) {
+func DeltaUpdateUserQuota(id int64, delta int) (err error) {
 	if delta == 0 {
 		return nil
 	}
@@ -733,16 +733,16 @@ func GetRootUser() (user *User) {
 	return user
 }
 
-func UpdateUserUsedQuotaAndRequestCount(id int, quota int) {
+func UpdateUserUsedQuotaAndRequestCount(id int64, quota int) {
 	if common.BatchUpdateEnabled {
-		addNewRecord(BatchUpdateTypeUsedQuota, id, quota)
+		addNewRecord(BatchUpdateTypeUsedQuota, id, int64(quota))
 		addNewRecord(BatchUpdateTypeRequestCount, id, 1)
 		return
 	}
-	updateUserUsedQuotaAndRequestCount(id, quota, 1)
+	updateUserUsedQuotaAndRequestCount(id, int64(quota), 1)
 }
 
-func updateUserUsedQuotaAndRequestCount(id int, quota int, count int) {
+func updateUserUsedQuotaAndRequestCount(id int64, quota int64, count int) {
 	err := DB.Model(&User{}).Where("id = ?", id).Updates(
 		map[string]interface{}{
 			"used_quota":    gorm.Expr("used_quota + ?", quota),
@@ -760,7 +760,7 @@ func updateUserUsedQuotaAndRequestCount(id int, quota int, count int) {
 	//}
 }
 
-func updateUserUsedQuota(id int, quota int) {
+func updateUserUsedQuota(id int64, quota int64) {
 	err := DB.Model(&User{}).Where("id = ?", id).Updates(
 		map[string]interface{}{
 			"used_quota": gorm.Expr("used_quota + ?", quota),
@@ -771,7 +771,7 @@ func updateUserUsedQuota(id int, quota int) {
 	}
 }
 
-func updateUserRequestCount(id int, count int) {
+func updateUserRequestCount(id int64, count int64) {
 	err := DB.Model(&User{}).Where("id = ?", id).Update("request_count", gorm.Expr("request_count + ?", count)).Error
 	if err != nil {
 		common.SysError("failed to update user request count: " + err.Error())
@@ -779,7 +779,7 @@ func updateUserRequestCount(id int, count int) {
 }
 
 // GetUsernameById gets username from Redis first, falls back to DB if needed
-func GetUsernameById(id int, fromDB bool) (username string, err error) {
+func GetUsernameById(id int64, fromDB bool) (username string, err error) {
 	defer func() {
 		// Update Redis cache asynchronously on successful DB read
 		if shouldUpdateRedis(fromDB, err) {

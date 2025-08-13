@@ -251,7 +251,7 @@ func GetAllTask(c *gin.Context) {
 func GetUserTask(c *gin.Context) {
 	pageInfo := common.GetPageQuery(c)
 
-	userId := c.GetInt("id")
+	userId := c.GetInt64("id")
 
 	startTimestamp, _ := strconv.ParseInt(c.Query("start_timestamp"), 10, 64)
 	endTimestamp, _ := strconv.ParseInt(c.Query("end_timestamp"), 10, 64)

@@ -38,9 +38,9 @@ export function getLogo() {
 
 export function getUserIdFromLocalStorage() {
   let user = localStorage.getItem('user');
-  if (!user) return -1;
+  if (!user) return '-1';
   user = JSON.parse(user);
-  return user.id;
+  return String(user.id);
 }
 
 export function getFooterHTML() {

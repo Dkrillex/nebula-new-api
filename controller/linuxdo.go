@@ -56,7 +56,7 @@ func LinuxDoBind(c *gin.Context) {
 
 	session := sessions.Default(c)
 	id := session.Get("id")
-	user.Id = id.(int)
+	user.Id = int64(id.(int))
 
 	err = user.FillUserById()
 	if err != nil {
@@ -231,7 +231,7 @@ func LinuxdoOAuth(c *gin.Context) {
 				inviterId, _ = model.GetUserIdByAffCode(affCode.(string))
 			}
 
-			if err := user.Insert(inviterId); err != nil {
+			if err := user.Insert(int64(inviterId)); err != nil {
 				c.JSON(http.StatusOK, gin.H{
 					"success": false,
 					"message": err.Error(),

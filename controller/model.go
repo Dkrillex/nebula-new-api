@@ -129,7 +129,7 @@ func ListModels(c *gin.Context) {
 			}
 		}
 	} else {
-		userId := c.GetInt("id")
+		userId := c.GetInt64("id")
 		userGroup, err := model.GetUserGroup(userId, false)
 		if err != nil {
 			c.JSON(http.StatusOK, gin.H{

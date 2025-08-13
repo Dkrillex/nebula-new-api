@@ -76,7 +76,7 @@ func recordRedisRequest(ctx context.Context, rdb *redis.Client, key string, maxC
 // Redis限流处理器
 func redisRateLimitHandler(duration int64, totalMaxCount, successMaxCount int) gin.HandlerFunc {
 	return func(c *gin.Context) {
-		userId := strconv.Itoa(c.GetInt("id"))
+		userId := strconv.FormatInt(c.GetInt64("id"), 10)
 		ctx := context.Background()
 		rdb := common.RDB
 
@@ -132,7 +132,7 @@ func memoryRateLimitHandler(duration int64, totalMaxCount, successMaxCount int) 
 	inMemoryRateLimiter.Init(time.Duration(setting.ModelRequestRateLimitDurationMinutes) * time.Minute)
 
 	return func(c *gin.Context) {
-		userId := strconv.Itoa(c.GetInt("id"))
+		userId := strconv.FormatInt(c.GetInt64("id"), 10)
 		totalKey := ModelRequestRateLimitCountMark + userId
 		successKey := ModelRequestRateLimitSuccessCountMark + userId
 

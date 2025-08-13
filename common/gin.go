@@ -2,12 +2,13 @@ package common
 
 import (
 	"bytes"
-	"github.com/gin-gonic/gin"
 	"io"
 	"net/http"
 	"one-api/constant"
 	"strings"
 	"time"
+
+	"github.com/gin-gonic/gin"
 )
 
 const KeyRequestBody = "key_request_body"
@@ -58,8 +59,8 @@ func GetContextKeyString(c *gin.Context, key constant.ContextKey) string {
 	return c.GetString(string(key))
 }
 
-func GetContextKeyInt(c *gin.Context, key constant.ContextKey) int {
-	return c.GetInt(string(key))
+func GetContextKeyInt(c *gin.Context, key constant.ContextKey) int64 {
+	return c.GetInt64(string(key))
 }
 
 func GetContextKeyBool(c *gin.Context, key constant.ContextKey) bool {

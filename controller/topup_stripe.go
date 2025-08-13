@@ -38,7 +38,7 @@ func (*StripeAdaptor) RequestAmount(c *gin.Context, req *StripePayRequest) {
 		c.JSON(200, gin.H{"message": "error", "data": fmt.Sprintf("充值数量不能小于 %d", getStripeMinTopup())})
 		return
 	}
-	id := c.GetInt("id")
+	id := c.GetInt64("id")
 	group, err := model.GetUserGroup(id, true)
 	if err != nil {
 		c.JSON(200, gin.H{"message": "error", "data": "获取用户分组失败"})
@@ -66,8 +66,8 @@ func (*StripeAdaptor) RequestPay(c *gin.Context, req *StripePayRequest) {
 		return
 	}
 
-	id := c.GetInt("id")
-	user, _ := model.GetUserById(id, false)
+	id := c.GetInt64("id")
+	user, _ := model.GetUserById(int64(id), false)
 	chargedMoney := GetChargedAmount(float64(req.Amount), *user)
 
 	reference := fmt.Sprintf("new-api-ref-%d-%d-%s", user.Id, time.Now().UnixMilli(), randstr.String(4))

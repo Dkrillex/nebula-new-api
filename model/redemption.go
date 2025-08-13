@@ -11,7 +11,7 @@ import (
 
 type Redemption struct {
 	Id           int            `json:"id"`
-	UserId       int            `json:"user_id"`
+	UserId       int64          `json:"user_id"`
 	Key          string         `json:"key" gorm:"type:char(32);uniqueIndex"`
 	Status       int            `json:"status" gorm:"default:1"`
 	Name         string         `json:"name" gorm:"index"`
@@ -19,7 +19,7 @@ type Redemption struct {
 	CreatedTime  int64          `json:"created_time" gorm:"bigint"`
 	RedeemedTime int64          `json:"redeemed_time" gorm:"bigint"`
 	Count        int            `json:"count" gorm:"-:all"` // only for api request
-	UsedUserId   int            `json:"used_user_id"`
+	UsedUserId   int64          `json:"used_user_id"`
 	DeletedAt    gorm.DeletedAt `gorm:"index"`
 	ExpiredTime  int64          `json:"expired_time" gorm:"bigint"` // 过期时间，0 表示不过期
 }
@@ -110,7 +110,7 @@ func GetRedemptionById(id int) (*Redemption, error) {
 	return &redemption, err
 }
 
-func Redeem(key string, userId int) (quota int, err error) {
+func Redeem(key string, userId int64) (quota int, err error) {
 	if key == "" {
 		return 0, errors.New("未提供兑换码")
 	}

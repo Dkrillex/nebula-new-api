@@ -173,7 +173,7 @@ func coverMidjourneyTaskDto(c *gin.Context, originTask *model.Midjourney) (midjo
 func RelaySwapFace(c *gin.Context) *dto.MidjourneyResponse {
 	startTime := time.Now().UnixNano() / int64(time.Millisecond)
 	tokenId := c.GetInt("token_id")
-	userId := c.GetInt("id")
+	userId := c.GetInt64("id")
 	//group := c.GetString("group")
 	channelId := c.GetInt("channel_id")
 	relayInfo := relaycommon.GenRelayInfo(c)
@@ -232,7 +232,7 @@ func RelaySwapFace(c *gin.Context) *dto.MidjourneyResponse {
 				Other:     other,
 			})
 			model.UpdateUserUsedQuotaAndRequestCount(userId, priceData.Quota)
-			model.UpdateChannelUsedQuota(channelId, priceData.Quota)
+			model.UpdateChannelUsedQuota(int64(channelId), priceData.Quota)
 		}
 	}()
 	midjResponse := &mjResp.Response
@@ -273,7 +273,7 @@ func RelaySwapFace(c *gin.Context) *dto.MidjourneyResponse {
 
 func RelayMidjourneyTaskImageSeed(c *gin.Context) *dto.MidjourneyResponse {
 	taskId := c.Param("id")
-	userId := c.GetInt("id")
+	userId := c.GetInt64("id")
 	originTask := model.GetByMJId(userId, taskId)
 	if originTask == nil {
 		return service.MidjourneyErrorWrapper(constant.MjRequestError, "task_no_found")
@@ -305,7 +305,7 @@ func RelayMidjourneyTaskImageSeed(c *gin.Context) *dto.MidjourneyResponse {
 }
 
 func RelayMidjourneyTask(c *gin.Context, relayMode int) *dto.MidjourneyResponse {
-	userId := c.GetInt("id")
+	userId := c.GetInt64("id")
 	var err error
 	var respBody []byte
 	switch relayMode {
@@ -373,7 +373,7 @@ func RelayMidjourneySubmit(c *gin.Context, relayMode int) *dto.MidjourneyRespons
 
 	//tokenId := c.GetInt("token_id")
 	//channelType := c.GetInt("channel")
-	userId := c.GetInt("id")
+	userId := c.GetInt64("id")
 	group := c.GetString("group")
 	channelId := c.GetInt("channel_id")
 	relayInfo := relaycommon.GenRelayInfo(c)
@@ -538,7 +538,7 @@ func RelayMidjourneySubmit(c *gin.Context, relayMode int) *dto.MidjourneyRespons
 				Other:     other,
 			})
 			model.UpdateUserUsedQuotaAndRequestCount(userId, priceData.Quota)
-			model.UpdateChannelUsedQuota(channelId, priceData.Quota)
+			model.UpdateChannelUsedQuota(int64(channelId), priceData.Quota)
 		}
 	}()
 

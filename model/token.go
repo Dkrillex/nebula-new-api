@@ -12,7 +12,7 @@ import (
 
 type Token struct {
 	Id                 int            `json:"id"`
-	UserId             int            `json:"user_id" gorm:"index"`
+	UserId             int64          `json:"user_id" gorm:"index"`
 	Key                string         `json:"key" gorm:"type:char(48);uniqueIndex"`
 	Status             int            `json:"status" gorm:"default:1"`
 	Name               string         `json:"name" gorm:"index" `
@@ -55,14 +55,14 @@ func (token *Token) GetIpLimitsMap() map[string]any {
 	return ipLimitsMap
 }
 
-func GetAllUserTokens(userId int, startIdx int, num int) ([]*Token, error) {
+func GetAllUserTokens(userId int64, startIdx int, num int) ([]*Token, error) {
 	var tokens []*Token
 	var err error
 	err = DB.Where("user_id = ?", userId).Order("id desc").Limit(num).Offset(startIdx).Find(&tokens).Error
 	return tokens, err
 }
 
-func SearchUserTokens(userId int, keyword string, token string) (tokens []*Token, err error) {
+func SearchUserTokens(userId int64, keyword string, token string) (tokens []*Token, err error) {
 	if token != "" {
 		token = strings.Trim(token, "sk-")
 	}
@@ -114,7 +114,7 @@ func ValidateUserToken(key string) (token *Token, err error) {
 	return nil, errors.New("无效的令牌")
 }
 
-func GetTokenByIds(id int, userId int) (*Token, error) {
+func GetTokenByIds(id int, userId int64) (*Token, error) {
 	if id == 0 || userId == 0 {
 		return nil, errors.New("id 或 userId 为空！")
 	}
@@ -248,7 +248,7 @@ func DisableModelLimits(tokenId int) error {
 	return token.Update()
 }
 
-func DeleteTokenById(id int, userId int) (err error) {
+func DeleteTokenById(id int, userId int64) (err error) {
 	// Why we need userId here? In case user want to delete other's token.
 	if id == 0 || userId == 0 {
 		return errors.New("id 或 userId 为空！")
@@ -261,7 +261,7 @@ func DeleteTokenById(id int, userId int) (err error) {
 	return token.Delete()
 }
 
-func IncreaseTokenQuota(id int, key string, quota int) (err error) {
+func IncreaseTokenQuota(id int64, key string, quota int64) (err error) {
 	if quota < 0 {
 		return errors.New("quota 不能为负数！")
 	}
@@ -280,7 +280,7 @@ func IncreaseTokenQuota(id int, key string, quota int) (err error) {
 	return increaseTokenQuota(id, quota)
 }
 
-func increaseTokenQuota(id int, quota int) (err error) {
+func increaseTokenQuota(id int64, quota int64) (err error) {
 	err = DB.Model(&Token{}).Where("id = ?", id).Updates(
 		map[string]interface{}{
 			"remain_quota":  gorm.Expr("remain_quota + ?", quota),
@@ -291,13 +291,13 @@ func increaseTokenQuota(id int, quota int) (err error) {
 	return err
 }
 
-func DecreaseTokenQuota(id int, key string, quota int) (err error) {
+func DecreaseTokenQuota(id int64, key string, quota int64) (err error) {
 	if quota < 0 {
 		return errors.New("quota 不能为负数！")
 	}
 	if common.RedisEnabled {
 		gopool.Go(func() {
-			err := cacheDecrTokenQuota(key, int64(quota))
+			err := cacheDecrTokenQuota(key, quota)
 			if err != nil {
 				common.SysError("failed to decrease token quota: " + err.Error())
 			}
@@ -310,7 +310,7 @@ func DecreaseTokenQuota(id int, key string, quota int) (err error) {
 	return decreaseTokenQuota(id, quota)
 }
 
-func decreaseTokenQuota(id int, quota int) (err error) {
+func decreaseTokenQuota(id int64, quota int64) (err error) {
 	err = DB.Model(&Token{}).Where("id = ?", id).Updates(
 		map[string]interface{}{
 			"remain_quota":  gorm.Expr("remain_quota - ?", quota),
@@ -322,14 +322,14 @@ func decreaseTokenQuota(id int, quota int) (err error) {
 }
 
 // CountUserTokens returns total number of tokens for the given user, used for pagination
-func CountUserTokens(userId int) (int64, error) {
+func CountUserTokens(userId int64) (int64, error) {
 	var total int64
 	err := DB.Model(&Token{}).Where("user_id = ?", userId).Count(&total).Error
 	return total, err
 }
 
 // BatchDeleteTokens 删除指定用户的一组令牌，返回成功删除数量
-func BatchDeleteTokens(ids []int, userId int) (int, error) {
+func BatchDeleteTokens(ids []int, userId int64) (int, error) {
 	if len(ids) == 0 {
 		return 0, errors.New("ids 不能为空！")
 	}

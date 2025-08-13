@@ -3,7 +3,7 @@ package model
 type Midjourney struct {
 	Id          int    `json:"id"`
 	Code        int    `json:"code"`
-	UserId      int    `json:"user_id" gorm:"index"`
+	UserId      int64  `json:"user_id" gorm:"index"`
 	Action      string `json:"action" gorm:"type:varchar(40);index"`
 	MjId        string `json:"mj_id" gorm:"index"`
 	Prompt      string `json:"prompt"`
@@ -33,7 +33,7 @@ type TaskQueryParams struct {
 	EndTimestamp   string
 }
 
-func GetAllUserTask(userId int, startIdx int, num int, queryParams TaskQueryParams) []*Midjourney {
+func GetAllUserTask(userId int64, startIdx int, num int, queryParams TaskQueryParams) []*Midjourney {
 	var tasks []*Midjourney
 	var err error
 
@@ -111,7 +111,7 @@ func GetByOnlyMJId(mjId string) *Midjourney {
 	return mj
 }
 
-func GetByMJId(userId int, mjId string) *Midjourney {
+func GetByMJId(userId int64, mjId string) *Midjourney {
 	var mj *Midjourney
 	var err error
 	err = DB.Where("user_id = ? and mj_id = ?", userId, mjId).First(&mj).Error
@@ -121,7 +121,7 @@ func GetByMJId(userId int, mjId string) *Midjourney {
 	return mj
 }
 
-func GetByMJIds(userId int, mjIds []string) []*Midjourney {
+func GetByMJIds(userId int64, mjIds []string) []*Midjourney {
 	var mj []*Midjourney
 	var err error
 	err = DB.Where("user_id = ? and mj_id in (?)", userId, mjIds).Find(&mj).Error
@@ -190,7 +190,7 @@ func CountAllTasks(queryParams TaskQueryParams) int64 {
 }
 
 // CountAllUserTask returns total midjourney tasks for user
-func CountAllUserTask(userId int, queryParams TaskQueryParams) int64 {
+func CountAllUserTask(userId int64, queryParams TaskQueryParams) int64 {
 	var total int64
 	query := DB.Model(&Midjourney{}).Where("user_id = ?", userId)
 	if queryParams.MjID != "" {

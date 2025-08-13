@@ -81,8 +81,18 @@ func setupLogin(user *model.User, c *gin.Context) {
 		})
 		return
 	}
-	cleanUser := model.User{
-		Id:          user.Id,
+	// 将用户ID转换为字符串以避免JavaScript精度问题
+	userIdStr := strconv.FormatInt(user.Id, 10)
+	fmt.Printf("转换后的用户ID: %s, 类型: %T\n", userIdStr, userIdStr)
+	cleanUser := struct {
+		Id          string `json:"id"`
+		Username    string `json:"username"`
+		DisplayName string `json:"display_name"`
+		Role        int    `json:"role"`
+		Status      int    `json:"status"`
+		Group       string `json:"group"`
+	}{
+		Id:          userIdStr,
 		Username:    user.Username,
 		DisplayName: user.DisplayName,
 		Role:        user.Role,
@@ -187,7 +197,7 @@ func Register(c *gin.Context) {
 	if common.EmailVerificationEnabled {
 		cleanUser.Email = user.Email
 	}
-	if err := cleanUser.Insert(inviterId); err != nil {
+	if err := cleanUser.Insert(int64(inviterId)); err != nil {
 		common.ApiError(c, err)
 		return
 	}
@@ -280,7 +290,7 @@ func GetUser(c *gin.Context) {
 		common.ApiError(c, err)
 		return
 	}
-	user, err := model.GetUserById(id, false)
+	user, err := model.GetUserById(int64(id), false)
 	if err != nil {
 		common.ApiError(c, err)
 		return
@@ -302,8 +312,8 @@ func GetUser(c *gin.Context) {
 }
 
 func GenerateAccessToken(c *gin.Context) {
-	id := c.GetInt("id")
-	user, err := model.GetUserById(id, true)
+	id := c.GetInt64("id")
+	user, err := model.GetUserById(int64(id), true)
 	if err != nil {
 		common.ApiError(c, err)
 		return
@@ -347,8 +357,8 @@ type TransferAffQuotaRequest struct {
 }
 
 func TransferAffQuota(c *gin.Context) {
-	id := c.GetInt("id")
-	user, err := model.GetUserById(id, true)
+	id := c.GetInt64("id")
+	user, err := model.GetUserById(int64(id), true)
 	if err != nil {
 		common.ApiError(c, err)
 		return
@@ -373,8 +383,8 @@ func TransferAffQuota(c *gin.Context) {
 }
 
 func GetAffCode(c *gin.Context) {
-	id := c.GetInt("id")
-	user, err := model.GetUserById(id, true)
+	id := c.GetInt64("id")
+	user, err := model.GetUserById(int64(id), true)
 	if err != nil {
 		common.ApiError(c, err)
 		return
@@ -398,7 +408,7 @@ func GetAffCode(c *gin.Context) {
 }
 
 func GetSelf(c *gin.Context) {
-	id := c.GetInt("id")
+	id := c.GetInt64("id")
 	user, err := model.GetUserById(id, false)
 	if err != nil {
 		common.ApiError(c, err)
@@ -416,9 +426,9 @@ func GetSelf(c *gin.Context) {
 }
 
 func GetUserModels(c *gin.Context) {
-	id, err := strconv.Atoi(c.Param("id"))
+	id, err := strconv.ParseInt(c.Param("id"), 10, 64)
 	if err != nil {
-		id = c.GetInt("id")
+		id = c.GetInt64("id")
 	}
 	user, err := model.GetUserCache(id)
 	if err != nil {
@@ -462,7 +472,7 @@ func UpdateUser(c *gin.Context) {
 		})
 		return
 	}
-	originUser, err := model.GetUserById(updatedUser.Id, false)
+	originUser, err := model.GetUserById(int64(int(updatedUser.Id)), false)
 	if err != nil {
 		common.ApiError(c, err)
 		return
@@ -522,7 +532,7 @@ func UpdateSelf(c *gin.Context) {
 	}
 
 	cleanUser := model.User{
-		Id:          c.GetInt("id"),
+		Id:          c.GetInt64("id"),
 		Username:    user.Username,
 		Password:    user.Password,
 		DisplayName: user.DisplayName,
@@ -548,7 +558,7 @@ func UpdateSelf(c *gin.Context) {
 	return
 }
 
-func checkUpdatePassword(originalPassword string, newPassword string, userId int) (updatePassword bool, err error) {
+func checkUpdatePassword(originalPassword string, newPassword string, userId int64) (updatePassword bool, err error) {
 	var currentUser *model.User
 	currentUser, err = model.GetUserById(userId, true)
 	if err != nil {
@@ -571,7 +581,7 @@ func DeleteUser(c *gin.Context) {
 		common.ApiError(c, err)
 		return
 	}
-	originUser, err := model.GetUserById(id, false)
+	originUser, err := model.GetUserById(int64(id), false)
 	if err != nil {
 		common.ApiError(c, err)
 		return
@@ -595,7 +605,7 @@ func DeleteUser(c *gin.Context) {
 }
 
 func DeleteSelf(c *gin.Context) {
-	id := c.GetInt("id")
+	id := c.GetInt64("id")
 	user, _ := model.GetUserById(id, false)
 
 	if user.Role == common.RoleRootUser {
@@ -683,7 +693,7 @@ func ManageUser(c *gin.Context) {
 		return
 	}
 	user := model.User{
-		Id: req.Id,
+		Id: int64(req.Id),
 	}
 	// Fill attributes
 	model.DB.Unscoped().Where(&user).First(&user)
@@ -792,7 +802,7 @@ func EmailBind(c *gin.Context) {
 	session := sessions.Default(c)
 	id := session.Get("id")
 	user := model.User{
-		Id: id.(int),
+		Id: int64(id.(int)),
 	}
 	err := user.FillUserById()
 	if err != nil {
@@ -828,7 +838,7 @@ func TopUp(c *gin.Context) {
 		common.ApiError(c, err)
 		return
 	}
-	id := c.GetInt("id")
+	id := c.GetInt64("id")
 	quota, err := model.Redeem(req.Key, id)
 	if err != nil {
 		common.ApiError(c, err)
@@ -911,7 +921,7 @@ func UpdateUserSetting(c *gin.Context) {
 		}
 	}
 
-	userId := c.GetInt("id")
+	userId := c.GetInt64("id")
 	user, err := model.GetUserById(userId, true)
 	if err != nil {
 		common.ApiError(c, err)

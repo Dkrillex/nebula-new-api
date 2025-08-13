@@ -49,7 +49,7 @@ func relayHandler(c *gin.Context, relayMode int) *types.NewAPIError {
 
 	if constant2.ErrorLogEnabled && err != nil {
 		// 保存错误日志到mysql中
-		userId := c.GetInt("id")
+		userId := c.GetInt64("id")
 		tokenName := c.GetString("token_name")
 		modelName := c.GetString("original_model")
 		tokenId := c.GetInt("token_id")

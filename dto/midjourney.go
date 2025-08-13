@@ -77,7 +77,7 @@ type MidjourneyStatus struct {
 type MidjourneyWithoutStatus struct {
 	Id          int    `json:"id"`
 	Code        int    `json:"code"`
-	UserId      int    `json:"user_id" gorm:"index"`
+	UserId      int64  `json:"user_id" gorm:"index"`
 	Action      string `json:"action"`
 	MjId        string `json:"mj_id" gorm:"index"`
 	Prompt      string `json:"prompt"`

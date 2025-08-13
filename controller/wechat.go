@@ -147,7 +147,7 @@ func WeChatBind(c *gin.Context) {
 	session := sessions.Default(c)
 	id := session.Get("id")
 	user := model.User{
-		Id: id.(int),
+		Id: int64(id.(int)),
 	}
 	err = user.FillUserById()
 	if err != nil {

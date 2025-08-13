@@ -1,10 +1,11 @@
 package controller
 
 import (
-	"github.com/gin-gonic/gin"
 	"one-api/common"
 	"one-api/dto"
 	"one-api/model"
+
+	"github.com/gin-gonic/gin"
 )
 
 func GetSubscription(c *gin.Context) {
@@ -20,7 +21,7 @@ func GetSubscription(c *gin.Context) {
 		remainQuota = token.RemainQuota
 		usedQuota = token.UsedQuota
 	} else {
-		userId := c.GetInt("id")
+		userId := c.GetInt64("id")
 		remainQuota, err = model.GetUserQuota(userId, false)
 		usedQuota, err = model.GetUserUsedQuota(userId)
 	}
@@ -66,7 +67,7 @@ func GetUsage(c *gin.Context) {
 		token, err = model.GetTokenById(tokenId)
 		quota = token.UsedQuota
 	} else {
-		userId := c.GetInt("id")
+		userId := c.GetInt64("id")
 		quota, err = model.GetUserUsedQuota(userId)
 	}
 	if err != nil {

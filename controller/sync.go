@@ -57,7 +57,7 @@ func SyncUser(c *gin.Context) {
 
 	// 创建新用户
 	user := &model.User{
-		Id:          req.Id,
+		Id:          int64(req.Id),
 		Username:    req.Username,
 		Password:    req.Password,
 		DisplayName: req.Username,
@@ -113,7 +113,7 @@ func SyncGenerateAccessToken(c *gin.Context) {
 	}
 
 	// 检查用户是否存在
-	_, err = model.GetUserById(userId, true)
+	_, err = model.GetUserById(int64(userId), true)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{
 			"success": false,
@@ -192,12 +192,12 @@ func SyncGenerateAccessToken(c *gin.Context) {
 func SyncGetUserInfo(c *gin.Context) {
 	// 尝试从查询参数获取user_id
 	userIdStr := c.Query("user_id")
-	var userId int
+	var userId int64
 	var err error
 	if userIdStr == "" {
 		// 如果查询参数为空，尝试从请求体获取
 		var req struct {
-			UserId int `json:"user_id"`
+			UserId int64 `json:"user_id"`
 		}
 		if err := c.ShouldBindJSON(&req); err != nil {
 			c.JSON(http.StatusBadRequest, gin.H{
@@ -209,7 +209,7 @@ func SyncGetUserInfo(c *gin.Context) {
 		userId = req.UserId
 	} else {
 		// 从查询参数解析user_id
-		userId, err = strconv.Atoi(userIdStr)
+		_, err := strconv.ParseInt(userIdStr, 10, 64)
 		if err != nil {
 			c.JSON(http.StatusBadRequest, gin.H{
 				"success": false,
@@ -228,7 +228,7 @@ func SyncGetUserInfo(c *gin.Context) {
 	}
 
 	// 查询用户信息
-	user, err := model.GetUserById(userId, false)
+	user, err := model.GetUserById(int64(userId), false)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{
 			"success": false,
@@ -299,7 +299,7 @@ func SyncGetLogs(c *gin.Context) {
 	modelName := c.Query("model_name")
 	channel, _ := strconv.Atoi(c.Query("channel"))
 	group := c.Query("group")
-	userId, _ := strconv.Atoi(c.Query("user_id"))
+	userId, _ := strconv.ParseInt(c.Query("user_id"), 10, 64)
 
 	logs, total, err := model.GetAllLogs(logType, startTimestamp, endTimestamp, modelName, username, tokenName, pageInfo.GetStartIdx(), pageInfo.GetPageSize(), channel, group, userId)
 	if err != nil {
@@ -364,7 +364,7 @@ func SyncGetTokenLogsStat(c *gin.Context) {
 	// 查询用户名（如果提供了user_id）
 	username := ""
 	if userId > 0 {
-		user, err := model.GetUserById(userId, true)
+		user, err := model.GetUserById(int64(userId), true)
 		if err == nil {
 			username = user.Username
 		}
@@ -417,7 +417,7 @@ func SyncUpdateTokenStatus(c *gin.Context) {
 	}
 
 	// 获取用户ID（从系统访问令牌中提取）
-	userId := c.GetInt("id")
+	userId := c.GetInt64("id")
 
 	// 检查令牌是否存在且属于该用户
 	cleanToken, err := model.GetTokenByKey(key, true)

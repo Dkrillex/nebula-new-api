@@ -14,7 +14,7 @@ import (
 
 // UserBase struct remains the same as it represents the cached data structure
 type UserBase struct {
-	Id       int    `json:"id"`
+	Id       int64  `json:"id"`
 	Group    string `json:"group"`
 	Email    string `json:"email"`
 	Quota    int    `json:"quota"`
@@ -44,12 +44,12 @@ func (user *UserBase) GetSetting() dto.UserSetting {
 }
 
 // getUserCacheKey returns the key for user cache
-func getUserCacheKey(userId int) string {
+func getUserCacheKey(userId int64) string {
 	return fmt.Sprintf("user:%d", userId)
 }
 
 // invalidateUserCache clears user cache
-func invalidateUserCache(userId int) error {
+func invalidateUserCache(userId int64) error {
 	if !common.RedisEnabled {
 		return nil
 	}
@@ -70,7 +70,7 @@ func updateUserCache(user User) error {
 }
 
 // GetUserCache gets complete user cache from hash
-func GetUserCache(userId int) (userCache *UserBase, err error) {
+func GetUserCache(userId int64) (userCache *UserBase, err error) {
 	var user *User
 	var fromDB bool
 	defer func() {
@@ -111,7 +111,7 @@ func GetUserCache(userId int) (userCache *UserBase, err error) {
 	return userCache, nil
 }
 
-func cacheGetUserBase(userId int) (*UserBase, error) {
+func cacheGetUserBase(userId int64) (*UserBase, error) {
 	if !common.RedisEnabled {
 		return nil, fmt.Errorf("redis is not enabled")
 	}
@@ -125,19 +125,19 @@ func cacheGetUserBase(userId int) (*UserBase, error) {
 }
 
 // Add atomic quota operations using hash fields
-func cacheIncrUserQuota(userId int, delta int64) error {
+func cacheIncrUserQuota(userId int64, delta int64) error {
 	if !common.RedisEnabled {
 		return nil
 	}
 	return common.RedisHIncrBy(getUserCacheKey(userId), "Quota", delta)
 }
 
-func cacheDecrUserQuota(userId int, delta int64) error {
+func cacheDecrUserQuota(userId int64, delta int64) error {
 	return cacheIncrUserQuota(userId, -delta)
 }
 
 // Helper functions to get individual fields if needed
-func getUserGroupCache(userId int) (string, error) {
+func getUserGroupCache(userId int64) (string, error) {
 	cache, err := GetUserCache(userId)
 	if err != nil {
 		return "", err
@@ -145,7 +145,7 @@ func getUserGroupCache(userId int) (string, error) {
 	return cache.Group, nil
 }
 
-func getUserQuotaCache(userId int) (int, error) {
+func getUserQuotaCache(userId int64) (int, error) {
 	cache, err := GetUserCache(userId)
 	if err != nil {
 		return 0, err
@@ -153,7 +153,7 @@ func getUserQuotaCache(userId int) (int, error) {
 	return cache.Quota, nil
 }
 
-func getUserStatusCache(userId int) (int, error) {
+func getUserStatusCache(userId int64) (int, error) {
 	cache, err := GetUserCache(userId)
 	if err != nil {
 		return 0, err
@@ -161,7 +161,7 @@ func getUserStatusCache(userId int) (int, error) {
 	return cache.Status, nil
 }
 
-func getUserNameCache(userId int) (string, error) {
+func getUserNameCache(userId int64) (string, error) {
 	cache, err := GetUserCache(userId)
 	if err != nil {
 		return "", err
@@ -169,7 +169,7 @@ func getUserNameCache(userId int) (string, error) {
 	return cache.Username, nil
 }
 
-func getUserSettingCache(userId int) (dto.UserSetting, error) {
+func getUserSettingCache(userId int64) (dto.UserSetting, error) {
 	cache, err := GetUserCache(userId)
 	if err != nil {
 		return dto.UserSetting{}, err
@@ -178,7 +178,7 @@ func getUserSettingCache(userId int) (dto.UserSetting, error) {
 }
 
 // New functions for individual field updates
-func updateUserStatusCache(userId int, status bool) error {
+func updateUserStatusCache(userId int64, status bool) error {
 	if !common.RedisEnabled {
 		return nil
 	}
@@ -189,28 +189,28 @@ func updateUserStatusCache(userId int, status bool) error {
 	return common.RedisHSetField(getUserCacheKey(userId), "Status", fmt.Sprintf("%d", statusInt))
 }
 
-func updateUserQuotaCache(userId int, quota int) error {
+func updateUserQuotaCache(userId int64, quota int) error {
 	if !common.RedisEnabled {
 		return nil
 	}
 	return common.RedisHSetField(getUserCacheKey(userId), "Quota", fmt.Sprintf("%d", quota))
 }
 
-func updateUserGroupCache(userId int, group string) error {
+func updateUserGroupCache(userId int64, group string) error {
 	if !common.RedisEnabled {
 		return nil
 	}
 	return common.RedisHSetField(getUserCacheKey(userId), "Group", group)
 }
 
-func updateUserNameCache(userId int, username string) error {
+func updateUserNameCache(userId int64, username string) error {
 	if !common.RedisEnabled {
 		return nil
 	}
 	return common.RedisHSetField(getUserCacheKey(userId), "Username", username)
 }
 
-func updateUserSettingCache(userId int, setting string) error {
+func updateUserSettingCache(userId int64, setting string) error {
 	if !common.RedisEnabled {
 		return nil
 	}

@@ -151,7 +151,7 @@ func RelayTaskSubmit(c *gin.Context, relayMode int) (taskErr *dto.TaskError) {
 					Other:     other,
 				})
 				model.UpdateUserUsedQuotaAndRequestCount(relayInfo.UserId, quota)
-				model.UpdateChannelUsedQuota(relayInfo.ChannelId, quota)
+				model.UpdateChannelUsedQuota(int64(relayInfo.ChannelId), quota)
 			}
 		}
 	}()
@@ -202,7 +202,7 @@ func RelayTaskFetch(c *gin.Context, relayMode int) (taskResp *dto.TaskError) {
 }
 
 func sunoFetchRespBodyBuilder(c *gin.Context) (respBody []byte, taskResp *dto.TaskError) {
-	userId := c.GetInt("id")
+	userId := c.GetInt64("id")
 	var condition = struct {
 		IDs    []any  `json:"ids"`
 		Action string `json:"action"`
@@ -234,7 +234,7 @@ func sunoFetchRespBodyBuilder(c *gin.Context) (respBody []byte, taskResp *dto.Ta
 
 func sunoFetchByIDRespBodyBuilder(c *gin.Context) (respBody []byte, taskResp *dto.TaskError) {
 	taskId := c.Param("id")
-	userId := c.GetInt("id")
+	userId := c.GetInt64("id")
 
 	originTask, exist, err := model.GetByTaskId(userId, taskId)
 	if err != nil {
@@ -255,7 +255,7 @@ func sunoFetchByIDRespBodyBuilder(c *gin.Context) (respBody []byte, taskResp *dt
 
 func videoFetchByIDRespBodyBuilder(c *gin.Context) (respBody []byte, taskResp *dto.TaskError) {
 	taskId := c.Param("task_id")
-	userId := c.GetInt("id")
+	userId := c.GetInt64("id")
 
 	originTask, exist, err := model.GetByTaskId(userId, taskId)
 	if err != nil {

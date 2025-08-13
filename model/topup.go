@@ -10,7 +10,7 @@ import (
 
 type TopUp struct {
 	Id           int     `json:"id"`
-	UserId       int     `json:"user_id" gorm:"index"`
+	UserId       int64   `json:"user_id" gorm:"index"`
 	Amount       int64   `json:"amount"`
 	Money        float64 `json:"money"`
 	TradeNo      string  `json:"trade_no" gorm:"unique;type:varchar(255);index"`

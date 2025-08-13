@@ -86,7 +86,7 @@ func RequestEpay(c *gin.Context) {
 		return
 	}
 
-	id := c.GetInt("id")
+	id := c.GetInt64("id")
 	group, err := model.GetUserGroup(id, true)
 	if err != nil {
 		c.JSON(200, gin.H{"message": "error", "data": "获取用户分组失败"})
@@ -250,7 +250,7 @@ func RequestAmount(c *gin.Context) {
 		c.JSON(200, gin.H{"message": "error", "data": fmt.Sprintf("充值数量不能小于 %d", getMinTopup())})
 		return
 	}
-	id := c.GetInt("id")
+	id := c.GetInt64("id")
 	group, err := model.GetUserGroup(id, true)
 	if err != nil {
 		c.JSON(200, gin.H{"message": "error", "data": "获取用户分组失败"})

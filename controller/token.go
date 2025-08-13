@@ -10,7 +10,7 @@ import (
 )
 
 func GetAllTokens(c *gin.Context) {
-	userId := c.GetInt("id")
+	userId := c.GetInt64("id")
 	pageInfo := common.GetPageQuery(c)
 	tokens, err := model.GetAllUserTokens(userId, pageInfo.GetStartIdx(), pageInfo.GetPageSize())
 	if err != nil {
@@ -25,7 +25,7 @@ func GetAllTokens(c *gin.Context) {
 }
 
 func SearchTokens(c *gin.Context) {
-	userId := c.GetInt("id")
+	userId := c.GetInt64("id")
 	keyword := c.Query("keyword")
 	token := c.Query("token")
 	tokens, err := model.SearchUserTokens(userId, keyword, token)
@@ -43,7 +43,7 @@ func SearchTokens(c *gin.Context) {
 
 func GetToken(c *gin.Context) {
 	id, err := strconv.Atoi(c.Param("id"))
-	userId := c.GetInt("id")
+	userId := c.GetInt64("id")
 	if err != nil {
 		common.ApiError(c, err)
 		return
@@ -63,7 +63,7 @@ func GetToken(c *gin.Context) {
 
 func GetTokenStatus(c *gin.Context) {
 	tokenId := c.GetInt("token_id")
-	userId := c.GetInt("id")
+	userId := c.GetInt64("id")
 	token, err := model.GetTokenByIds(tokenId, userId)
 	if err != nil {
 		common.ApiError(c, err)
@@ -106,7 +106,7 @@ func AddToken(c *gin.Context) {
 		return
 	}
 	cleanToken := model.Token{
-		UserId:             c.GetInt("id"),
+		UserId:             c.GetInt64("id"),
 		Name:               token.Name,
 		Key:                key,
 		CreatedTime:        common.GetTimestamp(),
@@ -133,7 +133,7 @@ func AddToken(c *gin.Context) {
 
 func DeleteToken(c *gin.Context) {
 	id, _ := strconv.Atoi(c.Param("id"))
-	userId := c.GetInt("id")
+	userId := c.GetInt64("id")
 	err := model.DeleteTokenById(id, userId)
 	if err != nil {
 		common.ApiError(c, err)
@@ -147,7 +147,7 @@ func DeleteToken(c *gin.Context) {
 }
 
 func UpdateToken(c *gin.Context) {
-	userId := c.GetInt("id")
+	userId := c.GetInt64("id")
 	statusOnly := c.Query("status_only")
 	token := model.Token{}
 	err := c.ShouldBindJSON(&token)
@@ -222,7 +222,7 @@ func DeleteTokenBatch(c *gin.Context) {
 		})
 		return
 	}
-	userId := c.GetInt("id")
+	userId := c.GetInt64("id")
 	count, err := model.BatchDeleteTokens(tokenBatch.Ids, userId)
 	if err != nil {
 		common.ApiError(c, err)

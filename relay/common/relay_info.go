@@ -64,7 +64,7 @@ type RelayInfo struct {
 	ChannelId         int
 	TokenId           int
 	TokenKey          string
-	UserId            int
+	UserId            int64
 	UsingGroup        string // 使用的分组
 	UserGroup         string // 用户所在分组
 	TokenUnlimited    bool
@@ -224,18 +224,18 @@ func GenRelayInfo(c *gin.Context) *RelayInfo {
 	startTime := common.GetContextKeyTime(c, constant.ContextKeyRequestStartTime)
 	// firstResponseTime = time.Now() - 1 second
 
-	apiType, _ := common.ChannelType2APIType(channelType)
+	apiType, _ := common.ChannelType2APIType(int(channelType))
 
 	info := &RelayInfo{
-		UserQuota:         common.GetContextKeyInt(c, constant.ContextKeyUserQuota),
+		UserQuota:         int(common.GetContextKeyInt(c, constant.ContextKeyUserQuota)),
 		UserEmail:         common.GetContextKeyString(c, constant.ContextKeyUserEmail),
 		isFirstResponse:   true,
 		RelayMode:         relayconstant.Path2RelayMode(c.Request.URL.Path),
 		BaseUrl:           common.GetContextKeyString(c, constant.ContextKeyChannelBaseUrl),
 		RequestURLPath:    c.Request.URL.String(),
-		ChannelType:       channelType,
-		ChannelId:         channelId,
-		TokenId:           tokenId,
+		ChannelType:       int(channelType),
+		ChannelId:         int(channelId),
+		TokenId:           int(tokenId),
 		TokenKey:          tokenKey,
 		UserId:            userId,
 		UsingGroup:        common.GetContextKeyString(c, constant.ContextKeyUsingGroup),
