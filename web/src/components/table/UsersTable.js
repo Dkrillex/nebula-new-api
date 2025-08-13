@@ -219,7 +219,7 @@ const UsersTable = () => {
                 title: t('确定要提升此用户吗？'),
                 content: t('此操作将提升用户的权限级别'),
                 onOk: () => {
-                  manageUser(record.id, 'promote', record);
+                  manageUser(String(record.id), 'promote', record);
                 },
               });
             },
@@ -233,7 +233,7 @@ const UsersTable = () => {
                 title: t('确定要降级此用户吗？'),
                 content: t('此操作将降低用户的权限级别'),
                 onOk: () => {
-                  manageUser(record.id, 'demote', record);
+                  manageUser(String(record.id), 'demote', record);
                 },
               });
             },
@@ -248,7 +248,7 @@ const UsersTable = () => {
                 content: t('相当于删除用户，此修改将不可逆'),
                 onOk: () => {
                   (async () => {
-                    await manageUser(record.id, 'delete', record);
+                    await manageUser(String(record.id), 'delete', record);
                     await refresh();
                     setTimeout(() => {
                       if (users.length === 0 && activePage > 1) {
@@ -269,7 +269,7 @@ const UsersTable = () => {
             name: t('禁用'),
             type: 'warning',
             onClick: () => {
-              manageUser(record.id, 'disable', record);
+              manageUser(String(record.id), 'disable', record);
             },
           });
         } else {
@@ -278,7 +278,7 @@ const UsersTable = () => {
             name: t('启用'),
             type: 'secondary',
             onClick: () => {
-              manageUser(record.id, 'enable', record);
+              manageUser(String(record.id), 'enable', record);
             },
             disabled: record.status === 3,
           });
@@ -290,7 +290,8 @@ const UsersTable = () => {
               type='tertiary'
               size="small"
               onClick={() => {
-                setEditingUser(record);
+                // 确保id是字符串类型
+                setEditingUser({...record, id: String(record.id)});
                 setShowEditUser(true);
               }}
             >

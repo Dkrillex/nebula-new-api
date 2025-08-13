@@ -186,6 +186,7 @@ func SetApiRouter(router *gin.Engine) {
 			syncSystemRoute.GET("/log/stat", controller.SyncGetTokenLogsStat)
 			syncSystemRoute.GET("/log", controller.SyncGetLogs)
 			syncSystemRoute.GET("/user", controller.SyncGetUserInfo)
+			syncSystemRoute.POST("/user/quota", controller.SyncUpdateUserQuota)
 		}
 	}
 }

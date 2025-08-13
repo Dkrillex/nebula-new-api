@@ -99,7 +99,7 @@ const EditUser = (props) => {
     let payload = { ...values };
     if (typeof payload.quota === 'string') payload.quota = parseInt(payload.quota) || 0;
     if (userId) {
-      payload.id = parseInt(userId);
+      payload.id = userId; // 保持字符串类型，避免大整数精度丢失
     }
     const url = userId ? `/api/user/` : `/api/user/self`;
     const res = await API.put(url, payload);

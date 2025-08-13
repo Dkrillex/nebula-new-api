@@ -261,8 +261,44 @@ func GetAllUsers(c *gin.Context) {
 		return
 	}
 
+	// 将用户ID转换为字符串以避免JavaScript精度问题
+	var responseUsers []map[string]interface{}
+	for _, user := range users {
+		userMap := make(map[string]interface{})
+		// 转换ID为字符串
+		userMap["id"] = strconv.FormatInt(user.Id, 10)
+		// 复制其他字段
+		userMap["DeletedAt"] = user.DeletedAt
+		userMap["access_token"] = user.AccessToken
+		userMap["aff_code"] = user.AffCode
+		userMap["aff_count"] = user.AffCount
+		userMap["aff_history_quota"] = user.AffHistoryQuota
+		userMap["aff_quota"] = user.AffQuota
+		userMap["display_name"] = user.DisplayName
+		userMap["email"] = user.Email
+		userMap["github_id"] = user.GitHubId
+		userMap["group"] = user.Group
+		userMap["inviter_id"] = user.InviterId
+		userMap["linux_do_id"] = user.LinuxDOId
+		userMap["oidc_id"] = user.OidcId
+		userMap["original_password"] = user.OriginalPassword
+		userMap["password"] = user.Password
+		userMap["quota"] = user.Quota
+		userMap["request_count"] = user.RequestCount
+		userMap["role"] = user.Role
+		userMap["setting"] = user.Setting
+		userMap["status"] = user.Status
+		userMap["stripe_customer"] = user.StripeCustomer
+		userMap["telegram_id"] = user.TelegramId
+		userMap["used_quota"] = user.UsedQuota
+		userMap["username"] = user.Username
+		userMap["verification_code"] = user.VerificationCode
+		userMap["wechat_id"] = user.WeChatId
+		responseUsers = append(responseUsers, userMap)
+	}
+
 	pageInfo.SetTotal(int(total))
-	pageInfo.SetItems(users)
+	pageInfo.SetItems(responseUsers)
 
 	common.ApiSuccess(c, pageInfo)
 	return

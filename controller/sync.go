@@ -1,6 +1,7 @@
 package controller
 
 import (
+	"fmt"
 	"net/http"
 	"one-api/common"
 	"one-api/model"
@@ -404,6 +405,87 @@ func SyncGetTokenLogsStat(c *gin.Context) {
 		"message": "查询成功",
 		"data":    stat,
 	})
+}
+
+// SyncUpdateUserQuota 更新用户配额
+// @Summary 更新用户配额
+// @Description 供外部系统调用，根据人民币金额更新用户配额
+// @Tags 同步接口
+// @Accept application/json
+// @Produce application/json
+// @Param data body SyncUpdateUserQuotaRequest true "更新信息"
+// @Success 200 {object} common.Response{data=model.User}
+// @Failure 400 {object} common.Response{message=string}
+// @Failure 500 {object} common.Response{message=string}
+// @Router /api/sync/system/user/quota [post]
+func SyncUpdateUserQuota(c *gin.Context) {
+	var req SyncUpdateUserQuotaRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"success": false,
+			"message": err.Error(),
+		})
+		return
+	}
+
+	// 查找用户
+	user, err := model.GetUserById(req.UserId, true)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"success": false,
+			"message": "用户不存在",
+		})
+		return
+	}
+
+	// 计算充值的tokens数量
+	// 1美元 = 500000 tokens
+	// 1美元 = 7.3人民币
+	const tokensPerDollar = 500000
+	const dollarToRmbRate = 7.3
+	dollars := req.QuotaRmb / dollarToRmbRate
+	addedTokens := int(dollars * float64(tokensPerDollar))
+
+	// 更新用户配额
+	user.Quota += addedTokens
+
+	// 保存更新后的用户信息
+	if err := model.DB.Save(user).Error; err != nil {
+		common.SysError("更新用户配额失败: " + err.Error())
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"success": false,
+			"message": "更新用户配额失败",
+		})
+		return
+	}
+
+	// 记录充值日志
+	log := &model.Log{
+		UserId:    user.Id,
+		Username:  user.Username,
+		Type:      model.LogTypeTopup,
+		Content:   fmt.Sprintf("充值 %d 人民币，获得 %d tokens", req.QuotaRmb, addedTokens),
+		Quota:     addedTokens,
+		ModelName: "system",
+		Ip:        c.ClientIP(),
+		CreatedAt: common.GetTimestamp(),
+	}
+	if err := model.LOG_DB.Create(log).Error; err != nil {
+		common.SysError("记录充值日志失败: " + err.Error())
+		// 日志记录失败不影响主流程
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"success": true,
+		"message": fmt.Sprintf("充值成功，增加 %d tokens，当前总配额: %d", addedTokens, user.Quota),
+		"data":    user,
+	})
+	return
+}
+
+type SyncUpdateUserQuotaRequest struct {
+	UserId   int64   `json:"user_id" binding:"required,min=1"`
+	QuotaRmb float64 `json:"quota_rmb" binding:"required,min=0.01"`
 }
 
 // SyncUpdateTokenStatus 更新API令牌状态
