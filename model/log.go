@@ -198,7 +198,7 @@ func RecordConsumeLog(c *gin.Context, userId int, params RecordConsumeLogParams)
 	}
 }
 
-func GetAllLogs(logType int, startTimestamp int64, endTimestamp int64, modelName string, username string, tokenName string, startIdx int, num int, channel int, group string) (logs []*Log, total int64, err error) {
+func GetAllLogs(logType int, startTimestamp int64, endTimestamp int64, modelName string, username string, tokenName string, startIdx int, num int, channel int, group string, userId int) (logs []*Log, total int64, err error) {
 	var tx *gorm.DB
 	if logType == LogTypeUnknown {
 		tx = LOG_DB
@@ -211,6 +211,9 @@ func GetAllLogs(logType int, startTimestamp int64, endTimestamp int64, modelName
 	}
 	if username != "" {
 		tx = tx.Where("logs.username = ?", username)
+	}
+	if userId != 0 {
+		tx = tx.Where("logs.user_id = ?", userId)
 	}
 	if tokenName != "" {
 		tx = tx.Where("logs.token_name = ?", tokenName)

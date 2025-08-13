@@ -183,6 +183,9 @@ func SetApiRouter(router *gin.Engine) {
 			syncSystemRoute.POST("/user", controller.SyncUser)
 			syncSystemRoute.POST("/token", controller.SyncGenerateAccessToken)
 			syncSystemRoute.POST("/token/update", controller.SyncUpdateTokenStatus)
+			syncSystemRoute.GET("/log/stat", controller.SyncGetTokenLogsStat)
+			syncSystemRoute.GET("/log", controller.SyncGetLogs)
+			syncSystemRoute.GET("/user", controller.SyncGetUserInfo)
 		}
 	}
 }

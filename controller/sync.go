@@ -4,6 +4,7 @@ import (
 	"net/http"
 	"one-api/common"
 	"one-api/model"
+	"strconv"
 
 	"github.com/gin-gonic/gin"
 )
@@ -175,6 +176,209 @@ func SyncGenerateAccessToken(c *gin.Context) {
 		"data":    key,
 	})
 	return
+}
+
+// SyncGetUserInfo 查询用户信息
+// @Summary 查询用户信息
+// @Description 供外部系统调用，根据user_id查询用户信息
+// @Tags 同步接口
+// @Accept application/json
+// @Produce application/json
+// @Param user_id query int true "用户ID"
+// @Success 200 {object} common.Response{data=object{id=int,username=string,request_count=int,quota=int,used_quota=int,quota_dollar=float64,used_quota_dollar=float64,quota_rmb=float64,used_quota_rmb=float64}}
+// @Failure 400 {object} common.Response{message=string}
+// @Failure 500 {object} common.Response{message=string}
+// @Router /api/sync/system/user [get]
+func SyncGetUserInfo(c *gin.Context) {
+	// 尝试从查询参数获取user_id
+	userIdStr := c.Query("user_id")
+	var userId int
+	var err error
+	if userIdStr == "" {
+		// 如果查询参数为空，尝试从请求体获取
+		var req struct {
+			UserId int `json:"user_id"`
+		}
+		if err := c.ShouldBindJSON(&req); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{
+				"success": false,
+				"message": "无效的用户ID: 请通过查询参数或JSON请求体提供有效的user_id",
+			})
+			return
+		}
+		userId = req.UserId
+	} else {
+		// 从查询参数解析user_id
+		userId, err = strconv.Atoi(userIdStr)
+		if err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{
+				"success": false,
+				"message": "无效的用户ID: 必须是有效的整数",
+			})
+			return
+		}
+	}
+
+	if userId <= 0 {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"success": false,
+			"message": "无效的用户ID: 必须大于0",
+		})
+		return
+	}
+
+	// 查询用户信息
+	user, err := model.GetUserById(userId, false)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"success": false,
+			"message": "用户不存在",
+		})
+		return
+	}
+
+	// 计算美元额度 (500000 tokens = 1 美金)
+	const tokensPerDollar = 500000
+	quotaDollar := float64(user.Quota) / float64(tokensPerDollar)
+	usedQuotaDollar := float64(user.UsedQuota) / float64(tokensPerDollar)
+
+	// 计算人民币额度 (1 美金 = 7.3 人民币)
+	const dollarToRmbRate = 7.3
+	quotaRmb := quotaDollar * dollarToRmbRate
+	usedQuotaRmb := usedQuotaDollar * dollarToRmbRate
+
+	// 构建响应数据
+	responseData := gin.H{
+		"id":                user.Id,
+		"username":          user.Username,
+		"request_count":     user.RequestCount,
+		"quota":             user.Quota,
+		"used_quota":        user.UsedQuota,
+		"quota_dollar":      quotaDollar,
+		"used_quota_dollar": usedQuotaDollar,
+		"quota_rmb":         quotaRmb,
+		"used_quota_rmb":    usedQuotaRmb,
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"success": true,
+		"message": "查询成功",
+		"data":    responseData,
+	})
+	return
+}
+
+// SyncGetLogs 查询日志列表
+// @Summary 查询日志列表
+// @Description 供外部系统调用，查询日志列表
+// @Tags 同步接口
+// @Accept application/json
+// @Produce application/json
+// @Param p query int false "页码，默认1"
+// @Param page_size query int false "每页条数，默认10"
+// @Param type query int false "日志类型(0:未知,1:充值,2:消费,3:管理,4:系统,5:错误)"
+// @Param username query string false "用户名"
+// @Param token_name query string false "令牌名称"
+// @Param model_name query string false "模型名称"
+// @Param start_timestamp query int64 false "开始时间戳"
+// @Param end_timestamp query int64 false "结束时间戳"
+// @Param channel query int false "通道ID"
+// @Param group query string false "分组"
+// @Param user_id query int false "用户ID"
+// @Success 200 {object} common.Response{data=model.PageInfo{items=[]model.Log}}
+// @Failure 400 {object} common.Response{message=string}
+// @Failure 500 {object} common.Response{message=string}
+// @Router /api/sync/system/log [get]
+func SyncGetLogs(c *gin.Context) {
+	pageInfo := common.GetPageQuery(c)
+	logType, _ := strconv.Atoi(c.Query("type"))
+	startTimestamp, _ := strconv.ParseInt(c.Query("start_timestamp"), 10, 64)
+	endTimestamp, _ := strconv.ParseInt(c.Query("end_timestamp"), 10, 64)
+	username := c.Query("username")
+	tokenName := c.Query("token_name")
+	modelName := c.Query("model_name")
+	channel, _ := strconv.Atoi(c.Query("channel"))
+	group := c.Query("group")
+	userId, _ := strconv.Atoi(c.Query("user_id"))
+
+	logs, total, err := model.GetAllLogs(logType, startTimestamp, endTimestamp, modelName, username, tokenName, pageInfo.GetStartIdx(), pageInfo.GetPageSize(), channel, group, userId)
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	pageInfo.SetTotal(int(total))
+	pageInfo.SetItems(logs)
+	common.ApiSuccess(c, pageInfo)
+	return
+}
+
+// SyncGetTokenLogsStat 查询API令牌使用日志统计
+// @Summary 查询API令牌使用日志统计
+// @Description 供外部系统调用，查询API令牌的使用日志统计
+// @Tags 同步接口
+// @Accept application/json
+// @Produce application/json
+// @Param key query string true "API令牌"
+// @Param user_id query int false "用户ID"
+// @Param type query int false "日志类型(0:未知,1:充值,2:消费,3:管理,4:系统,5:错误)"
+// @Param start_timestamp query int64 false "开始时间戳"
+// @Param end_timestamp query int64 false "结束时间戳"
+// @Param model_name query string false "模型名称"
+// @Param channel query int false "通道ID"
+// @Param group query string false "分组"
+// @Success 200 {object} common.Response{data=model.Stat}
+// @Failure 400 {object} common.Response{message=string}
+// @Failure 500 {object} common.Response{message=string}
+// @Router /api/sync/system/log/stat [get]
+func SyncGetTokenLogsStat(c *gin.Context) {
+	//// 获取API令牌
+	//key := c.Query("key")
+	//if key == "" {
+	//	c.JSON(http.StatusBadRequest, gin.H{
+	//		"success": false,
+	//		"message": "未提供API令牌",
+	//	})
+	//	return
+	//}
+
+	//// 验证令牌
+	//cleanKey := strings.TrimPrefix(key, "sk-")
+	//token, err := model.GetTokenByKey(cleanKey, false)
+	//if err != nil {
+	//	c.JSON(http.StatusBadRequest, gin.H{
+	//		"success": false,
+	//		"message": "无效的API令牌",
+	//	})
+	//	return
+	//}
+
+	// 获取查询参数
+	userId, _ := strconv.Atoi(c.Query("user_id"))
+	logType, _ := strconv.Atoi(c.Query("type"))
+	startTimestamp, _ := strconv.ParseInt(c.Query("start_timestamp"), 10, 64)
+	endTimestamp, _ := strconv.ParseInt(c.Query("end_timestamp"), 10, 64)
+	modelName := c.Query("model_name")
+	channel, _ := strconv.Atoi(c.Query("channel"))
+	group := c.Query("group")
+
+	// 查询用户名（如果提供了user_id）
+	username := ""
+	if userId > 0 {
+		user, err := model.GetUserById(userId, true)
+		if err == nil {
+			username = user.Username
+		}
+	}
+
+	// 查询日志统计
+	stat := model.SumUsedQuota(logType, startTimestamp, endTimestamp, modelName, username, "", channel, group)
+
+	// 返回结果
+	c.JSON(http.StatusOK, gin.H{
+		"success": true,
+		"message": "查询成功",
+		"data":    stat,
+	})
 }
 
 // SyncUpdateTokenStatus 更新API令牌状态
