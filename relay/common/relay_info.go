@@ -219,23 +219,23 @@ func GenRelayInfo(c *gin.Context) *RelayInfo {
 
 	tokenId := common.GetContextKeyInt(c, constant.ContextKeyTokenId)
 	tokenKey := common.GetContextKeyString(c, constant.ContextKeyTokenKey)
-	userId := common.GetContextKeyInt(c, constant.ContextKeyUserId)
+	userId := common.GetContextKeyInt64(c, constant.ContextKeyUserId)
 	tokenUnlimited := common.GetContextKeyBool(c, constant.ContextKeyTokenUnlimited)
 	startTime := common.GetContextKeyTime(c, constant.ContextKeyRequestStartTime)
 	// firstResponseTime = time.Now() - 1 second
 
-	apiType, _ := common.ChannelType2APIType(int(channelType))
+	apiType, _ := common.ChannelType2APIType(channelType)
 
 	info := &RelayInfo{
-		UserQuota:         int(common.GetContextKeyInt(c, constant.ContextKeyUserQuota)),
+		UserQuota:         common.GetContextKeyInt(c, constant.ContextKeyUserQuota),
 		UserEmail:         common.GetContextKeyString(c, constant.ContextKeyUserEmail),
 		isFirstResponse:   true,
 		RelayMode:         relayconstant.Path2RelayMode(c.Request.URL.Path),
 		BaseUrl:           common.GetContextKeyString(c, constant.ContextKeyChannelBaseUrl),
 		RequestURLPath:    c.Request.URL.String(),
-		ChannelType:       int(channelType),
-		ChannelId:         int(channelId),
-		TokenId:           int(tokenId),
+		ChannelType:       channelType,
+		ChannelId:         channelId,
+		TokenId:           tokenId,
 		TokenKey:          tokenKey,
 		UserId:            userId,
 		UsingGroup:        common.GetContextKeyString(c, constant.ContextKeyUsingGroup),
