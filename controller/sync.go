@@ -115,9 +115,9 @@ func SyncGenerateAccessToken(c *gin.Context) {
 	}
 
 	// 检查用户是否存在
-	_, err = model.GetUserById(int64(userId), true)
+	_, err = model.GetUserById(userId, true)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{
+		c.JSON(http.StatusNotFound, gin.H{
 			"success": false,
 			"message": "用户不存在",
 		})
@@ -191,6 +191,72 @@ func SyncGenerateAccessToken(c *gin.Context) {
 // @Failure 400 {object} common.Response{message=string}
 // @Failure 500 {object} common.Response{message=string}
 // @Router /api/sync/system/user [get]
+// SyncCheckUserExists 检查用户是否存在，如果不存在则创建
+// @Summary 检查用户是否存在，如果不存在则创建
+// @Description 供外部系统调用，检查用户是否存在，如果不存在则创建
+// @Tags 同步接口
+// @Accept application/json
+// @Produce application/json
+// @Param data body SyncCheckUserExistsRequest true "用户信息"
+// @Success 200 {object} common.Response{success=bool,message=string}
+// @Failure 400 {object} common.Response{success=bool,message=string}
+// @Failure 500 {object} common.Response{success=bool,message=string}
+// @Router /api/sync/system/user/exists [post]
+
+// SyncCheckUserExistsRequest 定义检查用户存在性请求结构
+type SyncCheckUserExistsRequest struct {
+	UserId   int64  `json:"user_id" binding:"required,min=1"`
+	UserName string `json:"user_name" binding:"required,min=1,max=12"`
+}
+
+func SyncCheckUserExists(c *gin.Context) {
+	// 绑定请求体参数
+	var req SyncCheckUserExistsRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"success": false,
+			"message": "无效的请求参数: " + err.Error(),
+		})
+		return
+	}
+
+	// 检查用户是否存在
+	_, err := model.GetUserById(req.UserId, true)
+	if err == nil {
+		// 用户存在
+		c.JSON(http.StatusOK, gin.H{
+			"success": true,
+			"message": "用户存在",
+		})
+		return
+	}
+
+	// 用户不存在，创建新用户
+	user := &model.User{
+		Id:          req.UserId,
+		Username:    req.UserName,
+		Password:    req.UserName, // 使用user_name作为密码
+		DisplayName: req.UserName,
+		Status:      common.UserStatusEnabled,
+	}
+
+	// 调用Insert方法插入用户
+	if err := user.Insert(0); err != nil {
+		common.SysError("创建用户失败: " + err.Error())
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"success": false,
+			"message": "创建用户失败: " + err.Error(),
+		})
+		return
+	}
+
+	// 创建成功
+	c.JSON(http.StatusOK, gin.H{
+		"success": true,
+		"message": "用户创建成功",
+	})
+}
+
 func SyncGetUserInfo(c *gin.Context) {
 	// 尝试从查询参数获取user_id
 	userIdStr := c.Query("user_id")
@@ -517,9 +583,6 @@ func SyncUpdateTokenStatus(c *gin.Context) {
 		return
 	}
 
-	// 获取用户ID（从系统访问令牌中提取）
-	userId := c.GetInt64("id")
-
 	// 检查令牌是否存在且属于该用户
 	cleanToken, err := model.GetTokenByKey(key, true)
 	if err != nil {
@@ -529,15 +592,16 @@ func SyncUpdateTokenStatus(c *gin.Context) {
 		})
 		return
 	}
-
-	// 验证令牌是否属于当前用户
-	if cleanToken.UserId != userId {
-		c.JSON(http.StatusBadRequest, gin.H{
-			"success": false,
-			"message": "令牌不属于该用户",
-		})
-		return
-	}
+	// 获取用户ID（从系统访问令牌中提取）
+	//userId := c.GetInt64("id")
+	//// 验证令牌是否属于当前用户
+	//if cleanToken.UserId != userId {
+	//	c.JSON(http.StatusBadRequest, gin.H{
+	//		"success": false,
+	//		"message": "令牌不属于该用户",
+	//	})
+	//	return
+	//}
 
 	// 如果启用令牌，检查是否过期或额度用尽
 	if token.Status == common.TokenStatusEnabled {
