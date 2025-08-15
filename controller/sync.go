@@ -2,6 +2,7 @@ package controller
 
 import (
 	"fmt"
+	"math"
 	"net/http"
 	"one-api/common"
 	"one-api/model"
@@ -388,7 +389,7 @@ func SyncGetLogs(c *gin.Context) {
 		// 计算quota_dollar (500000 quota = 1美元)
 		extraLog.QuotaDollar = float64(log.Quota) / 500000
 		// 计算quota_rmb (美元汇率7.3)
-		extraLog.QuotaRmb = extraLog.QuotaDollar * 7.3
+		extraLog.QuotaRmb = math.Round(extraLog.QuotaDollar*7.3*100) / 100
 		extraLogs[i] = extraLog
 	}
 
@@ -524,7 +525,7 @@ func SyncUpdateUserQuota(c *gin.Context) {
 		UserId:    user.Id,
 		Username:  user.Username,
 		Type:      model.LogTypeTopup,
-		Content:   fmt.Sprintf("充值 %d 人民币，获得 %d tokens", req.QuotaRmb, addedTokens),
+		Content:   fmt.Sprintf("充值 %.00f 人民币，获得 %d tokens", req.QuotaRmb, addedTokens),
 		Quota:     addedTokens,
 		ModelName: "system",
 		Ip:        c.ClientIP(),

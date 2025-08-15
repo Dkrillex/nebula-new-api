@@ -43,6 +43,7 @@ const (
 	LogTypeManage
 	LogTypeSystem
 	LogTypeError
+	LogTypeUser //充值和消费
 )
 
 func formatUserLogs(logs []*Log) {
@@ -202,6 +203,8 @@ func GetAllLogs(logType int, startTimestamp int64, endTimestamp int64, modelName
 	var tx *gorm.DB
 	if logType == LogTypeUnknown {
 		tx = LOG_DB
+	} else if logType == LogTypeUser {
+		tx = LOG_DB.Where("logs.type IN (1, 2)")
 	} else {
 		tx = LOG_DB.Where("logs.type = ?", logType)
 	}
