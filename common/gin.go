@@ -59,6 +59,7 @@ func GetContextKeyString(c *gin.Context, key constant.ContextKey) string {
 	return c.GetString(string(key))
 }
 
+// GetContextKeyInt64 fix chz userId专用, int64转int32 会异常变成0,后续有同样问题可以改一下
 func GetContextKeyInt64(c *gin.Context, key constant.ContextKey) int64 {
 	return c.GetInt64(string(key))
 }
