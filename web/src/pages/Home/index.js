@@ -121,7 +121,7 @@ const Home = () => {
                       </>
                     ) : (
                       <>
-                        Nebula Data<br />
+                        Nebula Dance<br />
                         <span className="shine-text">统一大模型接口网关</span>
                       </>
                     )}
