@@ -712,7 +712,7 @@ func CreateUser(c *gin.Context) {
 }
 
 type ManageRequest struct {
-	Id     int    `json:"id"`
+	Id     int64  `json:"id,string"`
 	Action string `json:"action"`
 }
 
@@ -729,7 +729,7 @@ func ManageUser(c *gin.Context) {
 		return
 	}
 	user := model.User{
-		Id: int64(req.Id),
+		Id: req.Id,
 	}
 	// Fill attributes
 	model.DB.Unscoped().Where(&user).First(&user)
