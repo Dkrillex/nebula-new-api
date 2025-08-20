@@ -15,8 +15,8 @@ import (
 // SyncUserRequest 定义外部系统同步用户的请求结构
 type SyncUserRequest struct {
 	Id       int    `json:"id" binding:"required"`
-	Username string `json:"username" binding:"required,max=12"`
-	Password string `json:"password" binding:"required,min=8,max=20"`
+	Username string `json:"username" binding:"required,max=30"`
+	Password string `json:"password" binding:"required,min=8,max=30"`
 }
 
 // SyncUser 处理外部系统同步用户的请求
@@ -206,8 +206,8 @@ func SyncGenerateAccessToken(c *gin.Context) {
 
 // SyncCheckUserExistsRequest 定义检查用户存在性请求结构
 type SyncCheckUserExistsRequest struct {
-	UserId   int64  `json:"user_id" binding:"required,min=1"`
-	UserName string `json:"user_name" binding:"required,min=1,max=12"`
+	UserId   int64  `json:"user_id,string" binding:"required,min=1"`
+	UserName string `json:"user_name" binding:"required,min=1,max=30"`
 }
 
 func SyncCheckUserExists(c *gin.Context) {

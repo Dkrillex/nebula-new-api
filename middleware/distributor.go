@@ -182,6 +182,10 @@ func getModelRequest(c *gin.Context) (*ModelRequest, bool, error) {
 			if relayMode == relayconstant.RelayModeJimengFetchByID {
 				shouldSelectChannel = false
 			}
+		} else if strings.HasPrefix(modelRequest.Model, "Doubao-") {
+			// 豆包模型路由到Coze渠道
+			platform = "coze"
+			relayMode = 0 // Coze没有特定的relayMode
 		} else {
 			platform = string(constant.TaskPlatformKling)
 			relayMode = relayconstant.Path2RelayKling(c.Request.Method, c.Request.URL.Path)
