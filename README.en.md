@@ -49,7 +49,7 @@ You can also access the AI-generated DeepWiki:
 
 ## ✨ Key Features
 
-New API offers a wide range of features, please refer to [Features Introduction](https://docs.newapi.pro/wiki/features-introduction) for details:
+Nebula API offers a wide range of features, please refer to [Features Introduction](https://docs.newapi.pro/wiki/features-introduction) for details:
 
 1. 🎨 Brand new UI interface
 2. 🌍 Multi-language support
