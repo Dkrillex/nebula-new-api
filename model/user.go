@@ -225,7 +225,7 @@ func GetUserById(id int64, selectAll bool) (*User, error) {
 	if id == 0 {
 		return nil, errors.New("id 为空！")
 	}
-	user := User{Id: int64(id)}
+	user := User{Id: id}
 	var err error = nil
 	if selectAll {
 		err = DB.First(&user, "id = ?", id).Error

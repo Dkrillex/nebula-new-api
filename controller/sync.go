@@ -1,11 +1,16 @@
 package controller
 
 import (
+	"errors"
 	"fmt"
 	"math"
 	"net/http"
 	"one-api/common"
+	"one-api/constant"
+	"one-api/dto"
+	"one-api/middleware"
 	"one-api/model"
+	"one-api/types"
 	"strconv"
 	"time"
 
@@ -662,4 +667,101 @@ func SyncUpdateTokenStatus(c *gin.Context) {
 		"message": "更新令牌成功",
 	})
 	return
+}
+
+// SyncPlayground 处理外部系统操练场大模型对话请求
+// @Summary 外部系统操练场大模型对话
+// @Description 供外部系统调用，通过请求体中的user_id指定实际扣费用户进行大模型对话
+// @Tags 外部系统集成
+// @Accept json
+// @Produce json
+// @Param data body dto.SyncPlaygroundRequest true "操练场对话请求"
+// @Success 200 {object} common.Response{data=object}
+// @Failure 400 {object} common.Response{msg=string}
+// @Failure 500 {object} common.Response{msg=string}
+// @Router /api/sync/system/pg/chat/completions [post]
+func SyncPlayground(c *gin.Context) {
+	var newAPIError *types.NewAPIError
+
+	defer func() {
+		if newAPIError != nil {
+			c.JSON(newAPIError.StatusCode, gin.H{
+				"error": newAPIError.ToOpenAIError(),
+			})
+		}
+	}()
+
+	// 解析请求体
+	playgroundRequest := &dto.SyncPlaygroundRequest{}
+	err := common.UnmarshalBodyReusable(c, playgroundRequest)
+	if err != nil {
+		newAPIError = types.NewError(err, types.ErrorCodeInvalidRequest)
+		return
+	}
+
+	// 获取用户ID
+	userId := playgroundRequest.UserId
+	if userId <= 0 {
+		newAPIError = types.NewError(errors.New("无效的用户ID"), types.ErrorCodeInvalidRequest)
+		return
+	}
+
+	// 先尝试从缓存获取用户信息
+	userCache, err := model.GetUserCache(userId)
+	if err != nil {
+		// 缓存中没有，从数据库查询
+		user, dbErr := model.GetUserById(userId, true)
+		if dbErr != nil {
+			newAPIError = types.NewError(errors.New("用户不存在"), types.ErrorCodeInvalidRequest)
+			return
+		}
+		// 将查询结果转换为缓存对象
+		userCache = user.ToBaseUser()
+	}
+
+	// 检查用户状态
+	if userCache.Status != common.UserStatusEnabled {
+		newAPIError = types.NewError(errors.New("用户已被禁用"), types.ErrorCodeInvalidRequest)
+		return
+	}
+
+	// 验证模型参数
+	if playgroundRequest.Model == "" {
+		newAPIError = types.NewError(errors.New("请选择模型"), types.ErrorCodeInvalidRequest)
+		return
+	}
+	c.Set("original_model", playgroundRequest.Model)
+
+	// 设置分组
+	group := playgroundRequest.Group
+	if group == "" {
+		group = userCache.Group
+	}
+	c.Set("group", group)
+
+	// 设置用户ID到上下文
+	c.Set("id", userId)
+
+	// 写入用户缓存到上下文
+	userCache.WriteContext(c)
+
+	// 创建临时令牌
+	tempToken := &model.Token{
+		UserId: userId,
+		Name:   fmt.Sprintf("sync-playground-%s", group),
+		Group:  group,
+	}
+	_ = middleware.SetupContextForToken(c, tempToken)
+
+	// 获取渠道
+	_, newAPIError = getChannel(c, group, playgroundRequest.Model, 1)
+	if newAPIError != nil {
+		return
+	}
+
+	// 设置请求开始时间
+	common.SetContextKey(c, constant.ContextKeyRequestStartTime, time.Now())
+
+	// 转发请求到模型
+	Relay(c)
 }

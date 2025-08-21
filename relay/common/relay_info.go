@@ -265,6 +265,11 @@ func GenRelayInfo(c *gin.Context) *RelayInfo {
 		info.RequestURLPath = strings.TrimPrefix(info.RequestURLPath, "/pg")
 		info.RequestURLPath = "/v1" + info.RequestURLPath
 	}
+	if strings.HasPrefix(c.Request.URL.Path, "/api/sync/system/pg") {
+		info.IsPlayground = true
+		info.RequestURLPath = strings.TrimPrefix(info.RequestURLPath, "/pg")
+		info.RequestURLPath = "/v1/chat/completions"
+	}
 	if info.BaseUrl == "" {
 		info.BaseUrl = constant.ChannelBaseURLs[channelType]
 	}

@@ -176,7 +176,7 @@ func SetApiRouter(router *gin.Engine) {
 			taskRoute.GET("/", middleware.AdminAuth(), controller.GetAllTask)
 		}
 
-		// 外部系统同步路由 (使用系统访问令牌验证)
+		// 外部系统同步路由 (使用系统访问令牌access_token验证)
 		syncSystemRoute := apiRouter.Group("/sync/system")
 		syncSystemRoute.Use(middleware.SystemAccessTokenAuth())
 		{
@@ -188,6 +188,7 @@ func SetApiRouter(router *gin.Engine) {
 			syncSystemRoute.GET("/user", controller.SyncGetUserInfo)
 			syncSystemRoute.POST("/user/exists", controller.SyncCheckUserExists)
 			syncSystemRoute.POST("/user/quota", controller.SyncUpdateUserQuota)
+			syncSystemRoute.POST("/pg/chat/completions", controller.SyncPlayground)
 		}
 	}
 }

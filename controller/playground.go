@@ -26,11 +26,11 @@ func Playground(c *gin.Context) {
 		}
 	}()
 
-	useAccessToken := c.GetBool("use_access_token")
-	if useAccessToken {
-		newAPIError = types.NewError(errors.New("暂不支持使用 access token"), types.ErrorCodeAccessDenied)
-		return
-	}
+	//useAccessToken := c.GetBool("use_access_token")
+	//if useAccessToken {
+	//	newAPIError = types.NewError(errors.New("暂不支持使用 access token"), types.ErrorCodeAccessDenied)
+	//	return
+	//}
 
 	playgroundRequest := &dto.PlayGroundRequest{}
 	err := common.UnmarshalBodyReusable(c, playgroundRequest)
@@ -60,7 +60,7 @@ func Playground(c *gin.Context) {
 	userId := c.GetInt64("id")
 
 	// Write user context to ensure acceptUnsetRatio is available
-	userCache, err := model.GetUserCache(int64(userId))
+	userCache, err := model.GetUserCache(userId)
 	if err != nil {
 		newAPIError = types.NewError(err, types.ErrorCodeQueryDataError)
 		return
@@ -73,7 +73,7 @@ func Playground(c *gin.Context) {
 		Group:  group,
 	}
 	_ = middleware.SetupContextForToken(c, tempToken)
-	_, newAPIError = getChannel(c, group, playgroundRequest.Model, 0)
+	_, newAPIError = getChannel(c, group, playgroundRequest.Model, 1)
 	if newAPIError != nil {
 		return
 	}
