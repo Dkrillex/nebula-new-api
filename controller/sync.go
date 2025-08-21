@@ -748,7 +748,7 @@ func SyncPlayground(c *gin.Context) {
 	// 创建临时令牌
 	tempToken := &model.Token{
 		UserId: userId,
-		Name:   fmt.Sprintf("sync-playground-%s", group),
+		Name:   fmt.Sprintf("nebula-playground-%s", group),
 		Group:  group,
 	}
 	_ = middleware.SetupContextForToken(c, tempToken)
