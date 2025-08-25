@@ -12,6 +12,7 @@ import (
 	"one-api/model"
 	"one-api/types"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -577,6 +578,7 @@ func SyncUpdateTokenStatus(c *gin.Context) {
 		})
 		return
 	}
+	key = strings.TrimPrefix(key, "sk-")
 
 	// 获取status_only参数
 	statusOnly := c.Query("status_only")
