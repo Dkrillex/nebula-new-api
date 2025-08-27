@@ -24,10 +24,12 @@ Task 任务通过平台、Action 区分任务
 */
 func RelayTaskSubmit(c *gin.Context, relayMode int) (taskErr *dto.TaskError) {
 	platform := constant.TaskPlatform(c.GetString("platform"))
+	common.LogInfo(c, fmt.Sprintf("RelayTaskSubmit - platform: '%s', relayMode: %d", platform, relayMode))
 	relayInfo := relaycommon.GenTaskRelayInfo(c)
 
 	adaptor := GetTaskAdaptor(platform)
 	if adaptor == nil {
+		common.LogError(c, fmt.Sprintf("GetTaskAdaptor 返回 nil - platform: '%s'", platform))
 		return service.TaskErrorWrapperLocal(fmt.Errorf("invalid api platform: %s", platform), "invalid_api_platform", http.StatusBadRequest)
 	}
 	adaptor.Init(relayInfo)

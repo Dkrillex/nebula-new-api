@@ -384,9 +384,11 @@ func RelayNotFound(c *gin.Context) {
 }
 
 func RelayTask(c *gin.Context) {
+	common.LogInfo(c, fmt.Sprintf("RelayTask 开始 - URL: %s, Method: %s", c.Request.URL.Path, c.Request.Method))
 	retryTimes := common.RetryTimes
 	channelId := c.GetInt("channel_id")
 	relayMode := c.GetInt("relay_mode")
+	common.LogInfo(c, fmt.Sprintf("RelayTask - relayMode: %d", relayMode))
 	group := c.GetString("group")
 	originalModel := c.GetString("original_model")
 	c.Set("use_channel", []string{fmt.Sprintf("%d", channelId)})
@@ -426,11 +428,14 @@ func RelayTask(c *gin.Context) {
 }
 
 func taskRelayHandler(c *gin.Context, relayMode int) *dto.TaskError {
+	common.LogInfo(c, fmt.Sprintf("taskRelayHandler - relayMode: %d, platform: '%s'", relayMode, c.GetString("platform")))
 	var err *dto.TaskError
 	switch relayMode {
 	case relayconstant.RelayModeSunoFetch, relayconstant.RelayModeSunoFetchByID, relayconstant.RelayModeKlingFetchByID:
+		common.LogInfo(c, "调用 RelayTaskFetch")
 		err = relay.RelayTaskFetch(c, relayMode)
 	default:
+		common.LogInfo(c, "调用 RelayTaskSubmit123")
 		err = relay.RelayTaskSubmit(c, relayMode)
 	}
 	return err

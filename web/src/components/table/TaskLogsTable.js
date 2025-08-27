@@ -248,6 +248,12 @@ const LogsTable = () => {
             Jimeng
           </Tag>
         );
+      case 'doubao':
+        return (
+          <Tag color='blue' shape='circle' prefixIcon={<Sparkles size={14} />}>
+            Doubao
+          </Tag>
+        );
       default:
         return (
           <Tag color='white' shape='circle' prefixIcon={<HelpCircle size={14} />}>

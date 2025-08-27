@@ -46,6 +46,9 @@ const (
 	RelayModeJimengFetchByID
 	RelayModeJimengSubmit
 
+	RelayModeDoubaoFetchByID
+	RelayModeDoubaoSubmit
+
 	RelayModeRerank
 
 	RelayModeResponses
@@ -162,6 +165,16 @@ func Path2RelayJimeng(method, path string) int {
 		relayMode = RelayModeJimengSubmit
 	} else if method == http.MethodGet && strings.Contains(path, "/video/generations/") {
 		relayMode = RelayModeJimengFetchByID
+	}
+	return relayMode
+}
+
+func Path2RelayDoubao(method, path string) int {
+	relayMode := RelayModeUnknown
+	if method == http.MethodPost && strings.HasSuffix(path, "/video/generations") {
+		relayMode = RelayModeDoubaoSubmit
+	} else if method == http.MethodGet && strings.Contains(path, "/video/generations/") {
+		relayMode = RelayModeDoubaoFetchByID
 	}
 	return relayMode
 }

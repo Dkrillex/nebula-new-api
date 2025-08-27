@@ -249,6 +249,8 @@ var defaultModelPrice = map[string]float64{
 	"mj_upscale":              0.05,
 	"swap_face":               0.05,
 	"mj_upload":               0.05,
+	// 豆包视频生成模型价格配置
+	"doubao-seedance-1-0-lite-i2v-250428": 0.5, // 豆包视频生成模型
 }
 
 var (

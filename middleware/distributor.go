@@ -39,6 +39,7 @@ func Distribute() func(c *gin.Context) {
 		channelId, ok := common.GetContextKey(c, constant.ContextKeyTokenSpecificChannelId)
 		modelRequest, shouldSelectChannel, err := getModelRequest(c)
 		if err != nil {
+			common.LogError(c, fmt.Sprintf("getModelRequest 错误: %v", err))
 			abortWithOpenAiMessage(c, http.StatusBadRequest, "Invalid request, "+err.Error())
 			return
 		}
@@ -173,7 +174,13 @@ func getModelRequest(c *gin.Context) (*ModelRequest, bool, error) {
 		c.Set("platform", string(constant.TaskPlatformSuno))
 		c.Set("relay_mode", relayMode)
 	} else if strings.Contains(c.Request.URL.Path, "/v1/video/generations") {
+		common.LogInfo(c, fmt.Sprintf("进入视频生成分支 - 路径: %s, 方法: %s", c.Request.URL.Path, c.Request.Method))
 		err = common.UnmarshalBodyReusable(c, &modelRequest)
+		if err != nil {
+			common.LogError(c, fmt.Sprintf("解析请求体失败: %v", err))
+			return nil, false, err
+		}
+		common.LogInfo(c, fmt.Sprintf("视频生成请求 - 模型: %s, 路径: %s, 方法: %s", modelRequest.Model, c.Request.URL.Path, c.Request.Method))
 		var platform string
 		var relayMode int
 		if strings.HasPrefix(modelRequest.Model, "jimeng") {
@@ -182,10 +189,13 @@ func getModelRequest(c *gin.Context) (*ModelRequest, bool, error) {
 			if relayMode == relayconstant.RelayModeJimengFetchByID {
 				shouldSelectChannel = false
 			}
-		} else if strings.HasPrefix(modelRequest.Model, "Doubao-") {
-			// 豆包模型路由到Coze渠道
-			platform = "coze"
-			relayMode = 0 // Coze没有特定的relayMode
+		} else if strings.HasPrefix(modelRequest.Model, "doubao-") {
+			platform = string(constant.TaskPlatformDoubao)
+			relayMode = relayconstant.Path2RelayDoubao(c.Request.Method, c.Request.URL.Path)
+			common.LogInfo(c, fmt.Sprintf("设置豆包平台: %s, 模型: %s, 中继模式: %d", platform, modelRequest.Model, relayMode))
+			if relayMode == relayconstant.RelayModeDoubaoFetchByID {
+				shouldSelectChannel = false
+			}
 		} else {
 			platform = string(constant.TaskPlatformKling)
 			relayMode = relayconstant.Path2RelayKling(c.Request.Method, c.Request.URL.Path)

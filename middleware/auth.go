@@ -233,6 +233,7 @@ func SystemAccessTokenAuth() func(c *gin.Context) {
 // TokenAuth 用于验证API访问令牌的中间件
 func TokenAuth() func(c *gin.Context) {
 	return func(c *gin.Context) {
+		common.LogInfo(c, fmt.Sprintf("TokenAuth 开始 - URL: %s, Method: %s", c.Request.URL.Path, c.Request.Method))
 		// 先检测是否为ws
 		if c.Request.Header.Get("Sec-WebSocket-Protocol") != "" {
 			// Sec-WebSocket-Protocol: realtime, openai-insecure-api-key.sk-xxx, openai-beta.realtime-v1
