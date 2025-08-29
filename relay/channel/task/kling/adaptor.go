@@ -40,6 +40,7 @@ type SubmitReq struct {
 type requestPayload struct {
 	Prompt      string  `json:"prompt,omitempty"`
 	Image       string  `json:"image,omitempty"`
+	ImageTail   string  `json:"image_tail,omitempty"`
 	Mode        string  `json:"mode,omitempty"`
 	Duration    string  `json:"duration,omitempty"`
 	AspectRatio string  `json:"aspect_ratio,omitempty"`
@@ -96,18 +97,19 @@ func (a *TaskAdaptor) ValidateRequestAndSetAction(c *gin.Context, info *relaycom
 	action := constant.TaskActionGenerate
 	info.Action = action
 
-	var req SubmitReq
-	if err := common.UnmarshalBodyReusable(c, &req); err != nil {
+	// 使用统一的VideoRequest结构
+	var request dto.VideoRequest
+	if err := common.UnmarshalBodyReusable(c, &request); err != nil {
 		taskErr = service.TaskErrorWrapperLocal(err, "invalid_request", http.StatusBadRequest)
 		return
 	}
-	if strings.TrimSpace(req.Prompt) == "" {
+	if strings.TrimSpace(request.Prompt) == "" {
 		taskErr = service.TaskErrorWrapperLocal(fmt.Errorf("prompt is required"), "invalid_request", http.StatusBadRequest)
 		return
 	}
 
 	// Store into context for later usage
-	c.Set("task_request", req)
+	c.Set("video_request", request)
 	return nil
 }
 
@@ -133,11 +135,11 @@ func (a *TaskAdaptor) BuildRequestHeader(c *gin.Context, req *http.Request, info
 
 // BuildRequestBody converts request into Kling specific format.
 func (a *TaskAdaptor) BuildRequestBody(c *gin.Context, info *relaycommon.TaskRelayInfo) (io.Reader, error) {
-	v, exists := c.Get("task_request")
+	v, exists := c.Get("video_request")
 	if !exists {
-		return nil, fmt.Errorf("request not found in context")
+		return nil, fmt.Errorf("video request not found in context")
 	}
-	req := v.(SubmitReq)
+	req := v.(dto.VideoRequest)
 
 	body, err := a.convertToRequestPayload(&req)
 	if err != nil {
@@ -231,28 +233,50 @@ func (a *TaskAdaptor) GetChannelName() string {
 // helpers
 // ============================
 
-func (a *TaskAdaptor) convertToRequestPayload(req *SubmitReq) (*requestPayload, error) {
+func (a *TaskAdaptor) convertToRequestPayload(req *dto.VideoRequest) (*requestPayload, error) {
 	r := requestPayload{
-		Prompt:      req.Prompt,
-		Image:       req.Image,
-		Mode:        defaultString(req.Mode, "std"),
-		Duration:    fmt.Sprintf("%d", defaultInt(req.Duration, 5)),
-		AspectRatio: a.getAspectRatio(req.Size),
-		ModelName:   req.Model,
-		CfgScale:    0.5,
+		Prompt:    req.Prompt,
+		Image:     req.Image,
+		ImageTail: req.ImageTail,
+		Mode:      defaultString(req.Mode, "std"),
+		Duration:  fmt.Sprintf("%d", defaultInt(int(req.Duration), 5)),
+		ModelName: req.Model,
+		CfgScale:  0.5,
 	}
+
+	// 使用统一参数而不是固定值
+	if req.AspectRatio != "" {
+		r.AspectRatio = req.AspectRatio
+	} else {
+		// 如果没有指定AspectRatio，尝试从Width和Height计算
+		if req.Width > 0 && req.Height > 0 {
+			r.AspectRatio = fmt.Sprintf("%d:%d", req.Width, req.Height)
+		} else {
+			r.AspectRatio = "16:9" // 默认值
+		}
+	}
+
+	// 使用统一的CfgScale参数
+	if req.CfgScale > 0 {
+		r.CfgScale = req.CfgScale
+	}
+
 	if r.ModelName == "" {
 		r.ModelName = "kling-v1"
 	}
-	metadata := req.Metadata
-	medaBytes, err := json.Marshal(metadata)
-	if err != nil {
-		return nil, errors.Wrap(err, "metadata marshal metadata failed")
+
+	// 处理metadata中的其他自定义参数
+	if req.Metadata != nil {
+		metaBytes, err := json.Marshal(req.Metadata)
+		if err != nil {
+			return nil, errors.Wrap(err, "marshal metadata failed")
+		}
+		err = json.Unmarshal(metaBytes, &r)
+		if err != nil {
+			return nil, errors.Wrap(err, "unmarshal metadata failed")
+		}
 	}
-	err = json.Unmarshal(medaBytes, &r)
-	if err != nil {
-		return nil, errors.Wrap(err, "unmarshal metadata failed")
-	}
+
 	return &r, nil
 }
 

@@ -105,7 +105,8 @@ func updateVideoSingleTask(ctx context.Context, adaptor channel.TaskAdaptor, cha
 		if task.FinishTime == 0 {
 			task.FinishTime = now
 		}
-		task.FailReason = taskResult.Url
+		//task.FailReason = taskResult.Url
+		task.FailReason = ""
 	case model.TaskStatusFailure:
 		task.Status = model.TaskStatusFailure
 		task.Progress = "100%"

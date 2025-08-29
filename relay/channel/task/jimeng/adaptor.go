@@ -92,18 +92,19 @@ func (a *TaskAdaptor) ValidateRequestAndSetAction(c *gin.Context, info *relaycom
 	action := constant.TaskActionGenerate
 	info.Action = action
 
-	req := relaycommon.TaskSubmitReq{}
-	if err := common.UnmarshalBodyReusable(c, &req); err != nil {
+	// 使用统一的VideoRequest结构
+	var request dto.VideoRequest
+	if err := common.UnmarshalBodyReusable(c, &request); err != nil {
 		taskErr = service.TaskErrorWrapperLocal(err, "invalid_request", http.StatusBadRequest)
 		return
 	}
-	if strings.TrimSpace(req.Prompt) == "" {
+	if strings.TrimSpace(request.Prompt) == "" {
 		taskErr = service.TaskErrorWrapperLocal(fmt.Errorf("prompt is required"), "invalid_request", http.StatusBadRequest)
 		return
 	}
 
 	// Store into context for later usage
-	c.Set("task_request", req)
+	c.Set("video_request", request)
 	return nil
 }
 
@@ -121,11 +122,11 @@ func (a *TaskAdaptor) BuildRequestHeader(c *gin.Context, req *http.Request, info
 
 // BuildRequestBody converts request into Jimeng specific format.
 func (a *TaskAdaptor) BuildRequestBody(c *gin.Context, info *relaycommon.TaskRelayInfo) (io.Reader, error) {
-	v, exists := c.Get("task_request")
+	v, exists := c.Get("video_request")
 	if !exists {
-		return nil, fmt.Errorf("request not found in context")
+		return nil, fmt.Errorf("video request not found in context")
 	}
-	req := v.(relaycommon.TaskSubmitReq)
+	req := v.(dto.VideoRequest)
 
 	body, err := a.convertToRequestPayload(&req)
 	if err != nil {
@@ -325,12 +326,22 @@ func hmacSHA256(key []byte, data []byte) []byte {
 	return h.Sum(nil)
 }
 
-func (a *TaskAdaptor) convertToRequestPayload(req *relaycommon.TaskSubmitReq) (*requestPayload, error) {
+func (a *TaskAdaptor) convertToRequestPayload(req *dto.VideoRequest) (*requestPayload, error) {
 	r := requestPayload{
 		ReqKey:      "jimeng_vgfm_i2v_l20",
 		Prompt:      req.Prompt,
 		AspectRatio: "16:9", // Default aspect ratio
 		Seed:        -1,     // Default to random
+	}
+
+	// 使用统一参数而不是固定值
+	if req.AspectRatio != "" {
+		r.AspectRatio = req.AspectRatio
+	}
+
+	// 如果指定了seed，使用指定的值
+	if req.Seed > 0 {
+		r.Seed = int64(req.Seed)
 	}
 
 	// Handle one-of image_urls or binary_data_base64
@@ -341,15 +352,19 @@ func (a *TaskAdaptor) convertToRequestPayload(req *relaycommon.TaskSubmitReq) (*
 			r.BinaryDataBase64 = []string{req.Image}
 		}
 	}
-	metadata := req.Metadata
-	medaBytes, err := json.Marshal(metadata)
-	if err != nil {
-		return nil, errors.Wrap(err, "metadata marshal metadata failed")
+
+	// 处理metadata中的其他自定义参数
+	if req.Metadata != nil {
+		metaBytes, err := json.Marshal(req.Metadata)
+		if err != nil {
+			return nil, errors.Wrap(err, "marshal metadata failed")
+		}
+		err = json.Unmarshal(metaBytes, &r)
+		if err != nil {
+			return nil, errors.Wrap(err, "unmarshal metadata failed")
+		}
 	}
-	err = json.Unmarshal(medaBytes, &r)
-	if err != nil {
-		return nil, errors.Wrap(err, "unmarshal metadata failed")
-	}
+
 	return &r, nil
 }
 

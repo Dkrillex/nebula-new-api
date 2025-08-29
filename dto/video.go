@@ -1,18 +1,30 @@
 package dto
 
 type VideoRequest struct {
-	Model          string         `json:"model,omitempty" example:"kling-v1"`                                                                                                                                    // Model/style ID
-	Prompt         string         `json:"prompt,omitempty" example:"宇航员站起身走了"`                                                                                                                                   // Text prompt
-	Image          string         `json:"image,omitempty" example:"https://h2.inkwai.com/bs2/upload-ylab-stunt/se/ai_portal_queue_mmu_image_upscale_aiweb/3214b798-e1b4-4b00-b7af-72b5b0417420_raw_image_0.jpg"` // Image input (URL/Base64)
-	Duration       float64        `json:"duration" example:"5.0"`                                                                                                                                                // Video duration (seconds)
-	Width          int            `json:"width" example:"512"`                                                                                                                                                   // Video width
-	Height         int            `json:"height" example:"512"`                                                                                                                                                  // Video height
-	Fps            int            `json:"fps,omitempty" example:"30"`                                                                                                                                            // Video frame rate
-	Seed           int            `json:"seed,omitempty" example:"20231234"`                                                                                                                                     // Random seed
-	N              int            `json:"n,omitempty" example:"1"`                                                                                                                                               // Number of videos to generate
-	ResponseFormat string         `json:"response_format,omitempty" example:"url"`                                                                                                                               // Response format
-	User           string         `json:"user,omitempty" example:"user-1234"`                                                                                                                                    // User identifier
-	Metadata       map[string]any `json:"metadata,omitempty"`                                                                                                                                                    // Vendor-specific/custom params (e.g. negative_prompt, style, quality_level, etc.)
+	Model          string  `json:"model,omitempty" example:"kling-v1"`                                                                                                                                    // Model/style ID
+	Prompt         string  `json:"prompt,omitempty" example:"宇航员站起身走了"`                                                                                                                                   // Text prompt
+	Image          string  `json:"image,omitempty" example:"https://h2.inkwai.com/bs2/upload-ylab-stunt/se/ai_portal_queue_mmu_image_upscale_aiweb/3214b798-e1b4-4b00-b7af-72b5b0417420_raw_image_0.jpg"` // Image input (URL/Base64)
+	ImageTail      string  `json:"image_tail,omitempty" example:"https://example.com/tail_frame.jpg"`                                                                                                     // Tail frame image for first-last frame video generation (URL/Base64)
+	Duration       float64 `json:"duration" example:"5.0"`                                                                                                                                                // Video duration (seconds)
+	Width          int     `json:"width" example:"512"`                                                                                                                                                   // Video width
+	Height         int     `json:"height" example:"512"`                                                                                                                                                  // Video height
+	Fps            int     `json:"fps,omitempty" example:"30"`                                                                                                                                            // Video frame rate
+	Seed           int     `json:"seed,omitempty" example:"20231234"`                                                                                                                                     // Random seed
+	N              int     `json:"n,omitempty" example:"1"`                                                                                                                                               // Number of videos to generate
+	ResponseFormat string  `json:"response_format,omitempty" example:"url"`                                                                                                                               // Response format
+	User           string  `json:"user,omitempty" example:"user-1234"`                                                                                                                                    // User identifier
+
+	// Common video generation parameters
+	AspectRatio    string  `json:"aspect_ratio,omitempty" example:"16:9"`                   // Video aspect ratio (16:9, 9:16, 1:1, etc.)
+	Resolution     string  `json:"resolution,omitempty" example:"720p"`                     // Video resolution (720p, 1080p, etc.)
+	Mode           string  `json:"mode,omitempty" example:"std"`                            // Generation mode (std, pro, etc.)
+	CfgScale       float64 `json:"cfg_scale,omitempty" example:"0.5"`                       // CFG scale for guidance
+	NegativePrompt string  `json:"negative_prompt,omitempty" example:"blurry, low quality"` // Negative prompt
+	QualityLevel   string  `json:"quality_level,omitempty" example:"high"`                  // Quality level (low, medium, high)
+	Watermark      bool    `json:"watermark,omitempty" example:"false"`                     // Whether to add watermark
+	CameraFixed    bool    `json:"camera_fixed,omitempty" example:"true"`                   // Whether camera is fixed
+
+	Metadata map[string]any `json:"metadata,omitempty"` // Vendor-specific/custom params for additional parameters
 }
 
 // VideoResponse 视频生成提交任务后的响应

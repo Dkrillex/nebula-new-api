@@ -34,23 +34,37 @@ type ImageURL struct {
 
 // 豆包视频生成响应结构体
 type responsePayload struct {
-	TaskID string `json:"task_id"`
+	TaskID string `json:"id"`
 	Code   int    `json:"code"`
 	Msg    string `json:"msg"`
 }
 
-// 豆包任务查询响应结构体
+// 豆包任务查询响应结构体（原始豆包API响应格式）
 type taskQueryResponse struct {
-	Code int    `json:"code"`
-	Msg  string `json:"msg"`
-	Data struct {
-		TaskID string `json:"task_id"`
-		Status string `json:"status"`
-		Result struct {
-			VideoURL string `json:"video_url"`
-		} `json:"result"`
-		Reason string `json:"reason"`
-	} `json:"data"`
+	ID      string `json:"id"`
+	Model   string `json:"model"`
+	Status  string `json:"status"`
+	Content struct {
+		VideoURL string `json:"video_url"`
+	} `json:"content"`
+	Usage struct {
+		CompletionTokens int `json:"completion_tokens"`
+		TotalTokens      int `json:"total_tokens"`
+	} `json:"usage"`
+	CreatedAt      int64  `json:"created_at"`
+	UpdatedAt      int64  `json:"updated_at"`
+	Seed           int    `json:"seed"`
+	Resolution     string `json:"resolution"`
+	Duration       int    `json:"duration"`
+	Ratio          string `json:"ratio"`
+	FramePerSecond int    `json:"framespersecond"`
+	// 错误信息字段
+	Error *struct {
+		Code    string `json:"code"`
+		Message string `json:"message"`
+		Type    string `json:"type"`
+	} `json:"error,omitempty"`
+	Reason string `json:"reason,omitempty"` // 失败原因
 }
 
 type TaskAdaptor struct {
@@ -171,11 +185,41 @@ func (a *TaskAdaptor) DoRequest(c *gin.Context, info *relaycommon.TaskRelayInfo,
 	}
 
 	common.SysLog(fmt.Sprintf("[Doubao] DoRequest - 收到响应，状态码: %d", resp.StatusCode))
+
+	// 如果是错误状态码，读取并打印响应体
+	if resp.StatusCode >= 400 {
+		body, readErr := io.ReadAll(resp.Body)
+		if readErr != nil {
+			common.SysError(fmt.Sprintf("[Doubao] DoRequest - 读取错误响应体失败: %v", readErr))
+		} else {
+			common.SysError(fmt.Sprintf("[Doubao] DoRequest - 错误响应体: %s", string(body)))
+			// 重新创建响应体，因为已经被读取了
+			resp.Body = io.NopCloser(bytes.NewReader(body))
+		}
+	}
+
 	return resp, nil
 }
 
 func (a *TaskAdaptor) DoResponse(c *gin.Context, resp *http.Response, info *relaycommon.TaskRelayInfo) (taskID string, taskData []byte, taskErr *dto.TaskError) {
-	common.SysLog(fmt.Sprintf("[Doubao] DoResponse - 开始处理响应，状态码: %d", resp.StatusCode))
+	// 记录响应基本信息
+	respInfo := map[string]interface{}{
+		"status_code":    resp.StatusCode,
+		"status":         resp.Status,
+		"proto":          resp.Proto,
+		"content_length": resp.ContentLength,
+		"headers":        make(map[string]string),
+	}
+
+	// 转换headers为简单的map格式
+	for key, values := range resp.Header {
+		if len(values) > 0 {
+			respInfo["headers"].(map[string]string)[key] = values[0]
+		}
+	}
+
+	respInfoJSON, _ := json.MarshalIndent(respInfo, "", "  ")
+	common.SysLog(fmt.Sprintf("[Doubao] DoResponse - 开始处理响应:\n%s", string(respInfoJSON)))
 
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
@@ -288,18 +332,72 @@ func convertToRequestPayload(request *dto.VideoRequest) *requestPayload {
 			Text: request.Prompt,
 		}
 
-		// 添加参数到文本中
+		// 处理火山引擎支持的视频参数
+		var paramParts []string
+
+		// 视频时长（秒）- 使用 --dur 格式
+		if request.Duration > 0 {
+			paramParts = append(paramParts, fmt.Sprintf("--dur %.0f", request.Duration))
+		}
+
+		// 视频帧率 - 使用 --fps 格式
+		if request.Fps > 0 {
+			paramParts = append(paramParts, fmt.Sprintf("--fps %d", request.Fps))
+		}
+
+		// 随机种子 - 使用 --seed 格式
+		if request.Seed > 0 {
+			paramParts = append(paramParts, fmt.Sprintf("--seed %d", request.Seed))
+		}
+
+		// 使用统一参数而不是从metadata中获取
+		// 宽高比 - 使用 --rt 格式
+		if request.AspectRatio != "" {
+			paramParts = append(paramParts, fmt.Sprintf("--rt %s", request.AspectRatio))
+		}
+
+		// 分辨率 - 使用 --rs 格式
+		if request.Resolution != "" {
+			paramParts = append(paramParts, fmt.Sprintf("--rs %s", request.Resolution))
+		}
+
+		// 水印 - 使用 --wm 格式
+		paramParts = append(paramParts, fmt.Sprintf("--wm %t", request.Watermark))
+
+		// 固定摄像头 - 使用 --cf 格式
+		paramParts = append(paramParts, fmt.Sprintf("--cf %t", request.CameraFixed))
+
+		// 负面提示词 - 如果有的话，添加到参数中
+		// if request.NegativePrompt != "" {
+		// 	paramParts = append(paramParts, fmt.Sprintf("--negative_prompt %s", request.NegativePrompt))
+		// }
+
+		// 质量等级 - 如果有的话
+		// if request.QualityLevel != "" {
+		// 	paramParts = append(paramParts, fmt.Sprintf("--quality %s", request.QualityLevel))
+		// }
+
+		// CFG Scale - 如果有的话
+		// if request.CfgScale > 0 {
+		// 	paramParts = append(paramParts, fmt.Sprintf("--cfg_scale %.2f", request.CfgScale))
+		// }
+
+		// 模式 - 如果有的话
+		// if request.Mode != "" {
+		// 	paramParts = append(paramParts, fmt.Sprintf("--mode %s", request.Mode))
+		// }
+
+		// 处理metadata中的其他自定义参数
 		if request.Metadata != nil {
-			common.SysLog(fmt.Sprintf("[Doubao] convertToRequestPayload - 处理元数据: %+v", request.Metadata))
-			if duration, ok := request.Metadata["duration"]; ok {
-				textContent.Text += fmt.Sprintf(" --duration %v", duration)
+			common.SysLog(fmt.Sprintf("[Doubao] convertToRequestPayload - 处理额外元数据: %+v", request.Metadata))
+			for key, value := range request.Metadata {
+				paramParts = append(paramParts, fmt.Sprintf("--%s %v", key, value))
 			}
-			if aspectRatio, ok := request.Metadata["aspect_ratio"]; ok {
-				textContent.Text += fmt.Sprintf(" --aspect_ratio %v", aspectRatio)
-			}
-			if resolution, ok := request.Metadata["resolution"]; ok {
-				textContent.Text += fmt.Sprintf(" --resolution %v", resolution)
-			}
+		}
+
+		// 将参数添加到文本提示词中
+		if len(paramParts) > 0 {
+			textContent.Text += " " + strings.Join(paramParts, " ")
 		}
 
 		common.SysLog(fmt.Sprintf("[Doubao] convertToRequestPayload - 添加文本内容: %s", textContent.Text))
@@ -315,7 +413,20 @@ func convertToRequestPayload(request *dto.VideoRequest) *requestPayload {
 			},
 			Role: "first_frame",
 		}
-		common.SysLog(fmt.Sprintf("[Doubao] convertToRequestPayload - 添加图片内容: %s", request.Image))
+		common.SysLog(fmt.Sprintf("[Doubao] convertToRequestPayload - 添加首帧图片内容: %s", request.Image))
+		payload.Content = append(payload.Content, imageContent)
+	}
+
+	// 添加尾帧图片内容（图生视频-首尾帧）
+	if request.ImageTail != "" {
+		imageContent := ContentItem{
+			Type: "image_url",
+			ImageURL: &ImageURL{
+				URL: request.ImageTail,
+			},
+			Role: "last_frame",
+		}
+		common.SysLog(fmt.Sprintf("[Doubao] convertToRequestPayload - 添加尾帧图片内容: %s", request.ImageTail))
 		payload.Content = append(payload.Content, imageContent)
 	}
 
@@ -334,24 +445,38 @@ func (a *TaskAdaptor) ParseTaskResult(respBody []byte) (*relaycommon.TaskInfo, e
 		return nil, fmt.Errorf("failed to unmarshal task response: %w", err)
 	}
 
-	common.SysLog(fmt.Sprintf("[Doubao] ParseTaskResult - 解析后的响应: Code=%d, Msg=%s, TaskID=%s, Status=%s", response.Code, response.Msg, response.Data.TaskID, response.Data.Status))
+	common.SysLog(fmt.Sprintf("[Doubao] ParseTaskResult - 解析后的响应: ID=%s, Status=%s, VideoURL=%s", response.ID, response.Status, response.Content.VideoURL))
 
-	if response.Code != 0 {
-		common.SysError(fmt.Sprintf("[Doubao] ParseTaskResult - API返回错误: %s (code: %d)", response.Msg, response.Code))
-		return nil, fmt.Errorf("API error: %s (code: %d)", response.Msg, response.Code)
+	// 构建任务信息
+	taskInfo := &relaycommon.TaskInfo{
+		Code:   0, // 成功解析就设为0
+		TaskID: response.ID,
+		Status: mapStatus(response.Status),
+		Reason: "",
 	}
 
-	taskInfo := &relaycommon.TaskInfo{
-		Code:   response.Code,
-		TaskID: response.Data.TaskID,
-		Status: mapStatus(response.Data.Status),
-		Reason: response.Data.Reason,
+	// 处理错误信息
+	if response.Error != nil {
+		// 从Error结构体中提取错误信息
+		errorMsg := response.Error.Message
+		if response.Error.Code != "" {
+			errorMsg = fmt.Sprintf("[%s] %s", response.Error.Code, errorMsg)
+		}
+		if response.Error.Type != "" {
+			errorMsg = fmt.Sprintf("%s (Type: %s)", errorMsg, response.Error.Type)
+		}
+		taskInfo.Reason = errorMsg
+		common.SysLog(fmt.Sprintf("[Doubao] ParseTaskResult - 检测到错误信息: %s", errorMsg))
+	} else if response.Reason != "" {
+		// 从Reason字段中提取失败原因
+		taskInfo.Reason = response.Reason
+		common.SysLog(fmt.Sprintf("[Doubao] ParseTaskResult - 检测到失败原因: %s", response.Reason))
 	}
 
 	// 如果任务完成，添加视频URL
-	if response.Data.Status == "success" && response.Data.Result.VideoURL != "" {
-		taskInfo.Url = response.Data.Result.VideoURL
-		common.SysLog(fmt.Sprintf("[Doubao] ParseTaskResult - 任务完成，视频URL: %s", response.Data.Result.VideoURL))
+	if response.Status == "succeeded" && response.Content.VideoURL != "" {
+		taskInfo.Url = response.Content.VideoURL
+		common.SysLog(fmt.Sprintf("[Doubao] ParseTaskResult - 任务完成，视频URL: %s", response.Content.VideoURL))
 	}
 
 	common.SysLog(fmt.Sprintf("[Doubao] ParseTaskResult - 解析完成，任务信息: %+v", taskInfo))
@@ -361,14 +486,18 @@ func (a *TaskAdaptor) ParseTaskResult(respBody []byte) (*relaycommon.TaskInfo, e
 // 映射豆包状态到内部状态
 func mapStatus(doubaoStatus string) string {
 	switch strings.ToLower(doubaoStatus) {
-	case "pending", "running", "processing":
-		return "pending"
-	case "success", "completed":
-		return "completed"
-	case "failed", "error":
-		return "failed"
+	case "queued":
+		return "QUEUED"
+	case "running":
+		return "IN_PROGRESS"
+	case "succeeded":
+		return "SUCCESS"
+	case "failed":
+		return "FAILURE"
+	case "cancelled":
+		return "FAILURE"
 	default:
-		return "pending"
+		return "QUEUED" // 默认为排队状态
 	}
 }
 
