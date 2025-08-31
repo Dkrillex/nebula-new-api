@@ -185,6 +185,7 @@ func SetApiRouter(router *gin.Engine) {
 		{
 			logRoute.GET("/token", controller.GetLogByKey)
 		}
+
 		groupRoute := apiRouter.Group("/group")
 		groupRoute.Use(middleware.AdminAuth())
 		{
@@ -231,6 +232,21 @@ func SetApiRouter(router *gin.Engine) {
 			modelsRoute.POST("/", controller.CreateModelMeta)
 			modelsRoute.PUT("/", controller.UpdateModelMeta)
 			modelsRoute.DELETE("/:id", controller.DeleteModelMeta)
+		}
+
+		// 外部系统同步路由 (使用系统访问令牌access_token验证)
+		syncSystemRoute := apiRouter.Group("/sync/system")
+		syncSystemRoute.Use(middleware.SystemAccessTokenAuth())
+		{
+			syncSystemRoute.POST("/user", controller.SyncUser)
+			syncSystemRoute.POST("/token", controller.SyncGenerateAccessToken)
+			syncSystemRoute.POST("/token/update", controller.SyncUpdateTokenStatus)
+			syncSystemRoute.GET("/log/stat", controller.SyncGetTokenLogsStat)
+			syncSystemRoute.GET("/log", controller.SyncGetLogs)
+			syncSystemRoute.GET("/user", controller.SyncGetUserInfo)
+			syncSystemRoute.POST("/user/exists", controller.SyncCheckUserExists)
+			syncSystemRoute.POST("/user/quota", controller.SyncUpdateUserQuota)
+			syncSystemRoute.POST("/pg/chat/completions", controller.SyncPlayground)
 		}
 	}
 }
