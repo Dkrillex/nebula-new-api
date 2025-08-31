@@ -7,7 +7,7 @@ type PlayGroundRequest struct {
 
 // SyncPlaygroundRequest 外部系统操练场请求结构体
 type SyncPlaygroundRequest struct {
-	UserId           int64                    `json:"user_id" binding:"required"`
+	UserId           int                      `json:"user_id" binding:"required"`
 	Model            string                   `json:"model" binding:"required"`
 	Group            string                   `json:"group,omitempty"`
 	Messages         []map[string]interface{} `json:"messages" binding:"required"`

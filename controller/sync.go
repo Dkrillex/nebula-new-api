@@ -708,10 +708,10 @@ func SyncPlayground(c *gin.Context) {
 	}
 
 	// 先尝试从缓存获取用户信息
-	userCache, err := model.GetUserCache(int(userId))
+	userCache, err := model.GetUserCache(userId)
 	if err != nil {
 		// 缓存中没有，从数据库查询
-		user, dbErr := model.GetUserById(int(userId), true)
+		user, dbErr := model.GetUserById(userId, true)
 		if dbErr != nil {
 			newAPIError = types.NewError(errors.New("用户不存在"), types.ErrorCodeInvalidRequest)
 			return
