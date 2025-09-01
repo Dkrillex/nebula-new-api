@@ -141,8 +141,12 @@ func SyncGenerateAccessToken(c *gin.Context) {
 	}
 
 	// 生成API令牌
-	randI := common.GetRandomInt(4)
-	key, err := common.GenerateRandomKey(29 + randI)
+	//randI := common.GetRandomInt(4)
+	key, err := common.GenerateKey()
+	//key, err := common.GenerateRandomKey(29 + randI)
+	key = strings.ReplaceAll(key, "+", "-")
+	key = strings.ReplaceAll(key, "/", "_")
+	key = strings.ReplaceAll(key, "=", "")
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"success": false,

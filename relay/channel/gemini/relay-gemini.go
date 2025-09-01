@@ -728,6 +728,59 @@ func getResponseToolCall(item *dto.GeminiPart) *dto.ToolCallResponse {
 	}
 }
 
+// 检查是否为图像生成响应
+func isImageGenerationResponse(response *dto.GeminiChatResponse) bool {
+	for _, candidate := range response.Candidates {
+		for _, part := range candidate.Content.Parts {
+			if part.InlineData != nil && strings.HasPrefix(part.InlineData.MimeType, "image") {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// 将 Gemini 图像生成响应转换为 OpenAI ImageResponse 格式
+func responseGeminiImageGeneration2OpenAI(response *dto.GeminiChatResponse) *dto.ImageResponse {
+	imageResponse := &dto.ImageResponse{
+		Created: common.GetTimestamp(),
+		Data:    make([]dto.ImageData, 0),
+	}
+
+	for _, candidate := range response.Candidates {
+		// 收集文本描述，用作 revised_prompt
+		var textParts []string
+		for _, part := range candidate.Content.Parts {
+			if part.InlineData != nil && strings.HasPrefix(part.InlineData.MimeType, "image") {
+				// 处理图像数据
+				imageData := dto.ImageData{
+					B64Json: part.InlineData.Data,
+				}
+				// 如果有文本描述，添加到 revised_prompt
+				if len(textParts) > 0 {
+					imageData.RevisedPrompt = strings.Join(textParts, " ")
+				}
+				imageResponse.Data = append(imageResponse.Data, imageData)
+			} else if part.Text != "" && part.Text != "\n" && !part.Thought {
+				// 收集非空的文本内容（排除思考内容）
+				textParts = append(textParts, part.Text)
+			}
+		}
+
+		// 如果有图像但还没有设置 revised_prompt，为所有图像设置文本描述
+		if len(textParts) > 0 {
+			revisedPrompt := strings.Join(textParts, " ")
+			for i := range imageResponse.Data {
+				if imageResponse.Data[i].RevisedPrompt == "" {
+					imageResponse.Data[i].RevisedPrompt = revisedPrompt
+				}
+			}
+		}
+	}
+
+	return imageResponse
+}
+
 func responseGeminiChat2OpenAI(c *gin.Context, response *dto.GeminiChatResponse) *dto.OpenAITextResponse {
 	fullTextResponse := dto.OpenAITextResponse{
 		Id:      helper.GetResponseID(c),
@@ -1034,6 +1087,35 @@ func GeminiChatHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http.R
 	if len(geminiResponse.Candidates) == 0 {
 		return nil, types.NewOpenAIError(errors.New("no candidates returned"), types.ErrorCodeBadResponseBody, http.StatusInternalServerError)
 	}
+
+	// 检查是否为图像生成响应
+	if isImageGenerationResponse(&geminiResponse) {
+		// 转换为图像响应格式
+		imageResponse := responseGeminiImageGeneration2OpenAI(&geminiResponse)
+
+		// 计算图像生成的 token 使用量
+		const imageTokens = 258 // 每张图片固定 258 tokens
+		generatedImages := len(imageResponse.Data)
+		usage := dto.Usage{
+			PromptTokens:     imageTokens * generatedImages,
+			CompletionTokens: 0, // 图像生成不计算完成 tokens
+			TotalTokens:      imageTokens * generatedImages,
+		}
+
+		// 序列化图像响应
+		responseBody, err = json.Marshal(imageResponse)
+		if err != nil {
+			return nil, types.NewError(err, types.ErrorCodeBadResponseBody)
+		}
+
+		c.Writer.Header().Set("Content-Type", "application/json")
+		c.Writer.WriteHeader(resp.StatusCode)
+		_, _ = c.Writer.Write(responseBody)
+
+		return &usage, nil
+	}
+
+	// 处理普通文本响应
 	fullTextResponse := responseGeminiChat2OpenAI(c, &geminiResponse)
 	fullTextResponse.Model = info.UpstreamModelName
 	usage := dto.Usage{

@@ -1,6 +1,7 @@
 package gemini
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -10,6 +11,7 @@ import (
 	"one-api/relay/channel/openai"
 	relaycommon "one-api/relay/common"
 	"one-api/relay/constant"
+	"one-api/service"
 	"one-api/setting/model_setting"
 	"one-api/types"
 	"strings"
@@ -54,22 +56,153 @@ func (a *Adaptor) ConvertAudioRequest(c *gin.Context, info *relaycommon.RelayInf
 	return nil, errors.New("not implemented")
 }
 
+// convertPartToGeminiPart 将通用的part数据转换为GeminiPart
+func (a *Adaptor) convertPartToGeminiPart(c *gin.Context, partData interface{}) *dto.GeminiPart {
+	partMap, ok := partData.(map[string]interface{})
+	if !ok {
+		return nil
+	}
+
+	// 处理文本part
+	if text, exists := partMap["text"]; exists {
+		if textStr, ok := text.(string); ok {
+			return &dto.GeminiPart{Text: textStr}
+		}
+	}
+
+	// 处理图像part（base64或URL）
+	if imageData, exists := partMap["image"]; exists {
+		if imageStr, ok := imageData.(string); ok {
+			return a.convertImageDataToGeminiPart(c, imageStr)
+		}
+	}
+
+	// 处理inline_data格式的图像
+	if inlineData, exists := partMap["inline_data"]; exists {
+		if inlineMap, ok := inlineData.(map[string]interface{}); ok {
+			if mimeType, mimeOk := inlineMap["mime_type"].(string); mimeOk {
+				if data, dataOk := inlineMap["data"].(string); dataOk {
+					return &dto.GeminiPart{
+						InlineData: &dto.GeminiInlineData{
+							MimeType: mimeType,
+							Data:     data,
+						},
+					}
+				}
+			}
+		}
+	}
+
+	return nil
+}
+
+// convertImageDataToGeminiPart 将图像数据转换为GeminiPart
+func (a *Adaptor) convertImageDataToGeminiPart(c *gin.Context, imageData string) *dto.GeminiPart {
+	// 处理base64图像
+	if strings.HasPrefix(imageData, "data:image/") {
+		// 提取base64数据和MIME类型
+		imageParts := strings.Split(imageData, ",")
+		if len(imageParts) == 2 {
+			mimeType := "image/jpeg" // 默认
+			if strings.Contains(imageParts[0], "image/png") {
+				mimeType = "image/png"
+			} else if strings.Contains(imageParts[0], "image/webp") {
+				mimeType = "image/webp"
+			}
+			return &dto.GeminiPart{
+				InlineData: &dto.GeminiInlineData{
+					MimeType: mimeType,
+					Data:     imageParts[1],
+				},
+			}
+		}
+	} else if strings.HasPrefix(imageData, "http") {
+		// 处理URL图像（下载并转换为base64）
+		fileData, err := service.GetFileBase64FromUrl(c, imageData, "formatting image for Gemini")
+		if err != nil {
+			return nil // 跳过无法下载的图像
+		}
+		return &dto.GeminiPart{
+			InlineData: &dto.GeminiInlineData{
+				MimeType: fileData.MimeType,
+				Data:     fileData.Base64Data,
+			},
+		}
+	}
+	return nil
+}
+
 func (a *Adaptor) ConvertImageRequest(c *gin.Context, info *relaycommon.RelayInfo, request dto.ImageRequest) (any, error) {
-	// 还是有点问题,入参有问题,先暂存
 	// 支持gemini-2.5-flash-image系列模型
 	if strings.Contains(info.UpstreamModelName, "gemini-2.5-flash-image") {
+		var contents []dto.GeminiChatContent
+
+		// 检查是否有完整的对话上下文（contents格式）
+		if request.Extra != nil {
+			if contentsData, exists := request.Extra["contents"]; exists {
+				// 解析完整的对话上下文
+				var contextContents []map[string]interface{}
+				if err := json.Unmarshal(contentsData, &contextContents); err == nil {
+					for _, content := range contextContents {
+						role, _ := content["role"].(string)
+						partsData, _ := content["parts"].([]interface{})
+
+						var parts []dto.GeminiPart
+						for _, partData := range partsData {
+							part := a.convertPartToGeminiPart(c, partData)
+							if part != nil {
+								parts = append(parts, *part)
+							}
+						}
+
+						if len(parts) > 0 {
+							contents = append(contents, dto.GeminiChatContent{
+								Role:  role,
+								Parts: parts,
+							})
+						}
+					}
+				}
+			}
+		}
+
+		// 如果没有完整的对话上下文，使用传统方式构建单个用户消息
+		if len(contents) == 0 {
+			parts := []dto.GeminiPart{}
+
+			// 添加文本提示词
+			if request.Prompt != "" {
+				parts = append(parts, dto.GeminiPart{
+					Text: request.Prompt,
+				})
+			}
+
+			// 检查Extra中的图像数据
+			if request.Extra != nil {
+				for key, value := range request.Extra {
+					if strings.Contains(strings.ToLower(key), "image") {
+						var imageData string
+						if err := json.Unmarshal(value, &imageData); err == nil {
+							part := a.convertImageDataToGeminiPart(c, imageData)
+							if part != nil {
+								parts = append(parts, *part)
+							}
+						}
+					}
+				}
+			}
+
+			contents = []dto.GeminiChatContent{
+				{
+					Role:  "user",
+					Parts: parts,
+				},
+			}
+		}
+
 		// 使用标准Gemini格式，支持多模态响应
 		geminiRequest := dto.GeminiChatRequest{
-			Contents: []dto.GeminiChatContent{
-				{
-					Role: "user",
-					Parts: []dto.GeminiPart{
-						{
-							Text: request.Prompt,
-						},
-					},
-				},
-			},
+			Contents: contents,
 			GenerationConfig: dto.GeminiChatGenerationConfig{
 				Temperature:        func() *float64 { t := 1.0; return &t }(),
 				MaxOutputTokens:    32768,
