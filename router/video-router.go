@@ -31,4 +31,14 @@ func SetVideoRouter(router *gin.Engine) {
 		// Maps to: /?Action=CVSync2AsyncSubmitTask&Version=2022-08-31 and /?Action=CVSync2AsyncGetResult&Version=2022-08-31
 		jimengOfficialGroup.POST("/", controller.RelayTask)
 	}
+
+	// Doubao video generation API routes
+	doubaoV1Router := router.Group("/doubao/v1")
+	doubaoV1Router.Use(middleware.DoubaoRequestConvert(), middleware.TokenAuth(), middleware.Distribute())
+	{
+		doubaoV1Router.POST("/videos/text2video", controller.RelayTask)
+		doubaoV1Router.POST("/videos/image2video", controller.RelayTask)
+		doubaoV1Router.GET("/videos/text2video/:task_id", controller.RelayTask)
+		doubaoV1Router.GET("/videos/image2video/:task_id", controller.RelayTask)
+	}
 }
