@@ -3,6 +3,7 @@ package model
 import (
 	"encoding/json"
 	"fmt"
+	"strconv"
 	"strings"
 
 	"one-api/common"
@@ -65,6 +66,42 @@ func GetPricing() []Pricing {
 		}
 	}
 	return pricingMap
+}
+
+// GetPricingWithPagination 获取分页的定价信息
+func GetPricingWithPagination(pageStr, pageSizeStr string) ([]Pricing, int, error) {
+	// 先获取完整的定价信息
+	allPricing := GetPricing()
+	total := len(allPricing)
+
+	// 如果 pageSize 为 0 或空，返回所有数据（不分页）
+	if pageSizeStr == "0" || pageSizeStr == "" {
+		return allPricing, total, nil
+	}
+
+	// 解析分页参数
+	page, err := strconv.Atoi(pageStr)
+	if err != nil || page < 1 {
+		page = 1
+	}
+
+	pageSize, err := strconv.Atoi(pageSizeStr)
+	if err != nil || pageSize < 1 {
+		return allPricing, total, nil // 如果 pageSize 无效，返回所有数据
+	}
+
+	// 计算分页范围
+	start := (page - 1) * pageSize
+	if start >= total {
+		return []Pricing{}, total, nil // 超出范围，返回空数组
+	}
+
+	end := start + pageSize
+	if end > total {
+		end = total
+	}
+
+	return allPricing[start:end], total, nil
 }
 
 // GetVendors 返回当前定价接口使用到的供应商信息

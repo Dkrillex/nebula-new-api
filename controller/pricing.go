@@ -9,7 +9,19 @@ import (
 )
 
 func GetPricing(c *gin.Context) {
-	pricing := model.GetPricing()
+	// 获取分页参数
+	page := c.DefaultQuery("p", "1")
+	pageSize := c.DefaultQuery("pageSize", "0") // 默认为0表示不分页
+
+	pricing, total, err := model.GetPricingWithPagination(page, pageSize)
+	if err != nil {
+		c.JSON(500, gin.H{
+			"success": false,
+			"message": err.Error(),
+		})
+		return
+	}
+
 	userId, exists := c.Get("id")
 	usableGroup := map[string]string{}
 	groupRatio := map[string]float64{}
@@ -38,7 +50,7 @@ func GetPricing(c *gin.Context) {
 		}
 	}
 
-	c.JSON(200, gin.H{
+	response := gin.H{
 		"success":            true,
 		"data":               pricing,
 		"vendors":            model.GetVendors(),
@@ -46,7 +58,16 @@ func GetPricing(c *gin.Context) {
 		"usable_group":       usableGroup,
 		"supported_endpoint": model.GetSupportedEndpointMap(),
 		"auto_groups":        setting.AutoGroups,
-	})
+	}
+
+	// 如果启用了分页，添加分页信息
+	if pageSize != "0" {
+		response["total"] = total
+		response["page"] = page
+		response["page_size"] = pageSize
+	}
+
+	c.JSON(200, response)
 }
 
 func ResetModelRatio(c *gin.Context) {
