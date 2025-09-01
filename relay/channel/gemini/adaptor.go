@@ -55,6 +55,41 @@ func (a *Adaptor) ConvertAudioRequest(c *gin.Context, info *relaycommon.RelayInf
 }
 
 func (a *Adaptor) ConvertImageRequest(c *gin.Context, info *relaycommon.RelayInfo, request dto.ImageRequest) (any, error) {
+	// 还是有点问题,入参有问题,先暂存
+	// 支持gemini-2.5-flash-image系列模型
+	if strings.Contains(info.UpstreamModelName, "gemini-2.5-flash-image") {
+		// 使用标准Gemini格式，支持多模态响应
+		geminiRequest := dto.GeminiChatRequest{
+			Contents: []dto.GeminiChatContent{
+				{
+					Role: "user",
+					Parts: []dto.GeminiPart{
+						{
+							Text: request.Prompt,
+						},
+					},
+				},
+			},
+			GenerationConfig: dto.GeminiChatGenerationConfig{
+				Temperature:        func() *float64 { t := 1.0; return &t }(),
+				MaxOutputTokens:    32768,
+				ResponseModalities: []string{"TEXT", "IMAGE"}, // 关键：请求图像生成
+				TopP:               0.95,
+			},
+			SafetySettings: []dto.GeminiChatSafetySettings{
+				{Category: "HARM_CATEGORY_HATE_SPEECH", Threshold: "OFF"},
+				{Category: "HARM_CATEGORY_DANGEROUS_CONTENT", Threshold: "OFF"},
+				{Category: "HARM_CATEGORY_SEXUALLY_EXPLICIT", Threshold: "OFF"},
+				{Category: "HARM_CATEGORY_HARASSMENT", Threshold: "OFF"},
+				{Category: "HARM_CATEGORY_IMAGE_HATE", Threshold: "OFF"},
+				{Category: "HARM_CATEGORY_IMAGE_DANGEROUS_CONTENT", Threshold: "OFF"},
+				{Category: "HARM_CATEGORY_IMAGE_HARASSMENT", Threshold: "OFF"},
+				{Category: "HARM_CATEGORY_IMAGE_SEXUALLY_EXPLICIT", Threshold: "OFF"},
+			},
+		}
+		return geminiRequest, nil
+	}
+
 	if !strings.HasPrefix(info.UpstreamModelName, "imagen") {
 		return nil, errors.New("not supported model for image generation")
 	}
