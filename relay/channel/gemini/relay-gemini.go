@@ -738,7 +738,7 @@ func isImageGenerationResponse(response *dto.GeminiChatResponse) bool {
 		}
 	}
 	//  谷歌问题,现在有时候只返回了text,但是没有图片,直接用版本来判断
-	if strings.HasPrefix(response.ModelVersion, "image") {
+	if strings.Contains(response.ModelVersion, "image") {
 		return true
 	}
 	return false
@@ -1088,7 +1088,12 @@ func GeminiChatHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http.R
 	}
 	service.CloseResponseBodyGracefully(resp)
 	if common.DebugEnabled {
-		println(string(responseBody))
+		// 如果响应体超过10KB，不打印包含base64图片的大数据
+		if len(responseBody) > 10*1024 {
+			println("[Gemini-GeminiChatHandler] Response body too large (>10KB), skipping debug output to avoid printing large base64 data")
+		} else {
+			println("[Gemini-GeminiChatHandler] " + string(responseBody))
+		}
 	}
 	var geminiResponse dto.GeminiChatResponse
 	err = common.Unmarshal(responseBody, &geminiResponse)

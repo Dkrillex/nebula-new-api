@@ -74,7 +74,11 @@ func ImageHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *type
 			}
 
 			if common.DebugEnabled {
-				logger.LogDebug(c, fmt.Sprintf("image request body: %s", string(jsonData)))
+				if len(jsonData) > 10*1024 {
+					logger.LogDebug(c, fmt.Sprintf("[image_Handler]image too large (>10KB), skipping debug output to avoid printing large base64 data"))
+				} else {
+					logger.LogDebug(c, fmt.Sprintf("[image_Handler]image request body: %s", string(jsonData)))
+				}
 			}
 			requestBody = bytes.NewBuffer(jsonData)
 		}
