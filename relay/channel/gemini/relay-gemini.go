@@ -737,6 +737,10 @@ func isImageGenerationResponse(response *dto.GeminiChatResponse) bool {
 			}
 		}
 	}
+	//  谷歌问题,现在有时候只返回了text,但是没有图片,直接用版本来判断
+	if strings.HasPrefix(response.ModelVersion, "image") {
+		return true
+	}
 	return false
 }
 
@@ -769,6 +773,13 @@ func responseGeminiImageGeneration2OpenAI(response *dto.GeminiChatResponse) *dto
 
 		// 如果有图像但还没有设置 revised_prompt，为所有图像设置文本描述
 		if len(textParts) > 0 {
+			// 谷歌问题,现在有时候只返回了text,但是没有图片
+			if len(imageResponse.Data) == 0 {
+				imageData := dto.ImageData{
+					B64Json: "",
+				}
+				imageResponse.Data = append(imageResponse.Data, imageData)
+			}
 			revisedPrompt := strings.Join(textParts, " ")
 			for i := range imageResponse.Data {
 				if imageResponse.Data[i].RevisedPrompt == "" {

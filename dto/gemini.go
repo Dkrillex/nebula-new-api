@@ -2,11 +2,12 @@ package dto
 
 import (
 	"encoding/json"
-	"github.com/gin-gonic/gin"
 	"one-api/common"
 	"one-api/logger"
 	"one-api/types"
 	"strings"
+
+	"github.com/gin-gonic/gin"
 )
 
 type GeminiChatRequest struct {
@@ -265,6 +266,8 @@ type GeminiChatResponse struct {
 	Candidates     []GeminiChatCandidate    `json:"candidates"`
 	PromptFeedback GeminiChatPromptFeedback `json:"promptFeedback"`
 	UsageMetadata  GeminiUsageMetadata      `json:"usageMetadata"`
+	ModelVersion   string                   `json:"modelVersion"`
+	CreateTime     string                   `json:"createTime"`
 }
 
 type GeminiUsageMetadata struct {
