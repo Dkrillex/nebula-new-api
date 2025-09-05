@@ -1109,13 +1109,11 @@ func GeminiChatHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http.R
 		// 转换为图像响应格式
 		imageResponse := responseGeminiImageGeneration2OpenAI(&geminiResponse)
 
-		// 计算图像生成的 token 使用量
-		const imageTokens = 258 // 每张图片固定 258 tokens
-		generatedImages := len(imageResponse.Data)
+		// 使用API返回的真实token使用量
 		usage := dto.Usage{
-			PromptTokens:     imageTokens * generatedImages,
-			CompletionTokens: 0, // 图像生成不计算完成 tokens
-			TotalTokens:      imageTokens * generatedImages,
+			PromptTokens:     geminiResponse.UsageMetadata.PromptTokenCount,
+			CompletionTokens: geminiResponse.UsageMetadata.CandidatesTokenCount,
+			TotalTokens:      geminiResponse.UsageMetadata.TotalTokenCount,
 		}
 
 		// 序列化图像响应
