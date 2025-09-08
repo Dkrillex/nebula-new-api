@@ -45,6 +45,7 @@ const (
 	LogTypeManage
 	LogTypeSystem
 	LogTypeError
+	LogTypeTopUpAndConsume
 )
 
 func formatUserLogs(logs []*Log) {
@@ -203,6 +204,8 @@ func GetAllLogs(logType int, startTimestamp int64, endTimestamp int64, modelName
 	var tx *gorm.DB
 	if logType == LogTypeUnknown {
 		tx = LOG_DB
+	} else if logType == LogTypeTopUpAndConsume {
+		tx = LOG_DB.Where("logs.type in (1,2))")
 	} else {
 		tx = LOG_DB.Where("logs.type = ?", logType)
 	}
