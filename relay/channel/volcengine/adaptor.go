@@ -48,6 +48,7 @@ type DoubaoImageRequest struct {
 	Image          interface{}      `json:"image,omitempty"` // 支持单张图片(string)或多张图片([]string)
 	ImageData      *DoubaoImageData `json:"image_data,omitempty"`
 	ResponseFormat string           `json:"response_format,omitempty"`
+	Size           string           `json:"size,omitempty"`
 	Watermark      *bool            `json:"watermark,omitempty"`
 }
 
@@ -74,6 +75,7 @@ func (a *Adaptor) ConvertImageRequest(c *gin.Context, info *relaycommon.RelayInf
 				Prompt:         request.Prompt,
 				Watermark:      request.Watermark,
 				ResponseFormat: request.ResponseFormat,
+				Size:           request.Size,
 			}
 
 			// 先判断extra是否存在
@@ -128,9 +130,7 @@ func (a *Adaptor) ConvertImageRequest(c *gin.Context, info *relaycommon.RelayInf
 									logger.LogInfo(c, fmt.Sprintf("使用单张图片URL: %s", imageData[:min(50, len(imageData))]+"..."))
 								} else {
 									// Base64格式
-									req.ImageData = &DoubaoImageData{
-										Data: imageData,
-									}
+									req.Image = imageData
 									logger.LogInfo(c, fmt.Sprintf("使用单张Base64图片数据，长度: %d", len(imageData)))
 								}
 							} else {
@@ -157,9 +157,7 @@ func (a *Adaptor) ConvertImageRequest(c *gin.Context, info *relaycommon.RelayInf
 				if err != nil {
 					return nil, err
 				}
-
-				//logger.LogInfo(c, fmt.Sprintf("已拼接%d个extra属性到doubaoRequest中", len(request.Extra)))
-				logger.LogInfo(c, fmt.Sprintf("已拼接%d个extra属性到doubaoRequest中，req: %+v", len(request.Extra), reqMap))
+				delete(reqMap, "contents")
 				return reqMap, nil
 			} else {
 				// 如果没有extra，使用原有逻辑
@@ -168,6 +166,7 @@ func (a *Adaptor) ConvertImageRequest(c *gin.Context, info *relaycommon.RelayInf
 					Prompt:         request.Prompt,
 					Watermark:      request.Watermark,
 					ResponseFormat: request.ResponseFormat,
+					Size:           request.Size,
 				}
 
 				return doubaoRequest, nil
@@ -177,6 +176,7 @@ func (a *Adaptor) ConvertImageRequest(c *gin.Context, info *relaycommon.RelayInf
 			doubaoRequest := DoubaoImageRequest{
 				Model:  request.Model,
 				Prompt: request.Prompt,
+				Size:   request.Size,
 			}
 
 			// 直接赋值整个Extra，支持所有火山引擎API参数
