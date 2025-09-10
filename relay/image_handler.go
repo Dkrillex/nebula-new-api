@@ -116,6 +116,11 @@ func ImageHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *type
 		usage.(*dto.Usage).PromptTokens = int(request.N)
 	}
 
+	// 设置生成图片数量到 context，用于按次计费乘数计算
+	if _, exists := c.Get("generated_images_count"); !exists {
+		c.Set("generated_images_count", int(request.N))
+	}
+
 	quality := "standard"
 	if request.Quality == "hd" {
 		quality = "hd"

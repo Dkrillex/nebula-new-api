@@ -58,7 +58,6 @@ func formatUserLogs(logs []*Log) {
 			delete(otherMap, "admin_info")
 		}
 		logs[i].Other = common.MapToJsonStr(otherMap)
-		logs[i].Id = logs[i].Id % 1024
 	}
 }
 

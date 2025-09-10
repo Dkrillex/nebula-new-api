@@ -11,6 +11,7 @@ import (
 	"one-api/logger"
 	"one-api/model"
 	relaycommon "one-api/relay/common"
+	relayconstant "one-api/relay/constant"
 	"one-api/relay/helper"
 	"one-api/service"
 	"one-api/setting/model_setting"
@@ -312,7 +313,22 @@ func postConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, usage 
 			quotaCalculateDecimal = decimal.NewFromInt(1)
 		}
 	} else {
-		quotaCalculateDecimal = dModelPrice.Mul(dQuotaPerUnit).Mul(dGroupRatio)
+		// 按次计费（例如图片生成）——支持按图片数量乘以单价
+		multiplier := 1
+		if relayInfo.RelayMode == relayconstant.RelayModeImagesGenerations {
+			if v, exists := ctx.Get("generated_images_count"); exists {
+				if n, ok := v.(int); ok && n > 0 {
+					multiplier = n
+				}
+			} else if usage != nil && usage.TotalTokens > 0 {
+				// 兜底：没有透传图片数量时，使用 usage.TotalTokens（在 ImageHandler 中默认为请求 N）
+				multiplier = usage.TotalTokens
+			}
+		}
+		quotaCalculateDecimal = dModelPrice.Mul(dQuotaPerUnit).Mul(dGroupRatio).Mul(decimal.NewFromInt(int64(multiplier)))
+		if multiplier > 1 {
+			extraContent += fmt.Sprintf("，按次计费×图片数：单价 %.2f，数量 %d", modelPrice, multiplier)
+		}
 	}
 	// 添加 responses tools call 调用的配额
 	quotaCalculateDecimal = quotaCalculateDecimal.Add(dWebSearchQuota)
@@ -383,6 +399,18 @@ func postConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, usage 
 		other["image"] = true
 		other["image_ratio"] = imageRatio
 		other["image_output"] = imageTokens
+	}
+	// 记录按次×图片数量的信息
+	if relayInfo.PriceData.UsePrice && relayInfo.RelayMode == relayconstant.RelayModeImagesGenerations {
+		if v, exists := ctx.Get("generated_images_count"); exists {
+			if n, ok := v.(int); ok && n > 0 {
+				other["per_call_image_multiplier"] = n
+				other["per_call_price"] = modelPrice
+			}
+		} else if usage != nil && usage.TotalTokens > 0 {
+			other["per_call_image_multiplier"] = usage.TotalTokens
+			other["per_call_price"] = modelPrice
+		}
 	}
 	if !dWebSearchQuota.IsZero() {
 		if relayInfo.ResponsesUsageInfo != nil {
