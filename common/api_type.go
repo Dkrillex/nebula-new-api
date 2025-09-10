@@ -52,7 +52,7 @@ func ChannelType2APIType(channelType int) (int, bool) {
 	case constant.ChannelTypeMokaAI:
 		apiType = constant.APITypeMokaAI
 	case constant.ChannelTypeVolcEngine:
-		apiType = constant.APITypeVolcEngine
+		apiType = constant.APITypeDoubao
 	case constant.ChannelTypeBaiduV2:
 		apiType = constant.APITypeBaiduV2
 	case constant.ChannelTypeOpenRouter:

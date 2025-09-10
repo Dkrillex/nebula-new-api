@@ -101,6 +101,8 @@ func GetAdaptor(apiType int) channel.Adaptor {
 		return &coze.Adaptor{}
 	case constant.APITypeJimeng:
 		return &jimeng.Adaptor{}
+	case constant.APITypeDoubao:
+		return &volcengine.Adaptor{}
 	case constant.APITypeMoonshot:
 		return &moonshot.Adaptor{} // Moonshot uses Claude API
 	}
@@ -131,6 +133,8 @@ func GetTaskAdaptor(platform constant.TaskPlatform) channel.TaskAdaptor {
 		case constant.ChannelTypeVidu:
 			return &taskVidu.TaskAdaptor{}
 		case constant.ChannelTypeVolcEngine:
+			return &doubao.TaskAdaptor{}
+		case constant.APITypeDoubao:
 			return &doubao.TaskAdaptor{}
 		}
 	}
