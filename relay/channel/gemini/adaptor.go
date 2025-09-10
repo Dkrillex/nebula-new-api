@@ -77,22 +77,6 @@ func (a *Adaptor) convertPartToGeminiPart(c *gin.Context, partData interface{}) 
 		}
 	}
 
-	// 处理inline_data格式的图像
-	if inlineData, exists := partMap["inline_data"]; exists {
-		if inlineMap, ok := inlineData.(map[string]interface{}); ok {
-			if mimeType, mimeOk := inlineMap["mime_type"].(string); mimeOk {
-				if data, dataOk := inlineMap["data"].(string); dataOk {
-					return &dto.GeminiPart{
-						InlineData: &dto.GeminiInlineData{
-							MimeType: mimeType,
-							Data:     data,
-						},
-					}
-				}
-			}
-		}
-	}
-
 	return nil
 }
 
