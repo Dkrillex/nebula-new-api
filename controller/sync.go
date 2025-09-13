@@ -1,8 +1,11 @@
 package controller
 
 import (
+	"bytes"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"math"
 	"net/http"
 	"one-api/common"
@@ -769,4 +772,127 @@ func SyncPlayground(c *gin.Context) {
 
 	// 转发请求到模型
 	Relay(c, types.RelayFormatOpenAI)
+}
+
+// SyncImageGeneration 处理外部系统图片生成请求
+// @Summary 外部系统图片生成
+// @Description 供外部系统调用，通过请求体中的user_id指定实际扣费用户进行图片生成
+// @Tags 外部系统集成
+// @Accept json
+// @Produce json
+// @Param data body dto.SyncImageGenerationRequest true "图片生成请求"
+// @Success 200 {object} common.Response{data=object}
+// @Failure 400 {object} common.Response{msg=string}
+// @Failure 500 {object} common.Response{msg=string}
+// @Router /api/sync/system/images/generations [post]
+func SyncImageGeneration(c *gin.Context) {
+	var newAPIError *types.NewAPIError
+
+	defer func() {
+		if newAPIError != nil {
+			c.JSON(newAPIError.StatusCode, gin.H{
+				"error": newAPIError.ToOpenAIError(),
+			})
+		}
+	}()
+
+	// 解析请求体
+	imageRequest := &dto.SyncImageGenerationRequest{}
+	err := common.UnmarshalBodyReusable(c, imageRequest)
+	if err != nil {
+		newAPIError = types.NewError(err, types.ErrorCodeInvalidRequest)
+		return
+	}
+
+	// 获取用户ID
+	userId := imageRequest.UserId
+	if userId <= 0 {
+		newAPIError = types.NewError(errors.New("无效的用户ID"), types.ErrorCodeInvalidRequest)
+		return
+	}
+
+	// 先尝试从缓存获取用户信息
+	userCache, err := model.GetUserCache(userId)
+	if err != nil {
+		// 缓存中没有，从数据库查询
+		user, dbErr := model.GetUserById(userId, true)
+		if dbErr != nil {
+			newAPIError = types.NewError(errors.New("用户不存在"), types.ErrorCodeInvalidRequest)
+			return
+		}
+		// 将查询结果转换为缓存对象
+		userCache = user.ToBaseUser()
+	}
+
+	// 检查用户状态
+	if userCache.Status != common.UserStatusEnabled {
+		newAPIError = types.NewError(errors.New("用户已被禁用"), types.ErrorCodeInvalidRequest)
+		return
+	}
+
+	// 验证模型参数
+	if imageRequest.Model == "" {
+		newAPIError = types.NewError(errors.New("请选择模型"), types.ErrorCodeInvalidRequest)
+		return
+	}
+	c.Set("original_model", imageRequest.Model)
+
+	// 设置分组
+	group := imageRequest.Group
+	if group == "" {
+		group = userCache.Group
+	}
+	c.Set("group", group)
+
+	// 设置用户ID到上下文
+	c.Set("id", userId)
+
+	// 写入用户缓存到上下文
+	userCache.WriteContext(c)
+
+	// 创建临时令牌
+	tempToken := &model.Token{
+		UserId: userId,
+		Name:   fmt.Sprintf("nebula-image-generations-%s", group),
+		Group:  group,
+	}
+	_ = middleware.SetupContextForToken(c, tempToken)
+
+	// 获取渠道
+	_, newAPIError = getChannel(c, group, imageRequest.Model, 1)
+	if newAPIError != nil {
+		return
+	}
+
+	// 构建标准的ImageRequest，包含Extra字段
+	standardImageRequest := &dto.ImageRequest{
+		Model:          imageRequest.Model,
+		Prompt:         imageRequest.Prompt,
+		N:              imageRequest.N,
+		Size:           imageRequest.Size,
+		Quality:        imageRequest.Quality,
+		ResponseFormat: imageRequest.ResponseFormat,
+		Extra:          imageRequest.Extra, // 传递私有参数
+	}
+
+	// 如果有Style字段，转换为json.RawMessage
+	if imageRequest.Style != "" {
+		styleBytes, _ := json.Marshal(imageRequest.Style)
+		standardImageRequest.Style = styleBytes
+	}
+
+	// 将标准请求重新设置到请求体中
+	requestBytes, err := json.Marshal(standardImageRequest)
+	if err != nil {
+		newAPIError = types.NewError(err, types.ErrorCodeInvalidRequest)
+		return
+	}
+	c.Request.Body = io.NopCloser(bytes.NewReader(requestBytes))
+	c.Request.ContentLength = int64(len(requestBytes))
+
+	// 设置请求开始时间
+	common.SetContextKey(c, constant.ContextKeyRequestStartTime, time.Now())
+
+	// 转发请求到模型
+	Relay(c, types.RelayFormatOpenAIImage)
 }

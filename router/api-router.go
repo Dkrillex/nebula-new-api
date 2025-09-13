@@ -247,6 +247,7 @@ func SetApiRouter(router *gin.Engine) {
 			syncSystemRoute.POST("/user/exists", controller.SyncCheckUserExists)
 			syncSystemRoute.POST("/user/quota", controller.SyncUpdateUserQuota)
 			syncSystemRoute.POST("/pg/chat/completions", controller.SyncPlayground)
+			syncSystemRoute.POST("/images/generations", controller.SyncImageGeneration)
 		}
 	}
 }
