@@ -32,7 +32,7 @@ type SyncImageGenerationRequest struct {
 	Quality        string `json:"quality,omitempty"`
 	ResponseFormat string `json:"response_format,omitempty"`
 	Style          string `json:"style,omitempty"`
-	// 用匿名参数接收额外参数，支持大模型私有参数
+	// 用匿名参数接收额外参数，支持大模型私有参数（包括contents等）
 	Extra map[string]json.RawMessage `json:"-"`
 }
 
