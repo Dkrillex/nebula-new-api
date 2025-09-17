@@ -184,14 +184,54 @@ func (a *Adaptor) ConvertImageRequest(c *gin.Context, info *relaycommon.RelayInf
 			}
 		}
 
+		// 从Extra中获取各种参数，如果没有则使用默认值
+		temperature := 1.0
+		maxOutputTokens := uint(32768)
+		responseModalities := []string{"TEXT", "IMAGE"}
+		topP := 0.95
+
+		if request.Extra != nil {
+			// 获取temperature参数
+			if tempData, exists := request.Extra["temperature"]; exists {
+				var tempValue float64
+				if err := json.Unmarshal(tempData, &tempValue); err == nil {
+					temperature = tempValue
+				}
+			}
+
+			// 获取max_output_tokens参数
+			if maxTokensData, exists := request.Extra["max_output_tokens"]; exists {
+				var maxTokensValue uint
+				if err := json.Unmarshal(maxTokensData, &maxTokensValue); err == nil {
+					maxOutputTokens = maxTokensValue
+				}
+			}
+
+			// 获取response_modalities参数
+			if modalitiesData, exists := request.Extra["response_modalities"]; exists {
+				var modalitiesValue []string
+				if err := json.Unmarshal(modalitiesData, &modalitiesValue); err == nil {
+					responseModalities = modalitiesValue
+				}
+			}
+
+			// 获取top_p参数
+			if topPData, exists := request.Extra["top_p"]; exists {
+				var topPValue float64
+				if err := json.Unmarshal(topPData, &topPValue); err == nil {
+					topP = topPValue
+				}
+			}
+		}
+
 		// 使用标准Gemini格式，支持多模态响应
 		geminiRequest := dto.GeminiChatRequest{
 			Contents: contents,
 			GenerationConfig: dto.GeminiChatGenerationConfig{
-				Temperature:        func() *float64 { t := 1.0; return &t }(),
-				MaxOutputTokens:    32768,
-				ResponseModalities: []string{"TEXT", "IMAGE"}, // 关键：请求图像生成
-				TopP:               0.95,
+				Temperature:        &temperature,
+				MaxOutputTokens:    maxOutputTokens,
+				ResponseModalities: responseModalities, // 关键：请求图像生成
+				TopP:               topP,
 			},
 			SafetySettings: []dto.GeminiChatSafetySettings{
 				{Category: "HARM_CATEGORY_HATE_SPEECH", Threshold: "OFF"},
