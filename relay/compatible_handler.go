@@ -327,7 +327,7 @@ func postConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, usage 
 		}
 		quotaCalculateDecimal = dModelPrice.Mul(dQuotaPerUnit).Mul(dGroupRatio).Mul(decimal.NewFromInt(int64(multiplier)))
 		if multiplier > 1 {
-			extraContent += fmt.Sprintf("，按次计费×图片数：单价 %.2f，数量 %d", modelPrice, multiplier)
+			extraContent += fmt.Sprintf("，按次计费×图片数：单价 %v，数量 %d", modelPrice, multiplier)
 		}
 	}
 	// 添加 responses tools call 调用的配额

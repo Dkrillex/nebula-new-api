@@ -761,8 +761,18 @@ func SyncPlayground(c *gin.Context) {
 	}
 	_ = middleware.SetupContextForToken(c, tempToken)
 
-	// 获取渠道
-	_, newAPIError = getChannel(c, group, playgroundRequest.Model, 1)
+	// 直接调用CacheGetRandomSatisfiedChannel获取最高优先级渠道，绕过getChannel的上下文依赖
+	channel, _, err := model.CacheGetRandomSatisfiedChannel(c, group, playgroundRequest.Model, 0)
+	if err != nil {
+		newAPIError = types.NewError(fmt.Errorf("获取分组 %s 下模型 %s 的可用渠道失败: %s", group, playgroundRequest.Model, err.Error()), types.ErrorCodeGetChannelFailed, types.ErrOptionWithSkipRetry())
+		return
+	}
+	if channel == nil {
+		newAPIError = types.NewError(fmt.Errorf("分组 %s 下模型 %s 的可用渠道不存在", group, playgroundRequest.Model), types.ErrorCodeGetChannelFailed, types.ErrOptionWithSkipRetry())
+		return
+	}
+	// 设置渠道上下文
+	newAPIError = middleware.SetupContextForSelectedChannel(c, channel, playgroundRequest.Model)
 	if newAPIError != nil {
 		return
 	}
@@ -858,8 +868,18 @@ func SyncImageGeneration(c *gin.Context) {
 	}
 	_ = middleware.SetupContextForToken(c, tempToken)
 
-	// 获取渠道
-	_, newAPIError = getChannel(c, group, imageRequest.Model, 1)
+	// 直接调用CacheGetRandomSatisfiedChannel获取最高优先级渠道，绕过getChannel的上下文依赖
+	channel, _, err := model.CacheGetRandomSatisfiedChannel(c, group, imageRequest.Model, 0)
+	if err != nil {
+		newAPIError = types.NewError(fmt.Errorf("获取分组 %s 下模型 %s 的可用渠道失败: %s", group, imageRequest.Model, err.Error()), types.ErrorCodeGetChannelFailed, types.ErrOptionWithSkipRetry())
+		return
+	}
+	if channel == nil {
+		newAPIError = types.NewError(fmt.Errorf("分组 %s 下模型 %s 的可用渠道不存在", group, imageRequest.Model), types.ErrorCodeGetChannelFailed, types.ErrOptionWithSkipRetry())
+		return
+	}
+	// 设置渠道上下文
+	newAPIError = middleware.SetupContextForSelectedChannel(c, channel, imageRequest.Model)
 	if newAPIError != nil {
 		return
 	}
