@@ -194,32 +194,68 @@ func (a *Adaptor) ConvertImageRequest(c *gin.Context, info *relaycommon.RelayInf
 			// 获取temperature参数
 			if tempData, exists := request.Extra["temperature"]; exists {
 				var tempValue float64
+				// 先尝试直接解析JSON
 				if err := json.Unmarshal(tempData, &tempValue); err == nil {
 					temperature = tempValue
+				} else {
+					// 如果失败，尝试解析为字符串再转换
+					var tempStr string
+					if err := json.Unmarshal(tempData, &tempStr); err == nil {
+						if err := json.Unmarshal([]byte(tempStr), &tempValue); err == nil {
+							temperature = tempValue
+						}
+					}
 				}
 			}
 
 			// 获取max_output_tokens参数
 			if maxTokensData, exists := request.Extra["max_output_tokens"]; exists {
 				var maxTokensValue uint
+				// 先尝试直接解析JSON
 				if err := json.Unmarshal(maxTokensData, &maxTokensValue); err == nil {
 					maxOutputTokens = maxTokensValue
+				} else {
+					// 如果失败，尝试解析为字符串再转换
+					var maxTokensStr string
+					if err := json.Unmarshal(maxTokensData, &maxTokensStr); err == nil {
+						if err := json.Unmarshal([]byte(maxTokensStr), &maxTokensValue); err == nil {
+							maxOutputTokens = maxTokensValue
+						}
+					}
 				}
 			}
 
 			// 获取response_modalities参数
 			if modalitiesData, exists := request.Extra["response_modalities"]; exists {
 				var modalitiesValue []string
+				// 先尝试直接解析JSON
 				if err := json.Unmarshal(modalitiesData, &modalitiesValue); err == nil {
 					responseModalities = modalitiesValue
+				} else {
+					// 如果失败，尝试解析为字符串再转换
+					var modalitiesStr string
+					if err := json.Unmarshal(modalitiesData, &modalitiesStr); err == nil {
+						if err := json.Unmarshal([]byte(modalitiesStr), &modalitiesValue); err == nil {
+							responseModalities = modalitiesValue
+						}
+					}
 				}
 			}
 
 			// 获取top_p参数
 			if topPData, exists := request.Extra["top_p"]; exists {
 				var topPValue float64
+				// 先尝试直接解析JSON
 				if err := json.Unmarshal(topPData, &topPValue); err == nil {
 					topP = topPValue
+				} else {
+					// 如果失败，尝试解析为字符串再转换
+					var topPStr string
+					if err := json.Unmarshal(topPData, &topPStr); err == nil {
+						if err := json.Unmarshal([]byte(topPStr), &topPValue); err == nil {
+							topP = topPValue
+						}
+					}
 				}
 			}
 		}
