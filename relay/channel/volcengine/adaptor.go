@@ -116,7 +116,7 @@ func (a *Adaptor) ConvertImageRequest(c *gin.Context, info *relaycommon.RelayInf
 						// 如果contents中没有text，则使用prompt字段
 						if hasTextInContents {
 							req.Prompt = strings.Join(textParts, " ")
-							logger.LogInfo(c, fmt.Sprintf("使用contents中的text作为prompt: %s", req.Prompt))
+							//logger.LogInfo(c, fmt.Sprintf("使用contents中的text作为prompt: %s", req.Prompt))
 						}
 
 						// 处理图片 - 支持多张图片
@@ -127,16 +127,16 @@ func (a *Adaptor) ConvertImageRequest(c *gin.Context, info *relaycommon.RelayInf
 								if strings.HasPrefix(imageData, "http") {
 									// URL格式
 									req.Image = imageData
-									logger.LogInfo(c, fmt.Sprintf("使用单张图片URL: %s", imageData[:min(50, len(imageData))]+"..."))
+									//logger.LogInfo(c, fmt.Sprintf("使用单张图片URL: %s", imageData[:min(50, len(imageData))]+"..."))
 								} else {
 									// Base64格式
 									req.Image = imageData
-									logger.LogInfo(c, fmt.Sprintf("使用单张Base64图片数据，长度: %d", len(imageData)))
+									//logger.LogInfo(c, fmt.Sprintf("使用单张Base64图片数据，长度: %d", len(imageData)))
 								}
 							} else {
 								// 多张图片，使用数组格式
 								req.Image = imageParts
-								logger.LogInfo(c, fmt.Sprintf("使用多张图片格式，共%d张图片", len(imageParts)))
+								//logger.LogInfo(c, fmt.Sprintf("使用多张图片格式，共%d张图片", len(imageParts)))
 							}
 						}
 					}

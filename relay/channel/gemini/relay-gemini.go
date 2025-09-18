@@ -23,6 +23,65 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
+// truncateBase64Content 截断JSON字符串中的base64内容，保留其他信息
+func truncateBase64Content(content string) string {
+	const base64Prefix = "data:image/"
+	const base64Marker = ";base64,"
+	const maxBase64Length = 50
+
+	var result strings.Builder
+	startIndex := 0
+
+	for {
+		// 查找base64前缀
+		base64Index := strings.Index(content[startIndex:], base64Prefix)
+		if base64Index == -1 {
+			break
+		}
+		base64Index += startIndex
+
+		// 添加base64前的内容
+		result.WriteString(content[startIndex:base64Index])
+
+		// 查找base64标记
+		markerIndex := strings.Index(content[base64Index:], base64Marker)
+		if markerIndex == -1 {
+			// 没找到base64标记，保持原样
+			result.WriteString(content[base64Index:])
+			break
+		}
+		markerIndex += base64Index
+
+		// 找到下一个引号、空格、逗号或大括号作为结束位置
+		endIndex := markerIndex + len(base64Marker)
+		actualEnd := len(content)
+
+		for _, delimiter := range []string{"\"", " ", ",", "}"} {
+			if pos := strings.Index(content[endIndex:], delimiter); pos != -1 {
+				pos += endIndex
+				if pos < actualEnd {
+					actualEnd = pos
+				}
+			}
+		}
+
+		// 如果base64数据长度超过指定长度，则截断
+		if actualEnd-endIndex > maxBase64Length {
+			result.WriteString(content[base64Index:endIndex])
+			result.WriteString("[base64数据已截断]")
+			startIndex = actualEnd
+		} else {
+			// 短数据保持原样
+			result.WriteString(content[base64Index:actualEnd])
+			startIndex = actualEnd
+		}
+	}
+
+	// 添加剩余内容
+	result.WriteString(content[startIndex:])
+	return result.String()
+}
+
 var geminiSupportedMimeTypes = map[string]bool{
 	"application/pdf": true,
 	"audio/mpeg":      true,
@@ -1088,12 +1147,9 @@ func GeminiChatHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http.R
 	}
 	service.CloseResponseBodyGracefully(resp)
 	if common.DebugEnabled {
-		// 如果响应体超过10KB，不打印包含base64图片的大数据
-		if len(responseBody) > 10*1024 {
-			println("[Gemini-GeminiChatHandler] Response body too large (>10KB), skipping debug output to avoid printing large base64 data")
-		} else {
-			println("[Gemini-GeminiChatHandler] " + string(responseBody))
-		}
+		// 使用截断函数处理base64内容，保留其他信息
+		truncatedContent := truncateBase64Content(string(responseBody))
+		println("[Gemini-GeminiChatHandler] " + truncatedContent)
 	}
 	var geminiResponse dto.GeminiChatResponse
 	err = common.Unmarshal(responseBody, &geminiResponse)
