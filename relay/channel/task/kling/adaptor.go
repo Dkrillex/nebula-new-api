@@ -175,7 +175,17 @@ func (a *TaskAdaptor) DoResponse(c *gin.Context, resp *http.Response, info *rela
 		return
 	}
 	kResp.TaskId = kResp.Data.TaskId
-	c.JSON(http.StatusOK, kResp)
+
+	// 返回完整对象，同时确保包含统一接口文档要求的字段
+	response := gin.H{}
+	// 先复制原始响应的所有字段
+	responseBytes, _ := json.Marshal(kResp)
+	json.Unmarshal(responseBytes, &response)
+	// 确保包含统一接口文档规范的字段
+	response["task_id"] = kResp.Data.TaskId
+	response["status"] = "submitted"
+
+	c.JSON(http.StatusOK, response)
 	return kResp.Data.TaskId, responseBody, nil
 }
 

@@ -23,22 +23,22 @@ type VideoResponse struct {
 
 // VideoTaskResponse 查询视频生成任务状态的响应
 type VideoTaskResponse struct {
-	TaskId   string             `json:"task_id" example:"abcd1234efgh"` // 任务ID
-	Status   string             `json:"status" example:"succeeded"`     // 任务状态
-	Url      string             `json:"url,omitempty"`                  // 视频资源URL（成功时）
-	Format   string             `json:"format,omitempty" example:"mp4"` // 视频格式
-	Metadata *VideoTaskMetadata `json:"metadata,omitempty"`             // 结果元数据
-	Error    *VideoTaskError    `json:"error,omitempty"`                // 错误信息（失败时）
+	TaskId   string          `json:"task_id" example:"abcd1234efgh"` // 任务ID
+	Status   string          `json:"status" example:"succeeded"`     // 任务状态
+	Url      string          `json:"url,omitempty"`                  // 视频资源URL（成功时）
+	Format   string          `json:"format,omitempty" example:"mp4"` // 视频格式
+	Metadata interface{}     `json:"metadata,omitempty"`             // 各厂商原始元数据，支持任意结构
+	Error    *VideoTaskError `json:"error,omitempty"`                // 错误信息（失败时）
 }
 
-// VideoTaskMetadata 视频任务元数据
-type VideoTaskMetadata struct {
-	Duration float64 `json:"duration" example:"5.0"`  // 实际生成的视频时长
-	Fps      int     `json:"fps" example:"30"`        // 实际帧率
-	Width    int     `json:"width" example:"512"`     // 实际宽度
-	Height   int     `json:"height" example:"512"`    // 实际高度
-	Seed     int     `json:"seed" example:"20231234"` // 使用的随机种子
-}
+// VideoTaskMetadata 视频任务元数据 - 已废弃，直接使用 interface{} 支持各厂商元数据
+// type VideoTaskMetadata struct {
+//	Duration float64 `json:"duration" example:"5.0"`  // 实际生成的视频时长
+//	Fps      int     `json:"fps" example:"30"`        // 实际帧率
+//	Width    int     `json:"width" example:"512"`     // 实际宽度
+//	Height   int     `json:"height" example:"512"`    // 实际高度
+//	Seed     int     `json:"seed" example:"20231234"` // 使用的随机种子
+// }
 
 // VideoTaskError 视频任务错误信息
 type VideoTaskError struct {

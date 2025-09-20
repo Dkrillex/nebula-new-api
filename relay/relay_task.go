@@ -188,22 +188,33 @@ var fetchRespBuilders = map[int]func(c *gin.Context) (respBody []byte, taskResp 
 }
 
 func RelayTaskFetch(c *gin.Context, relayMode int) (taskResp *dto.TaskError) {
+	common.SysLog(fmt.Sprintf("[TaskFetch] RelayTaskFetch - RelayMode: %d", relayMode))
+	common.SysLog(fmt.Sprintf("[TaskFetch] 请求路径: %s", c.Request.URL.Path))
+	common.SysLog(fmt.Sprintf("[TaskFetch] 请求方法: %s", c.Request.Method))
+
 	respBuilder, ok := fetchRespBuilders[relayMode]
 	if !ok {
+		common.SysError(fmt.Sprintf("[TaskFetch] 不支持的RelayMode: %d", relayMode))
 		taskResp = service.TaskErrorWrapperLocal(errors.New("invalid_relay_mode"), "invalid_relay_mode", http.StatusBadRequest)
+		return taskResp
 	}
 
+	common.SysLog(fmt.Sprintf("[TaskFetch] 找到对应的响应构建器，RelayMode: %d", relayMode))
 	respBody, taskErr := respBuilder(c)
 	if taskErr != nil {
+		common.SysError(fmt.Sprintf("[TaskFetch] 响应构建失败: %+v", taskErr))
 		return taskErr
 	}
 
+	common.SysLog(fmt.Sprintf("[TaskFetch] 响应构建成功，响应体长度: %d bytes", len(respBody)))
 	c.Writer.Header().Set("Content-Type", "application/json")
 	_, err := io.Copy(c.Writer, bytes.NewBuffer(respBody))
 	if err != nil {
+		common.SysError(fmt.Sprintf("[TaskFetch] 复制响应体失败: %v", err))
 		taskResp = service.TaskErrorWrapper(err, "copy_response_body_failed", http.StatusInternalServerError)
 		return
 	}
+	common.SysLog("[TaskFetch] RelayTaskFetch 完成")
 	return
 }
 
@@ -260,26 +271,60 @@ func sunoFetchByIDRespBodyBuilder(c *gin.Context) (respBody []byte, taskResp *dt
 }
 
 func videoFetchByIDRespBodyBuilder(c *gin.Context) (respBody []byte, taskResp *dto.TaskError) {
+	common.SysLog("[VideoTask] videoFetchByIDRespBodyBuilder - 开始查询视频任务")
+
 	taskId := c.Param("task_id")
 	if taskId == "" {
 		taskId = c.GetString("task_id")
+		common.SysLog(fmt.Sprintf("[VideoTask] 从上下文获取task_id: %s", taskId))
+	} else {
+		common.SysLog(fmt.Sprintf("[VideoTask] 从参数获取task_id: %s", taskId))
 	}
-	userId := c.GetInt("id")
 
+	userId := c.GetInt("id")
+	common.SysLog(fmt.Sprintf("[VideoTask] 用户ID: %d, 任务ID: %s", userId, taskId))
+
+	if taskId == "" {
+		common.SysError("[VideoTask] 任务ID为空")
+		taskResp = service.TaskErrorWrapperLocal(errors.New("task_id is empty"), "task_id_empty", http.StatusBadRequest)
+		return
+	}
+
+	if userId <= 0 {
+		common.SysError("[VideoTask] 用户ID无效")
+		taskResp = service.TaskErrorWrapperLocal(errors.New("user_id is invalid"), "user_id_invalid", http.StatusBadRequest)
+		return
+	}
+
+	common.SysLog(fmt.Sprintf("[VideoTask] 开始从数据库查询任务: userId=%d, taskId=%s", userId, taskId))
 	originTask, exist, err := model.GetByTaskId(userId, taskId)
 	if err != nil {
+		common.SysError(fmt.Sprintf("[VideoTask] 数据库查询失败: %v", err))
 		taskResp = service.TaskErrorWrapper(err, "get_task_failed", http.StatusInternalServerError)
 		return
 	}
 	if !exist {
+		common.SysError(fmt.Sprintf("[VideoTask] 任务不存在: userId=%d, taskId=%s", userId, taskId))
 		taskResp = service.TaskErrorWrapperLocal(errors.New("task_not_exist"), "task_not_exist", http.StatusBadRequest)
 		return
 	}
 
-	respBody, err = json.Marshal(dto.TaskResponse[any]{
-		Code: "success",
-		Data: TaskModel2Dto(originTask),
-	})
+	common.SysLog(fmt.Sprintf("[VideoTask] 找到任务记录: ID=%d, TaskID=%s, Status=%s, Platform=%s",
+		originTask.ID, originTask.TaskID, originTask.Status, originTask.Platform))
+
+	// 转换为统一视频生成接口文档格式
+	common.SysLog("[VideoTask] 开始转换为统一格式")
+	response := convertToUnifiedVideoResponse(originTask)
+	common.SysLog(fmt.Sprintf("[VideoTask] 转换后的响应格式: TaskId=%s, Status=%s, Url=%s",
+		response.TaskId, response.Status, response.Url))
+
+	respBody, err = json.Marshal(response)
+	if err != nil {
+		common.SysError(fmt.Sprintf("[VideoTask] JSON序列化失败: %v", err))
+		taskResp = service.TaskErrorWrapper(err, "json_marshal_failed", http.StatusInternalServerError)
+		return
+	}
+	common.SysLog(fmt.Sprintf("[VideoTask] 查询完成，返回响应长度: %d bytes", len(respBody)))
 	return
 }
 
@@ -295,4 +340,106 @@ func TaskModel2Dto(task *model.Task) *dto.TaskDto {
 		Progress:   task.Progress,
 		Data:       task.Data,
 	}
+}
+
+// convertToUnifiedVideoResponse 将任务数据转换为统一视频生成接口文档格式
+func convertToUnifiedVideoResponse(task *model.Task) *dto.VideoTaskResponse {
+	response := &dto.VideoTaskResponse{
+		TaskId: task.TaskID,
+		Status: convertTaskStatus(string(task.Status)),
+		Url:    "",    // 默认为空，成功时填入视频URL
+		Format: "mp4", // 默认格式
+	}
+
+	// 如枟任务成功且有数据
+	if task.Status == model.TaskStatusSuccess && task.Data != nil {
+		// 解析原始响应数据（支持各厂商格式）
+		var rawData map[string]interface{}
+		if err := json.Unmarshal(task.Data, &rawData); err == nil {
+			// 尝试从不同厂商格式中提取视频URL
+			if videoURL := extractVideoURL(rawData); videoURL != "" {
+				response.Url = videoURL
+			}
+			// 将全部原始数据作为metadata返回，不做任何结构化处理
+			response.Metadata = rawData
+		}
+	}
+
+	// 如果任务失败，添加错误信息
+	if task.Status == model.TaskStatusFailure {
+		response.Error = &dto.VideoTaskError{
+			Code:    400, // 默认错误码
+			Message: getFailureReason(task.FailReason),
+		}
+	}
+
+	return response
+}
+
+// convertTaskStatus 将系统任务状态转换为接口文档规范的状态
+func convertTaskStatus(status string) string {
+	switch status {
+	case "SUBMITTED":
+		return "submitted"
+	case "QUEUED":
+		return "queued"
+	case "IN_PROGRESS":
+		return "in_progress"
+	case "SUCCESS":
+		return "succeeded"
+	case "FAILURE":
+		return "failed"
+	default:
+		return "unknown"
+	}
+}
+
+// extractVideoURL 从不同厂商的响应格式中提取视频URL
+func extractVideoURL(rawData map[string]interface{}) string {
+	// 豆包格式: content.video_url
+	if content, ok := rawData["content"].(map[string]interface{}); ok {
+		if videoURL, ok := content["video_url"].(string); ok && videoURL != "" {
+			return videoURL
+		}
+	}
+
+	// 可灵格式: data.task_result.videos[0].url
+	if data, ok := rawData["data"].(map[string]interface{}); ok {
+		if taskResult, ok := data["task_result"].(map[string]interface{}); ok {
+			if videos, ok := taskResult["videos"].([]interface{}); ok && len(videos) > 0 {
+				if firstVideo, ok := videos[0].(map[string]interface{}); ok {
+					if videoURL, ok := firstVideo["url"].(string); ok && videoURL != "" {
+						return videoURL
+					}
+				}
+			}
+		}
+	}
+
+	// 即梦格式: result.video_url
+	if result, ok := rawData["result"].(map[string]interface{}); ok {
+		if videoURL, ok := result["video_url"].(string); ok && videoURL != "" {
+			return videoURL
+		}
+	}
+
+	// 直接的url字段
+	if videoURL, ok := rawData["url"].(string); ok && videoURL != "" {
+		return videoURL
+	}
+
+	// 直接的video_url字段
+	if videoURL, ok := rawData["video_url"].(string); ok && videoURL != "" {
+		return videoURL
+	}
+
+	return "" // 未找到视频URL
+}
+
+// getFailureReason 获取失败原因，如果为空返回默认消息
+func getFailureReason(reason string) string {
+	if reason == "" {
+		return "任务执行失败"
+	}
+	return reason
 }

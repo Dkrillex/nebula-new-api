@@ -164,7 +164,11 @@ func (a *TaskAdaptor) DoResponse(c *gin.Context, resp *http.Response, info *rela
 		return
 	}
 
-	c.JSON(http.StatusOK, gin.H{"task_id": jResp.Data.TaskID})
+	// 按照统一视频生成接口文档的格式发送响应
+	c.JSON(http.StatusOK, gin.H{
+		"task_id": jResp.Data.TaskID,
+		"status":  "submitted",
+	})
 	return jResp.Data.TaskID, responseBody, nil
 }
 

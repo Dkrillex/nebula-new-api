@@ -916,3 +916,256 @@ func SyncImageGeneration(c *gin.Context) {
 	// 转发请求到模型
 	Relay(c, types.RelayFormatOpenAIImage)
 }
+
+// SyncVideoGeneration 处理外部系统视频生成请求
+// @Summary 外部系统视频生成
+// @Description 供外部系统调用，通过请求体中的user_id指定实际扣费用户进行视频生成
+// @Tags 外部系统集成
+// @Accept json
+// @Produce json
+// @Param data body dto.SyncVideoGenerationRequest true "视频生成请求"
+// @Success 200 {object} common.Response{data=object}
+// @Failure 400 {object} common.Response{msg=string}
+// @Failure 500 {object} common.Response{msg=string}
+// @Router /api/sync/system/videos/generations [post]
+func SyncVideoGeneration(c *gin.Context) {
+	var newAPIError *types.NewAPIError
+
+	defer func() {
+		if newAPIError != nil {
+			c.JSON(newAPIError.StatusCode, gin.H{
+				"error": newAPIError.ToOpenAIError(),
+			})
+		}
+	}()
+
+	// 解析请求体
+	videoRequest := &dto.SyncVideoGenerationRequest{}
+	err := common.UnmarshalBodyReusable(c, videoRequest)
+	if err != nil {
+		newAPIError = types.NewError(err, types.ErrorCodeInvalidRequest)
+		return
+	}
+
+	// 获取用户ID
+	userId := videoRequest.UserId
+	if userId <= 0 {
+		newAPIError = types.NewError(errors.New("无效的用户ID"), types.ErrorCodeInvalidRequest)
+		return
+	}
+
+	// 先尝试从缓存获取用户信息
+	userCache, err := model.GetUserCache(userId)
+	if err != nil {
+		// 缓存中没有，从数据库查询
+		user, dbErr := model.GetUserById(userId, true)
+		if dbErr != nil {
+			newAPIError = types.NewError(errors.New("用户不存在"), types.ErrorCodeInvalidRequest)
+			return
+		}
+		// 将查询结果转换为缓存对象
+		userCache = user.ToBaseUser()
+	}
+
+	// 检查用户状态
+	if userCache.Status != common.UserStatusEnabled {
+		newAPIError = types.NewError(errors.New("用户已被禁用"), types.ErrorCodeInvalidRequest)
+		return
+	}
+
+	// 验证模型参数
+	if videoRequest.Model == "" {
+		newAPIError = types.NewError(errors.New("请选择模型"), types.ErrorCodeInvalidRequest)
+		return
+	}
+	c.Set("original_model", videoRequest.Model)
+
+	// 设置分组
+	group := videoRequest.Group
+	if group == "" {
+		group = userCache.Group
+	}
+	c.Set("group", group)
+
+	// 设置用户ID到上下文
+	c.Set("id", userId)
+
+	// 写入用户缓存到上下文
+	userCache.WriteContext(c)
+
+	// 创建临时令牌
+	tempToken := &model.Token{
+		UserId: userId,
+		Name:   fmt.Sprintf("nebula-video-generations-%s", group),
+		Group:  group,
+	}
+	_ = middleware.SetupContextForToken(c, tempToken)
+
+	// 直接调用CacheGetRandomSatisfiedChannel获取最高优先级渠道，绕过getChannel的上下文依赖
+	channel, _, err := model.CacheGetRandomSatisfiedChannel(c, group, videoRequest.Model, 0)
+	if err != nil {
+		newAPIError = types.NewError(fmt.Errorf("获取分组 %s 下模型 %s 的可用渠道失败: %s", group, videoRequest.Model, err.Error()), types.ErrorCodeGetChannelFailed, types.ErrOptionWithSkipRetry())
+		return
+	}
+	if channel == nil {
+		newAPIError = types.NewError(fmt.Errorf("分组 %s 下模型 %s 的可用渠道不存在", group, videoRequest.Model), types.ErrorCodeGetChannelFailed, types.ErrOptionWithSkipRetry())
+		return
+	}
+	// 设置渠道上下文
+	newAPIError = middleware.SetupContextForSelectedChannel(c, channel, videoRequest.Model)
+	if newAPIError != nil {
+		return
+	}
+
+	// 转换为统一视频生成请求格式
+	standardVideoRequest := dto.VideoRequest{
+		Model:          videoRequest.Model,
+		Prompt:         videoRequest.Prompt,
+		Image:          videoRequest.Image,
+		Duration:       videoRequest.Duration,
+		Width:          videoRequest.Width,
+		Height:         videoRequest.Height,
+		Fps:            videoRequest.Fps,
+		Seed:           videoRequest.Seed,
+		N:              int(videoRequest.N),
+		ResponseFormat: videoRequest.ResponseFormat,
+		User:           fmt.Sprintf("user-%d", userCache.Id),
+	}
+
+	// 处理额外参数
+	if len(videoRequest.Extra) > 0 {
+		metadata := make(map[string]interface{})
+		for k, v := range videoRequest.Extra {
+			var value interface{}
+			if err := json.Unmarshal(v, &value); err == nil {
+				metadata[k] = value
+			}
+		}
+		standardVideoRequest.Metadata = metadata
+	}
+
+	// 将标准请求重新设置到请求体中
+	requestBytes, err := json.Marshal(standardVideoRequest)
+	if err != nil {
+		newAPIError = types.NewError(err, types.ErrorCodeInvalidRequest)
+		return
+	}
+	c.Request.Body = io.NopCloser(bytes.NewReader(requestBytes))
+	c.Request.ContentLength = int64(len(requestBytes))
+
+	// 修改请求路径为标准视频生成路径
+	c.Request.URL.Path = "/v1/video/generations"
+
+	// 设置请求开始时间
+	common.SetContextKey(c, constant.ContextKeyRequestStartTime, time.Now())
+
+	// 转发请求到模型
+	RelayTask(c)
+}
+
+// SyncGetVideoTask 处理外部系统视频任务状态查询请求
+// @Summary 外部系统视频任务状态查询
+// @Description 供外部系统调用，查询视频生成任务状态
+// @Tags 外部系统集成
+// @Accept json
+// @Produce json
+// @Param task_id path string true "任务ID"
+// @Param user_id query int true "用户ID"
+// @Success 200 {object} common.Response{data=object}
+// @Failure 400 {object} common.Response{msg=string}
+// @Failure 500 {object} common.Response{msg=string}
+// @Router /api/sync/system/videos/generations [get]
+func SyncGetVideoTask(c *gin.Context) {
+	common.SysLog("[SyncGetVideoTask] 开始处理视频任务查询请求")
+	common.SysLog(fmt.Sprintf("[SyncGetVideoTask] 请求方法: %s", c.Request.Method))
+	common.SysLog(fmt.Sprintf("[SyncGetVideoTask] 请求路径: %s", c.Request.URL.Path))
+	common.SysLog(fmt.Sprintf("[SyncGetVideoTask] 查询参数: %s", c.Request.URL.RawQuery))
+
+	var newAPIError *types.NewAPIError
+
+	defer func() {
+		if newAPIError != nil {
+			c.JSON(newAPIError.StatusCode, gin.H{
+				"error": newAPIError.ToOpenAIError(),
+			})
+		}
+	}()
+
+	// 获取任务ID
+	taskId := c.Param("task_id")
+	common.SysLog(fmt.Sprintf("[SyncGetVideoTask] 获取到任务ID: '%s'", taskId))
+	if taskId == "" {
+		common.SysError("[SyncGetVideoTask] 任务ID为空")
+		newAPIError = types.NewError(errors.New("任务ID不能为空"), types.ErrorCodeInvalidRequest)
+		return
+	}
+
+	// 获取用户ID（从URL参数）
+	userIdStr := c.Query("user_id")
+	common.SysLog(fmt.Sprintf("[SyncGetVideoTask] 获取到用户ID字符串: '%s'", userIdStr))
+	if userIdStr == "" {
+		common.SysError("[SyncGetVideoTask] 用户ID为空")
+		newAPIError = types.NewError(errors.New("用户ID不能为空"), types.ErrorCodeInvalidRequest)
+		return
+	}
+
+	userId, err := strconv.Atoi(userIdStr)
+	if err != nil || userId <= 0 {
+		common.SysError(fmt.Sprintf("[SyncGetVideoTask] 用户ID转换失败: %v, 输入: '%s'", err, userIdStr))
+		newAPIError = types.NewError(errors.New("无效的用户ID"), types.ErrorCodeInvalidRequest)
+		return
+	}
+	common.SysLog(fmt.Sprintf("[SyncGetVideoTask] 解析到用户ID: %d", userId))
+
+	// 先尝试从缓存获取用户信息
+	userCache, err := model.GetUserCache(userId)
+	if err != nil {
+		// 缓存中没有，从数据库查询
+		user, dbErr := model.GetUserById(userId, true)
+		if dbErr != nil {
+			newAPIError = types.NewError(errors.New("用户不存在"), types.ErrorCodeInvalidRequest)
+			return
+		}
+		// 将查询结果转换为缓存对象
+		userCache = user.ToBaseUser()
+	}
+
+	// 检查用户状态
+	if userCache.Status != common.UserStatusEnabled {
+		newAPIError = types.NewError(errors.New("用户已被禁用"), types.ErrorCodeInvalidRequest)
+		return
+	}
+
+	// 设置分组
+	group := userCache.Group
+	c.Set("group", group)
+
+	// 设置用户ID到上下文
+	c.Set("id", userId)
+
+	// 写入用户缓存到上下文
+	userCache.WriteContext(c)
+
+	// 创建临时令牌
+	tempToken := &model.Token{
+		UserId: userId,
+		Name:   fmt.Sprintf("nebula-video-task-query-%s", group),
+		Group:  group,
+	}
+	_ = middleware.SetupContextForToken(c, tempToken)
+
+	// 修改请求路径为标准视频任务查询路径
+	originalPath := c.Request.URL.Path
+	newPath := "/v1/video/generations/" + taskId
+	c.Request.URL.Path = newPath
+	common.SysLog(fmt.Sprintf("[SyncGetVideoTask] 路径转换: %s -> %s", originalPath, newPath))
+	common.SysLog(fmt.Sprintf("[SyncGetVideoTask] 用户ID: %d, 任务ID: %s, 组: %s", userId, taskId, group))
+
+	// 设置请求开始时间
+	common.SetContextKey(c, constant.ContextKeyRequestStartTime, time.Now())
+
+	// 转发请求到视频任务查询接口
+	common.SysLog("[SyncGetVideoTask] 转发请求到RelayTask")
+	RelayTask(c)
+	common.SysLog("[SyncGetVideoTask] RelayTask完成")
+}
