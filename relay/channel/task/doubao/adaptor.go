@@ -9,6 +9,7 @@ import (
 	"one-api/common"
 	"one-api/dto"
 	relaycommon "one-api/relay/common"
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -123,7 +124,7 @@ func (a *TaskAdaptor) BuildRequestHeader(c *gin.Context, req *http.Request, info
 
 	// 打印详细的请求头信息用于调试
 	common.SysLog("[Doubao] BuildRequestHeader - 设置请求头完成")
-	common.SysLog(fmt.Sprintf("[Doubao] 请求头信息:"))
+	common.SysLog("[Doubao] 请求头信息:")
 	common.SysLog(fmt.Sprintf("[Doubao]   Authorization: Bearer %s", maskApiKey(a.apiKey)))
 	common.SysLog(fmt.Sprintf("[Doubao]   Content-Type: %s", req.Header.Get("Content-Type")))
 	common.SysLog(fmt.Sprintf("[Doubao]   User-Agent: %s", req.Header.Get("User-Agent")))
@@ -156,7 +157,7 @@ func (a *TaskAdaptor) BuildRequestBody(c *gin.Context, info *relaycommon.RelayIn
 	common.SysLog(fmt.Sprintf("[Doubao] BuildRequestBody - 请求体内容: %s", string(jsonData)))
 
 	// 打印原始VideoRequest信息用于对比
-	common.SysLog(fmt.Sprintf("[Doubao] 原始VideoRequest信息:"))
+	common.SysLog("[Doubao] 原始VideoRequest信息:")
 	common.SysLog(fmt.Sprintf("[Doubao]   Model: %s", req.Model))
 	common.SysLog(fmt.Sprintf("[Doubao]   Prompt: %s", req.Prompt))
 	common.SysLog(fmt.Sprintf("[Doubao]   Image: %s", req.Image))
@@ -199,7 +200,7 @@ func (a *TaskAdaptor) DoRequest(c *gin.Context, info *relaycommon.RelayInfo, req
 	}
 
 	// 打印完整的请求信息用于调试
-	common.SysLog(fmt.Sprintf("[Doubao] 完整请求信息:"))
+	common.SysLog("[Doubao] 完整请求信息:")
 	common.SysLog(fmt.Sprintf("[Doubao]   Method: %s", req.Method))
 	common.SysLog(fmt.Sprintf("[Doubao]   URL: %s", req.URL.String()))
 	common.SysLog(fmt.Sprintf("[Doubao]   Headers: %+v", req.Header))
@@ -360,7 +361,7 @@ func (a *TaskAdaptor) DoResponse(c *gin.Context, resp *http.Response, info *rela
 	}
 
 	common.SysLog(fmt.Sprintf("[Doubao] DoResponse - 任务创建成功，任务ID: %s", response.TaskID))
-	common.SysLog(fmt.Sprintf("[Doubao] DoResponse - 准备返回统一格式响应"))
+	common.SysLog("[Doubao] DoResponse - 准备返回统一格式响应")
 
 	// 按照统一视频生成接口文档的格式发送响应
 	responseData := gin.H{
@@ -489,17 +490,22 @@ func convertVideoRequestToDoubaoPayload(request *dto.VideoRequest) *requestPaylo
 		Model: request.Model,
 	}
 
-	common.SysLog(fmt.Sprintf("[Doubao] 开始转换VideoRequest到豆包格式"))
+	common.SysLog("[Doubao] 开始转换VideoRequest到豆包格式")
 	common.SysLog(fmt.Sprintf("[Doubao] Model: %s", request.Model))
-	common.SysLog(fmt.Sprintf("[Doubao] Metadata: %+v", request.Metadata))
+	// 使用截断函数处理Base64内容
+	metadataStr := truncateBase64InMetadata(request.Metadata)
+	common.SysLog(fmt.Sprintf("[Doubao] Metadata: %s", metadataStr))
 
 	// 从 Metadata 中提取 content
 	if request.Metadata != nil {
 		// 提取 content 数组
 		if contentInterface, ok := request.Metadata["content"]; ok {
+			common.SysLog(fmt.Sprintf("[Doubao] 找到content字段，类型: %T", contentInterface))
 			// 将 interface{} 转换为 []ContentItem
 			if err := convertInterfaceToContent(contentInterface, &payload.Content); err != nil {
 				common.SysError(fmt.Sprintf("[Doubao] 转换content失败: %v", err))
+				common.SysError(fmt.Sprintf("[Doubao] 原始数据类型: %T", contentInterface))
+				common.SysError(fmt.Sprintf("[Doubao] 原始数据内容: %+v", contentInterface))
 				// 如果转换失败，使用默认格式
 				payload.Content = []ContentItem{
 					{
@@ -509,6 +515,15 @@ func convertVideoRequestToDoubaoPayload(request *dto.VideoRequest) *requestPaylo
 				}
 			} else {
 				common.SysLog(fmt.Sprintf("[Doubao] 成功从metadata提取content，共%d个项目", len(payload.Content)))
+				// 打印每个内容项的类型（但要截断图片内容）
+				for i, item := range payload.Content {
+					if item.Type == "image_url" && item.ImageURL != nil {
+						truncatedURL := truncateBase64Content(item.ImageURL.URL)
+						common.SysLog(fmt.Sprintf("[Doubao] Content[%d]: type=%s, role=%s, url=%s", i, item.Type, item.Role, truncatedURL))
+					} else {
+						common.SysLog(fmt.Sprintf("[Doubao] Content[%d]: type=%s, role=%s, text=%s", i, item.Type, item.Role, item.Text))
+					}
+				}
 			}
 		} else {
 			common.SysLog("[Doubao] metadata中未找到content字段")
@@ -539,6 +554,12 @@ func convertVideoRequestToDoubaoPayload(request *dto.VideoRequest) *requestPaylo
 
 	common.SysLog(fmt.Sprintf("[Doubao] 最终转换结果 - Model: %s, Content项目数: %d, CallbackURL: %s",
 		payload.Model, len(payload.Content), payload.CallbackURL))
+
+	// 打印最终的请求体（截断图片内容）
+	if jsonBytes, err := json.Marshal(payload); err == nil {
+		truncatedJSON := truncateBase64Content(string(jsonBytes))
+		common.SysLog(fmt.Sprintf("[Doubao] 最终请求体: %s", truncatedJSON))
+	}
 
 	return payload
 }
@@ -571,7 +592,7 @@ func (a *TaskAdaptor) ParseTaskResult(respBody []byte) (*relaycommon.TaskInfo, e
 		return nil, fmt.Errorf("解析响应失败: %v", err)
 	}
 
-	common.SysLog(fmt.Sprintf("[Doubao] ParseTaskResult - JSON解析成功"))
+	common.SysLog("[Doubao] ParseTaskResult - JSON解析成功")
 	common.SysLog(fmt.Sprintf("[Doubao] ParseTaskResult - 任务ID: %s", doubaoResp.ID))
 	common.SysLog(fmt.Sprintf("[Doubao] ParseTaskResult - 任务状态: %s", doubaoResp.Status))
 	common.SysLog(fmt.Sprintf("[Doubao] ParseTaskResult - 模型: %s", doubaoResp.Model))
@@ -581,11 +602,15 @@ func (a *TaskAdaptor) ParseTaskResult(respBody []byte) (*relaycommon.TaskInfo, e
 	// 转换为通用任务信息格式
 	common.SysLog("[Doubao] ParseTaskResult - 开始转换为统一格式")
 	taskInfo := &relaycommon.TaskInfo{
-		Code:   0, // 默认成功
-		TaskID: doubaoResp.ID,
-		Status: mapStatus(doubaoResp.Status),
+		Code:        0, // 默认成功
+		TaskID:      doubaoResp.ID,
+		Status:      mapStatus(doubaoResp.Status),
+		TotalTokens: doubaoResp.Usage.TotalTokens, // 设置实际消耗的token数量
 	}
 	common.SysLog(fmt.Sprintf("[Doubao] ParseTaskResult - 统一状态转换: %s -> %s", doubaoResp.Status, taskInfo.Status))
+	if taskInfo.TotalTokens > 0 {
+		common.SysLog(fmt.Sprintf("[Doubao] ParseTaskResult - 设置token消耗: %d", taskInfo.TotalTokens))
+	}
 
 	// 处理成功状态
 	if doubaoResp.Status == "succeeded" {
@@ -702,17 +727,93 @@ func defaultInt(value, defaultValue int) int {
 
 // convertInterfaceToContent 将interface{}转换为[]ContentItem
 func convertInterfaceToContent(contentInterface interface{}, target *[]ContentItem) error {
+	common.SysLog(fmt.Sprintf("[Doubao] convertInterfaceToContent - 输入类型: %T", contentInterface))
+
 	// 先将interface{}转换为JSON字节，再反序列化为[]ContentItem
 	jsonBytes, err := json.Marshal(contentInterface)
 	if err != nil {
 		return fmt.Errorf("序列化content失败: %v", err)
 	}
 
-	common.SysLog(fmt.Sprintf("[Doubao] Content JSON: %s", string(jsonBytes)))
+	// 截断图片内容后打印
+	truncatedJSON := truncateBase64Content(string(jsonBytes))
+	common.SysLog(fmt.Sprintf("[Doubao] Content JSON: %s", truncatedJSON))
 
 	if err := json.Unmarshal(jsonBytes, target); err != nil {
 		return fmt.Errorf("反序列化content失败: %v", err)
 	}
 
+	common.SysLog(fmt.Sprintf("[Doubao] 成功转换为%d个ContentItem", len(*target)))
 	return nil
+}
+
+// truncateBase64Content 截断字符串中的base64内容，保留其他信息
+func truncateBase64Content(content string) string {
+	const base64Prefix = "data:image/"
+	const base64Marker = ";base64,"
+	const maxBase64Length = 50
+
+	var result strings.Builder
+	startIndex := 0
+
+	for {
+		// 查找base64前缀
+		base64Index := strings.Index(content[startIndex:], base64Prefix)
+		if base64Index == -1 {
+			break
+		}
+		base64Index += startIndex
+
+		// 添加base64前的内容
+		result.WriteString(content[startIndex:base64Index])
+
+		// 查找base64标记
+		markerIndex := strings.Index(content[base64Index:], base64Marker)
+		if markerIndex == -1 {
+			// 没找到base64标记，保持原样
+			result.WriteString(content[base64Index:])
+			break
+		}
+		markerIndex += base64Index
+
+		// 找到下一个引号、空格、逗号或大括号作为结束位置
+		endIndex := markerIndex + len(base64Marker)
+		actualEnd := len(content)
+
+		for _, delimiter := range []string{"\"", " ", ",", "}"} {
+			if pos := strings.Index(content[endIndex:], delimiter); pos != -1 {
+				pos += endIndex
+				if pos < actualEnd {
+					actualEnd = pos
+				}
+			}
+		}
+
+		// 如果base64数据长度超过指定长度，则截断
+		if actualEnd-endIndex > maxBase64Length {
+			result.WriteString(content[base64Index:endIndex])
+			result.WriteString("[base64数据已截断]")
+			startIndex = actualEnd
+		} else {
+			// 短数据保持原样
+			result.WriteString(content[base64Index:actualEnd])
+			startIndex = actualEnd
+		}
+	}
+
+	// 添加剩余内容
+	result.WriteString(content[startIndex:])
+	return result.String()
+}
+
+// truncateBase64InMetadata 处理metadata中的Base64内容截断
+func truncateBase64InMetadata(metadata map[string]any) string {
+	if metadata == nil {
+		return "nil"
+	}
+
+	if jsonBytes, err := json.Marshal(metadata); err == nil {
+		return truncateBase64Content(string(jsonBytes))
+	}
+	return fmt.Sprintf("%+v", metadata)
 }
