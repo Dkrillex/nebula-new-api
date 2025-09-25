@@ -382,14 +382,12 @@ func RelayNotFound(c *gin.Context) {
 }
 
 func RelayTask(c *gin.Context) {
-	common.SysLog("[RelayTask] 开始处理任务请求")
 	common.SysLog(fmt.Sprintf("[RelayTask] 请求方法: %s, 请求路径: %s", c.Request.Method, c.Request.URL.Path))
 
 	retryTimes := common.RetryTimes
 	channelId := c.GetInt("channel_id")
 	group := c.GetString("group")
 	originalModel := c.GetString("original_model")
-	common.SysLog(fmt.Sprintf("[RelayTask] 初始参数 - channelId: %d, group: %s, originalModel: %s", channelId, group, originalModel))
 
 	c.Set("use_channel", []string{fmt.Sprintf("%d", channelId)})
 	relayInfo, err := relaycommon.GenRelayInfo(c, types.RelayFormatTask, nil, nil)
@@ -397,7 +395,6 @@ func RelayTask(c *gin.Context) {
 		common.SysError(fmt.Sprintf("[RelayTask] GenRelayInfo失败: %v", err))
 		return
 	}
-	common.SysLog(fmt.Sprintf("[RelayTask] RelayInfo生成成功, RelayMode: %d", relayInfo.RelayMode))
 	taskErr := taskRelayHandler(c, relayInfo)
 	if taskErr == nil {
 		retryTimes = 0
@@ -440,10 +437,10 @@ func taskRelayHandler(c *gin.Context, relayInfo *relaycommon.RelayInfo) *dto.Tas
 	var err *dto.TaskError
 	switch relayInfo.RelayMode {
 	case relayconstant.RelayModeSunoFetch, relayconstant.RelayModeSunoFetchByID, relayconstant.RelayModeVideoFetchByID:
-		common.SysLog(fmt.Sprintf("[taskRelayHandler] 命中任务查询模式, RelayMode: %d", relayInfo.RelayMode))
+		//common.SysLog(fmt.Sprintf("[taskRelayHandler] 命中任务查询模式, RelayMode: %d", relayInfo.RelayMode))
 		err = relay.RelayTaskFetch(c, relayInfo.RelayMode)
 	default:
-		common.SysLog(fmt.Sprintf("[taskRelayHandler] 命中任务提交模式, RelayMode: %d", relayInfo.RelayMode))
+		//common.SysLog(fmt.Sprintf("[taskRelayHandler] 命中任务提交模式, RelayMode: %d", relayInfo.RelayMode))
 		err = relay.RelayTaskSubmit(c, relayInfo)
 	}
 	if err != nil {

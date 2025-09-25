@@ -9,7 +9,6 @@ import (
 	"one-api/common"
 	"one-api/dto"
 	relaycommon "one-api/relay/common"
-	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -177,12 +176,11 @@ func (a *TaskAdaptor) DoRequest(c *gin.Context, info *relaycommon.RelayInfo, req
 	}
 
 	// 打印完整的请求信息用于调试
-	common.SysLog("[Doubao] 完整请求信息:")
-	common.SysLog(fmt.Sprintf("[Doubao]   Method: %s", req.Method))
 	common.SysLog(fmt.Sprintf("[Doubao]   URL: %s", req.URL.String()))
 	common.SysLog(fmt.Sprintf("[Doubao]   Headers: %+v", req.Header))
 	if len(bodyBytes) > 0 {
-		common.SysLog(fmt.Sprintf("[Doubao]   Body: %s", string(bodyBytes)))
+		truncatedBody := common.TruncateBase64Content(string(bodyBytes))
+		common.SysLog(fmt.Sprintf("[Doubao]   Body: %s", truncatedBody))
 	}
 
 	// 发送请求
@@ -197,7 +195,8 @@ func (a *TaskAdaptor) DoRequest(c *gin.Context, info *relaycommon.RelayInfo, req
 		common.SysError(fmt.Sprintf("[Doubao] DoRequest - 请求方法: %s", req.Method))
 		common.SysError(fmt.Sprintf("[Doubao] DoRequest - 请求头: %+v", req.Header))
 		if len(bodyBytes) > 0 {
-			common.SysError(fmt.Sprintf("[Doubao] DoRequest - 请求体: %s", string(bodyBytes)))
+			truncatedBody := common.TruncateBase64Content(string(bodyBytes))
+			common.SysError(fmt.Sprintf("[Doubao] DoRequest - 请求体: %s", truncatedBody))
 		}
 		return nil, err
 	}
@@ -253,14 +252,17 @@ func (a *TaskAdaptor) DoResponse(c *gin.Context, resp *http.Response, info *rela
 		}
 	}
 
-	common.SysLog(fmt.Sprintf("[Doubao] DoResponse - 响应体: %s", string(body)))
+	// 使用截断函数处理base64内容，保留其他信息
+	truncatedContent := common.TruncateBase64Content(string(body))
+	common.SysLog(fmt.Sprintf("[Doubao] DoResponse - 响应体: %s", truncatedContent))
 
 	// 检查HTTP状态码
 	if resp.StatusCode != http.StatusOK {
 		common.SysError(fmt.Sprintf("[Doubao] DoResponse - HTTP请求失败，状态码: %d", resp.StatusCode))
 		common.SysError(fmt.Sprintf("[Doubao] DoResponse - 错误响应头: %+v", resp.Header))
 		common.SysError(fmt.Sprintf("[Doubao] DoResponse - 错误响应体长度: %d bytes", len(body)))
-		common.SysError(fmt.Sprintf("[Doubao] DoResponse - 错误响应体内容: %s", string(body)))
+		truncatedErrorBody := common.TruncateBase64Content(string(body))
+		common.SysError(fmt.Sprintf("[Doubao] DoResponse - 错误响应体内容: %s", truncatedErrorBody))
 
 		// 尝试解析错误响应获取更详细的错误信息
 		var errorResp map[string]interface{}
@@ -287,17 +289,23 @@ func (a *TaskAdaptor) DoResponse(c *gin.Context, resp *http.Response, info *rela
 		var errorMessage string
 		switch resp.StatusCode {
 		case 400:
-			errorMessage = fmt.Sprintf("请求参数错误(400): %s", string(body))
+			truncatedBody := common.TruncateBase64Content(string(body))
+			errorMessage = fmt.Sprintf("请求参数错误(400): %s", truncatedBody)
 		case 401:
-			errorMessage = fmt.Sprintf("认证失败(401): API密钥无效或过期，响应: %s", string(body))
+			truncatedBody := common.TruncateBase64Content(string(body))
+			errorMessage = fmt.Sprintf("认证失败(401): API密钥无效或过期，响应: %s", truncatedBody)
 		case 403:
-			errorMessage = fmt.Sprintf("权限不足(403): 模型未开通或配额不足，响应: %s", string(body))
+			truncatedBody := common.TruncateBase64Content(string(body))
+			errorMessage = fmt.Sprintf("权限不足(403): 模型未开通或配额不足，响应: %s", truncatedBody)
 		case 429:
-			errorMessage = fmt.Sprintf("请求频率超限(429): %s", string(body))
+			truncatedBody := common.TruncateBase64Content(string(body))
+			errorMessage = fmt.Sprintf("请求频率超限(429): %s", truncatedBody)
 		case 500:
-			errorMessage = fmt.Sprintf("服务器内部错误(500): %s", string(body))
+			truncatedBody := common.TruncateBase64Content(string(body))
+			errorMessage = fmt.Sprintf("服务器内部错误(500): %s", truncatedBody)
 		default:
-			errorMessage = fmt.Sprintf("API请求失败，状态码: %d, 响应: %s", resp.StatusCode, string(body))
+			truncatedBody := common.TruncateBase64Content(string(body))
+			errorMessage = fmt.Sprintf("API请求失败，状态码: %d, 响应: %s", resp.StatusCode, truncatedBody)
 		}
 
 		return "", nil, &dto.TaskError{
@@ -318,7 +326,8 @@ func (a *TaskAdaptor) DoResponse(c *gin.Context, resp *http.Response, info *rela
 
 	// 检查任务ID
 	if response.TaskID == "" {
-		common.SysError(fmt.Sprintf("[Doubao] DoResponse - 完整响应内容: %s", string(body)))
+		truncatedFullBody := common.TruncateBase64Content(string(body))
+		common.SysError(fmt.Sprintf("[Doubao] DoResponse - 完整响应内容: %s", truncatedFullBody))
 		return "", nil, &dto.TaskError{
 			Code:    "missing_task_id",
 			Message: "响应中缺少任务ID",
@@ -429,9 +438,6 @@ func convertVideoRequestToDoubaoPayload(request *dto.VideoRequest) *requestPaylo
 	}
 
 	common.SysLog(fmt.Sprintf("[Doubao] Model: %s", request.Model))
-	// 使用截断函数处理Base64内容
-	metadataStr := truncateBase64InMetadata(request.Metadata)
-	common.SysLog(fmt.Sprintf("[Doubao] Metadata: %s", metadataStr))
 
 	// 从 Metadata 中提取 content
 	if request.Metadata != nil {
@@ -499,7 +505,8 @@ func (a *TaskAdaptor) ParseTaskResult(respBody []byte) (*relaycommon.TaskInfo, e
 	var doubaoResp taskQueryResponse
 	if err := json.Unmarshal(respBody, &doubaoResp); err != nil {
 		common.SysError(fmt.Sprintf("[Doubao] ParseTaskResult - JSON解析响应失败: %v", err))
-		common.SysError(fmt.Sprintf("[Doubao] ParseTaskResult - 原始响应体: %s", string(respBody)))
+		truncatedRespBody := common.TruncateBase64Content(string(respBody))
+		common.SysError(fmt.Sprintf("[Doubao] ParseTaskResult - 原始响应体: %s", truncatedRespBody))
 		return nil, fmt.Errorf("解析响应失败: %v", err)
 	}
 
@@ -618,65 +625,6 @@ func convertInterfaceToContent(contentInterface interface{}, target *[]ContentIt
 	return nil
 }
 
-// truncateBase64Content 截断字符串中的base64内容，保留其他信息
-func truncateBase64Content(content string) string {
-	const base64Prefix = "data:image/"
-	const base64Marker = ";base64,"
-	const maxBase64Length = 50
-
-	var result strings.Builder
-	startIndex := 0
-
-	for {
-		// 查找base64前缀
-		base64Index := strings.Index(content[startIndex:], base64Prefix)
-		if base64Index == -1 {
-			break
-		}
-		base64Index += startIndex
-
-		// 添加base64前的内容
-		result.WriteString(content[startIndex:base64Index])
-
-		// 查找base64标记
-		markerIndex := strings.Index(content[base64Index:], base64Marker)
-		if markerIndex == -1 {
-			// 没找到base64标记，保持原样
-			result.WriteString(content[base64Index:])
-			break
-		}
-		markerIndex += base64Index
-
-		// 找到下一个引号、空格、逗号或大括号作为结束位置
-		endIndex := markerIndex + len(base64Marker)
-		actualEnd := len(content)
-
-		for _, delimiter := range []string{"\"", " ", ",", "}"} {
-			if pos := strings.Index(content[endIndex:], delimiter); pos != -1 {
-				pos += endIndex
-				if pos < actualEnd {
-					actualEnd = pos
-				}
-			}
-		}
-
-		// 如果base64数据长度超过指定长度，则截断
-		if actualEnd-endIndex > maxBase64Length {
-			result.WriteString(content[base64Index:endIndex])
-			result.WriteString("[base64数据已截断]")
-			startIndex = actualEnd
-		} else {
-			// 短数据保持原样
-			result.WriteString(content[base64Index:actualEnd])
-			startIndex = actualEnd
-		}
-	}
-
-	// 添加剩余内容
-	result.WriteString(content[startIndex:])
-	return result.String()
-}
-
 // truncateBase64InMetadata 处理metadata中的Base64内容截断
 func truncateBase64InMetadata(metadata map[string]any) string {
 	if metadata == nil {
@@ -684,7 +632,7 @@ func truncateBase64InMetadata(metadata map[string]any) string {
 	}
 
 	if jsonBytes, err := json.Marshal(metadata); err == nil {
-		return truncateBase64Content(string(jsonBytes))
+		return common.TruncateBase64Content(string(jsonBytes))
 	}
 	return fmt.Sprintf("%+v", metadata)
 }

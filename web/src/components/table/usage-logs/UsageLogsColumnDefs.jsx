@@ -549,7 +549,9 @@ export const getLogsColumns = ({
             false,
             1.0,
             other?.is_system_prompt_overwritten,
-            'claude'
+            'claude',
+            other?.per_call_image_multiplier || 0,
+            other?.per_call_price || 0
           )
           : renderModelPriceSimple(
             other.model_ratio,
@@ -563,7 +565,9 @@ export const getLogsColumns = ({
             false,
             1.0,
             other?.is_system_prompt_overwritten,
-            'openai'
+            'openai',
+            other?.per_call_image_multiplier || 0,
+            other?.per_call_price || 0
           );
         return (
           <Typography.Paragraph

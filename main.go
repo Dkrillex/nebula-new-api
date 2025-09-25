@@ -174,9 +174,6 @@ func InitResources() error {
 
 	logger.SetupLogger()
 
-	// Initialize model settings
-	ratio_setting.InitRatioSettings()
-
 	service.InitHttpClient()
 
 	service.InitTokenEncoders()
@@ -192,6 +189,9 @@ func InitResources() error {
 
 	// Initialize options, should after model.InitDB()
 	model.InitOptionMap()
+
+	// Initialize model settings after options are loaded
+	ratio_setting.InitRatioSettings()
 
 	// 初始化模型
 	model.GetPricing()

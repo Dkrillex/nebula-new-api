@@ -97,7 +97,39 @@ func updateVideoSingleTask(ctx context.Context, adaptor channel.TaskAdaptor, cha
 	} else if taskResult, err = adaptor.ParseTaskResult(responseBody); err != nil {
 		return fmt.Errorf("parseTaskResult failed for task %s: %w", taskId, err)
 	} else {
-		task.Data = responseBody
+		// 保留原有的token信息，合并新的响应数据
+		var existingData map[string]interface{}
+		var newData map[string]interface{}
+
+		// 解析现有数据
+		if task.Data != nil {
+			if err := json.Unmarshal(task.Data, &existingData); err != nil {
+				existingData = make(map[string]interface{})
+			}
+		} else {
+			existingData = make(map[string]interface{})
+		}
+
+		// 解析新响应数据
+		if err := json.Unmarshal(responseBody, &newData); err != nil {
+			// 如果解析失败，直接使用原始响应体
+			task.Data = responseBody
+		} else {
+			// 保留原有的token信息
+			if tokenName, exists := existingData["token_name"]; exists {
+				newData["token_name"] = tokenName
+			}
+			if tokenId, exists := existingData["token_id"]; exists {
+				newData["token_id"] = tokenId
+			}
+
+			// 合并数据并更新
+			if mergedData, err := json.Marshal(newData); err == nil {
+				task.Data = mergedData
+			} else {
+				task.Data = responseBody
+			}
+		}
 	}
 
 	now := time.Now().Unix()
@@ -170,14 +202,22 @@ func handleVideoTaskBilling(ctx context.Context, task *model.Task, taskResult *r
 		return fmt.Errorf("failed to get user %d: %v", task.UserId, err)
 	}
 
-	// 获取原始模型名称
+	// 获取原始模型名称和token信息
 	var modelName string
+	var tokenName string
+	var tokenId int
 	if task.Data != nil {
-		// 尝试从任务数据中提取原始模型名称
+		// 尝试从任务数据中提取原始模型名称和token信息
 		var taskData map[string]interface{}
 		if err := json.Unmarshal(task.Data, &taskData); err == nil {
 			if model, ok := taskData["model"].(string); ok && model != "" {
 				modelName = model
+			}
+			if token, ok := taskData["token_name"].(string); ok && token != "" {
+				tokenName = token
+			}
+			if token, ok := taskData["token_id"].(float64); ok {
+				tokenId = int(token)
 			}
 		}
 	}
@@ -219,11 +259,18 @@ func handleVideoTaskBilling(ctx context.Context, task *model.Task, taskResult *r
 
 	modelPrice := priceData.ModelPrice
 	groupRatio := priceData.GroupRatioInfo.GroupRatio
+	modelRatio := priceData.ModelRatio
+	completionRatio := priceData.CompletionRatio
 
 	// 根据实际token消耗重新计算quota
-	// 对于视频任务，通常按固定价格计费，不是按token计费
-	// 但如果有实际token消耗，我们可以记录下来
-	actualQuota := int(modelPrice * common.QuotaPerUnit * groupRatio)
+	var actualQuota int
+	if modelPrice == -1 {
+		// 按量计费：根据实际token消耗计算
+		actualQuota = int(float64(taskResult.TotalTokens) * modelRatio * completionRatio * groupRatio)
+	} else {
+		// 固定价格：按固定价格计费
+		actualQuota = int(modelPrice * common.QuotaPerUnit * groupRatio)
+	}
 
 	// 计算quota差值
 	quotaDelta := actualQuota - task.Quota
@@ -258,8 +305,16 @@ func handleVideoTaskBilling(ctx context.Context, task *model.Task, taskResult *r
 	}
 
 	// 记录详细的消费日志
-	logContent := fmt.Sprintf("视频任务完成，实际消耗token: %d，模型价格: %.2f，分组倍率: %.2f，预扣费: %d，实际扣费: %d",
-		taskResult.TotalTokens, modelPrice, groupRatio, task.Quota, actualQuota)
+	var logContent string
+	if modelPrice == -1 {
+		// 按量计费模型
+		logContent = fmt.Sprintf("视频任务完成，实际消耗token: %d，模型倍率: %.6f，完成倍率: %.2f，分组倍率: %.2f，预扣费: %d，实际扣费: %d",
+			taskResult.TotalTokens, modelRatio, completionRatio, groupRatio, task.Quota, actualQuota)
+	} else {
+		// 固定价格模型
+		logContent = fmt.Sprintf("视频任务完成，实际消耗token: %d，模型价格: %.2f，分组倍率: %.2f，预扣费: %d，实际扣费: %d",
+			taskResult.TotalTokens, modelPrice, groupRatio, task.Quota, actualQuota)
+	}
 
 	// 构建其他信息
 	other := make(map[string]interface{})
@@ -268,6 +323,8 @@ func handleVideoTaskBilling(ctx context.Context, task *model.Task, taskResult *r
 	other["action"] = task.Action
 	other["actual_tokens"] = taskResult.TotalTokens
 	other["model_price"] = modelPrice
+	other["model_ratio"] = modelRatio
+	other["completion_ratio"] = completionRatio
 	other["group_ratio"] = groupRatio
 	other["pre_consumed_quota"] = task.Quota
 	other["actual_quota"] = actualQuota
@@ -283,15 +340,15 @@ func handleVideoTaskBilling(ctx context.Context, task *model.Task, taskResult *r
 		Type:             model.LogTypeConsume,
 		Content:          logContent,
 		ChannelId:        task.ChannelId,
-		PromptTokens:     taskResult.TotalTokens,
-		CompletionTokens: 0,
-		TokenName:        user.Username,
+		PromptTokens:     0,
+		CompletionTokens: taskResult.TotalTokens,
+		TokenName:        tokenName,
 		ModelName:        modelName,
 		Quota:            actualQuota,
 		UseTime:          int(task.FinishTime - task.StartTime),
 		IsStream:         false,
 		Group:            user.Group,
-		TokenId:          0,
+		TokenId:          tokenId,
 		Ip:               "",
 		Other:            otherStr,
 	}

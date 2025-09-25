@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"math"
 	"net/http"
 	"one-api/common"
 	"one-api/constant"
@@ -120,7 +119,8 @@ func RelayTaskSubmit(c *gin.Context, info *relaycommon.RelayInfo) (taskErr *dto.
 	// handle response
 	if resp != nil && resp.StatusCode != http.StatusOK {
 		responseBody, _ := io.ReadAll(resp.Body)
-		taskErr = service.TaskErrorWrapper(fmt.Errorf(string(responseBody)), "fail_to_fetch_task", resp.StatusCode)
+		truncatedResponseBody := common.TruncateBase64Content(string(responseBody))
+		taskErr = service.TaskErrorWrapper(fmt.Errorf(truncatedResponseBody), "fail_to_fetch_task", resp.StatusCode)
 		return
 	}
 
@@ -141,7 +141,7 @@ func RelayTaskSubmit(c *gin.Context, info *relaycommon.RelayInfo) (taskErr *dto.
 		if quota != 0 {
 			tokenName := c.GetString("token_name")
 			var logContent string
-			if math.Abs(modelPrice-(-1)) < 0.000001 {
+			if modelPrice == -1 {
 				logContent = fmt.Sprintf("模型按量计费，预扣费token: %d，分组倍率 %.2f，操作 %s", common.Max(1, common.PreConsumedQuota), groupRatio, info.Action)
 			} else {
 				logContent = fmt.Sprintf("模型固定价格 %.2f，分组倍率 %.2f，操作 %s", modelPrice, groupRatio, info.Action)
@@ -161,7 +161,7 @@ func RelayTaskSubmit(c *gin.Context, info *relaycommon.RelayInfo) (taskErr *dto.
 			other["billing_type"] = "pre_consume" // 标记为预扣费
 
 			// 添加模型倍率信息（用于前端计费显示）
-			if math.Abs(modelPrice-(-1)) < 0.000001 {
+			if modelPrice == -1 {
 				// 按量计费：添加模型倍率
 				other["model_ratio"] = 1.0 // 视频任务使用固定倍率
 				other["completion_ratio"] = 1.0
@@ -189,8 +189,39 @@ func RelayTaskSubmit(c *gin.Context, info *relaycommon.RelayInfo) (taskErr *dto.
 	task := model.InitTask(platform, info)
 	task.TaskID = taskID
 	task.Quota = quota
-	task.Data = taskData
 	task.Action = info.Action
+
+	// 保存token信息到任务数据中，用于后续补扣费日志记录
+	var taskDataMap map[string]interface{}
+	if taskData != nil {
+		// 如果已有数据，先解析
+		if err := json.Unmarshal(taskData, &taskDataMap); err != nil {
+			common.SysLog(fmt.Sprintf("[RelayTaskSubmit] 解析taskData失败: %v", err))
+			taskDataMap = make(map[string]interface{})
+		}
+	} else {
+		taskDataMap = make(map[string]interface{})
+	}
+
+	// 添加token信息
+	tokenName := c.GetString("token_name")
+	tokenId := c.GetInt("token_id")
+	taskDataMap["token_name"] = tokenName
+	taskDataMap["token_id"] = tokenId
+
+	// 记录调试信息
+	common.SysLog(fmt.Sprintf("[RelayTaskSubmit] 保存token信息: token_name=%s, token_id=%d", tokenName, tokenId))
+
+	// 重新序列化为JSON
+	if updatedData, err := json.Marshal(taskDataMap); err == nil {
+		task.Data = updatedData
+		common.SysLog("[RelayTaskSubmit] 任务数据已更新，包含token信息")
+	} else {
+		common.SysError(fmt.Sprintf("[RelayTaskSubmit] 序列化任务数据失败: %v", err))
+		// 如果序列化失败，至少保存原始数据
+		task.Data = taskData
+	}
+
 	err = task.Insert()
 	if err != nil {
 		taskErr = service.TaskErrorWrapper(err, "insert_task_failed", http.StatusInternalServerError)
@@ -209,7 +240,6 @@ var fetchRespBuilders = map[int]func(c *gin.Context) (respBody []byte, taskResp 
 func RelayTaskFetch(c *gin.Context, relayMode int) (taskResp *dto.TaskError) {
 	common.SysLog(fmt.Sprintf("[TaskFetch] RelayTaskFetch - RelayMode: %d", relayMode))
 	common.SysLog(fmt.Sprintf("[TaskFetch] 请求路径: %s", c.Request.URL.Path))
-	common.SysLog(fmt.Sprintf("[TaskFetch] 请求方法: %s", c.Request.Method))
 
 	respBuilder, ok := fetchRespBuilders[relayMode]
 	if !ok {
@@ -225,7 +255,6 @@ func RelayTaskFetch(c *gin.Context, relayMode int) (taskResp *dto.TaskError) {
 		return taskErr
 	}
 
-	common.SysLog(fmt.Sprintf("[TaskFetch] 响应构建成功，响应体长度: %d bytes", len(respBody)))
 	c.Writer.Header().Set("Content-Type", "application/json")
 	_, err := io.Copy(c.Writer, bytes.NewBuffer(respBody))
 	if err != nil {
@@ -233,7 +262,6 @@ func RelayTaskFetch(c *gin.Context, relayMode int) (taskResp *dto.TaskError) {
 		taskResp = service.TaskErrorWrapper(err, "copy_response_body_failed", http.StatusInternalServerError)
 		return
 	}
-	common.SysLog("[TaskFetch] RelayTaskFetch 完成")
 	return
 }
 
@@ -367,7 +395,6 @@ func videoFetchByIDRespBodyBuilder(c *gin.Context) (respBody []byte, taskResp *d
 	}
 
 	// 转换为统一视频生成接口文档格式
-	common.SysLog("[VideoTask] 开始转换为统一格式")
 	response := convertToUnifiedVideoResponse(originTask)
 	common.SysLog(fmt.Sprintf("[VideoTask] 转换后的响应格式: TaskId=%s, Status=%s, Url=%s",
 		response.TaskId, response.Status, response.Url))
@@ -378,7 +405,6 @@ func videoFetchByIDRespBodyBuilder(c *gin.Context) (respBody []byte, taskResp *d
 		taskResp = service.TaskErrorWrapper(err, "json_marshal_failed", http.StatusInternalServerError)
 		return
 	}
-	common.SysLog(fmt.Sprintf("[VideoTask] 查询完成，返回响应长度: %d bytes", len(respBody)))
 	return
 }
 
@@ -575,14 +601,16 @@ func handleVideoTaskBillingInQuery(c *gin.Context, task *model.Task, taskResult 
 
 		modelPrice := priceData.ModelPrice
 		groupRatio := priceData.GroupRatioInfo.GroupRatio
+		modelRatio := priceData.ModelRatio
+		completionRatio := priceData.CompletionRatio
 
 		// 豆包火山视频模型：按输出token计费，输入免费
 		outputTokens := taskResult.TotalTokens // 豆包返回的total_tokens就是输出token
 
 		// 根据模型价格类型计算实际quota
-		if math.Abs(modelPrice-(-1)) < 0.000001 {
+		if modelPrice == -1 {
 			// 按量计费：根据实际token消耗计算
-			actualQuota = int(float64(outputTokens) * groupRatio)
+			actualQuota = int(float64(outputTokens) * modelRatio * completionRatio * groupRatio)
 		} else {
 			// 固定价格：按固定价格计费
 			actualQuota = int(float64(outputTokens) * modelPrice * common.QuotaPerUnit * groupRatio)
@@ -629,10 +657,23 @@ func handleVideoTaskBillingInQuery(c *gin.Context, task *model.Task, taskResult 
 		if task.Data != nil {
 			var taskData map[string]interface{}
 			if err := json.Unmarshal(task.Data, &taskData); err == nil {
+				// 保留原有的token信息
+				originalTokenName := taskData["token_name"]
+				originalTokenId := taskData["token_id"]
+
+				// 添加计费相关字段
 				taskData["billing_processed"] = true
 				taskData["billing_processed_at"] = common.GetTimestamp()
 				taskData["actual_tokens"] = taskResult.TotalTokens
 				taskData["quota_delta"] = quotaDelta
+
+				// 确保token信息不被覆盖
+				if originalTokenName != nil {
+					taskData["token_name"] = originalTokenName
+				}
+				if originalTokenId != nil {
+					taskData["token_id"] = originalTokenId
+				}
 
 				// 更新任务数据
 				if updatedData, err := json.Marshal(taskData); err == nil {

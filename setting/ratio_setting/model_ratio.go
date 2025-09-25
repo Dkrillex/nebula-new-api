@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"one-api/common"
 	"one-api/setting/operation_setting"
+	"strconv"
 	"strings"
 	"sync"
 )
@@ -299,33 +300,25 @@ var defaultCompletionRatio = map[string]float64{
 	"gpt-image-1":    8,
 }
 
-// InitRatioSettings initializes all model related settings maps
+// InitRatioSettings initializes all model related settings maps from database
 func InitRatioSettings() {
-	// Initialize modelPriceMap
-	modelPriceMapMutex.Lock()
-	modelPriceMap = defaultModelPrice
-	modelPriceMapMutex.Unlock()
+	// Load modelPriceMap from database
+	loadModelPriceFromDatabase()
 
-	// Initialize modelRatioMap
-	modelRatioMapMutex.Lock()
-	modelRatioMap = defaultModelRatio
-	modelRatioMapMutex.Unlock()
+	// Load modelRatioMap from database
+	loadModelRatioFromDatabase()
 
-	// Initialize CompletionRatio
-	CompletionRatioMutex.Lock()
-	CompletionRatio = defaultCompletionRatio
-	CompletionRatioMutex.Unlock()
+	// Load CompletionRatio from database
+	loadCompletionRatioFromDatabase()
 
-	// Initialize cacheRatioMap
-	cacheRatioMapMutex.Lock()
-	cacheRatioMap = defaultCacheRatio
-	cacheRatioMapMutex.Unlock()
+	// Load cacheRatioMap from database
+	loadCacheRatioFromDatabase()
 
-	// initialize imageRatioMap
-	imageRatioMapMutex.Lock()
-	imageRatioMap = defaultImageRatio
-	imageRatioMapMutex.Unlock()
+	// Load imageRatioMap from database
+	loadImageRatioFromDatabase()
 
+	// Print loaded configuration
+	printLoadedConfiguration()
 }
 
 func GetModelPriceMap() map[string]float64 {
@@ -706,4 +699,148 @@ func FormatMatchingModelName(name string) string {
 		name = "gpt-4o-gizmo-*"
 	}
 	return name
+}
+
+// loadModelPriceFromDatabase loads model price configuration from database
+func loadModelPriceFromDatabase() {
+	modelPriceMapMutex.Lock()
+	defer modelPriceMapMutex.Unlock()
+
+	// Try to get from database first
+	if priceStr, exists := common.OptionMap["ModelPrice"]; exists && priceStr != "" {
+		var priceMap map[string]float64
+		if err := common.Unmarshal([]byte(priceStr), &priceMap); err == nil {
+			modelPriceMap = priceMap
+			common.SysLog("Loaded model price configuration from database")
+			return
+		}
+	}
+
+	// Fallback to default if database load fails
+	modelPriceMap = defaultModelPrice
+	common.SysLog("Using default model price configuration")
+}
+
+// loadModelRatioFromDatabase loads model ratio configuration from database
+func loadModelRatioFromDatabase() {
+	modelRatioMapMutex.Lock()
+	defer modelRatioMapMutex.Unlock()
+
+	// Try to get from database first
+	if ratioStr, exists := common.OptionMap["ModelRatio"]; exists && ratioStr != "" {
+		var ratioMap map[string]float64
+		if err := common.Unmarshal([]byte(ratioStr), &ratioMap); err == nil {
+			modelRatioMap = ratioMap
+			common.SysLog("Loaded model ratio configuration from database")
+			return
+		}
+	}
+
+	// Fallback to default if database load fails
+	modelRatioMap = defaultModelRatio
+	common.SysLog("Using default model ratio configuration")
+}
+
+// loadCompletionRatioFromDatabase loads completion ratio configuration from database
+func loadCompletionRatioFromDatabase() {
+	CompletionRatioMutex.Lock()
+	defer CompletionRatioMutex.Unlock()
+
+	// Try to get from database first
+	if completionStr, exists := common.OptionMap["CompletionRatio"]; exists && completionStr != "" {
+		var completionMap map[string]float64
+		if err := common.Unmarshal([]byte(completionStr), &completionMap); err == nil {
+			CompletionRatio = completionMap
+			common.SysLog("Loaded completion ratio configuration from database")
+			return
+		}
+	}
+
+	// Fallback to default if database load fails
+	CompletionRatio = defaultCompletionRatio
+	common.SysLog("Using default completion ratio configuration")
+}
+
+// loadCacheRatioFromDatabase loads cache ratio configuration from database
+func loadCacheRatioFromDatabase() {
+	cacheRatioMapMutex.Lock()
+	defer cacheRatioMapMutex.Unlock()
+
+	// Try to get from database first
+	if cacheStr, exists := common.OptionMap["CacheRatio"]; exists && cacheStr != "" {
+		var cacheMap map[string]float64
+		if err := common.Unmarshal([]byte(cacheStr), &cacheMap); err == nil {
+			cacheRatioMap = cacheMap
+			common.SysLog("Loaded cache ratio configuration from database")
+			return
+		}
+	}
+
+	// Fallback to default if database load fails
+	cacheRatioMap = defaultCacheRatio
+	common.SysLog("Using default cache ratio configuration")
+}
+
+// loadImageRatioFromDatabase loads image ratio configuration from database
+func loadImageRatioFromDatabase() {
+	imageRatioMapMutex.Lock()
+	defer imageRatioMapMutex.Unlock()
+
+	// Try to get from database first
+	if imageStr, exists := common.OptionMap["ImageRatio"]; exists && imageStr != "" {
+		var imageMap map[string]float64
+		if err := common.Unmarshal([]byte(imageStr), &imageMap); err == nil {
+			imageRatioMap = imageMap
+			common.SysLog("Loaded image ratio configuration from database")
+			return
+		}
+	}
+
+	// Fallback to default if database load fails
+	imageRatioMap = defaultImageRatio
+	common.SysLog("Using default image ratio configuration")
+}
+
+// printLoadedConfiguration prints the loaded configuration summary
+func printLoadedConfiguration() {
+	modelPriceMapMutex.RLock()
+	modelRatioMapMutex.RLock()
+	CompletionRatioMutex.RLock()
+	cacheRatioMapMutex.RLock()
+	imageRatioMapMutex.RLock()
+
+	common.SysLog("=== Ratio Settings Configuration Loaded ===")
+
+	// Print Model Price Map JSON
+	if priceJSON, err := common.Marshal(modelPriceMap); err == nil {
+		common.SysLog("Model Price Map (" + strconv.Itoa(len(modelPriceMap)) + " entries): " + string(priceJSON))
+	}
+
+	// Print Model Ratio Map JSON
+	if ratioJSON, err := common.Marshal(modelRatioMap); err == nil {
+		common.SysLog("Model Ratio Map (" + strconv.Itoa(len(modelRatioMap)) + " entries): " + string(ratioJSON))
+	}
+
+	// Print Completion Ratio Map JSON
+	if completionJSON, err := common.Marshal(CompletionRatio); err == nil {
+		common.SysLog("Completion Ratio Map (" + strconv.Itoa(len(CompletionRatio)) + " entries): " + string(completionJSON))
+	}
+
+	// Print Cache Ratio Map JSON
+	if cacheJSON, err := common.Marshal(cacheRatioMap); err == nil {
+		common.SysLog("Cache Ratio Map (" + strconv.Itoa(len(cacheRatioMap)) + " entries): " + string(cacheJSON))
+	}
+
+	// Print Image Ratio Map JSON
+	if imageJSON, err := common.Marshal(imageRatioMap); err == nil {
+		common.SysLog("Image Ratio Map (" + strconv.Itoa(len(imageRatioMap)) + " entries): " + string(imageJSON))
+	}
+
+	common.SysLog("=== Configuration Loading Complete ===")
+
+	modelPriceMapMutex.RUnlock()
+	modelRatioMapMutex.RUnlock()
+	CompletionRatioMutex.RUnlock()
+	cacheRatioMapMutex.RUnlock()
+	imageRatioMapMutex.RUnlock()
 }

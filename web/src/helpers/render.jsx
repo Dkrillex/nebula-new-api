@@ -1015,13 +1015,25 @@ function renderPriceSimpleCore({
   cacheCreationRatio = 1.0,
   image = false,
   imageRatio = 1.0,
-  isSystemPromptOverride = false
+  isSystemPromptOverride = false,
+  perCallImageMultiplier = 0,
+  perCallPrice = 0
 }) {
   const { ratio: effectiveGroupRatio, label: ratioLabel } = getEffectiveRatio(
     groupRatio,
     user_group_ratio,
   );
   const finalGroupRatio = effectiveGroupRatio;
+
+  // 按张数计费的情况
+  if (perCallImageMultiplier > 0 && perCallPrice > 0) {
+    return i18next.t('价格：${{price}} * {{ratioType}}：{{ratio}} * 张数：{{count}}', {
+      price: perCallPrice,
+      ratioType: ratioLabel,
+      ratio: finalGroupRatio,
+      count: perCallImageMultiplier,
+    });
+  }
 
   if (modelPrice !== -1) {
     return i18next.t('价格：${{price}} * {{ratioType}}：{{ratio}}', {
@@ -1090,9 +1102,49 @@ export function renderModelPrice(
   audioInputSeperatePrice = false,
   audioInputTokens = 0,
   audioInputPrice = 0,
+  perCallImageMultiplier = 0,
+  perCallPrice = 0,
 ) {
   const { ratio: effectiveGroupRatio, label: ratioLabel } = getEffectiveRatio(groupRatio, user_group_ratio);
   groupRatio = effectiveGroupRatio;
+
+  // 按张数计费的情况
+  if (perCallImageMultiplier > 0 && perCallPrice > 0) {
+    const totalPrice = perCallPrice * groupRatio * perCallImageMultiplier;
+    return (
+      <>
+        <article>
+          <p>
+            {i18next.t('按次计费价格：${{price}} / 次', {
+              price: perCallPrice,
+            })}
+          </p>
+          <p>
+            {i18next.t('生成张数：{{count}} 张', {
+              count: perCallImageMultiplier,
+            })}
+          </p>
+          <p>
+            {i18next.t('{{ratioType}}：{{ratio}}', {
+              ratioType: ratioLabel,
+              ratio: groupRatio,
+            })}
+          </p>
+          <p></p>
+          <p>
+            {i18next.t('计费公式：${{price}} * {{ratioType}} {{ratio}} * {{count}}张 = ${{total}}', {
+              price: perCallPrice,
+              ratioType: ratioLabel,
+              ratio: groupRatio,
+              count: perCallImageMultiplier,
+              total: totalPrice.toFixed(6),
+            })}
+          </p>
+          <p>{i18next.t('仅供参考，以实际扣费为准')}</p>
+        </article>
+      </>
+    );
+  }
 
   if (modelPrice !== -1) {
     return i18next.t(
@@ -1366,6 +1418,8 @@ export function renderModelPriceSimple(
   imageRatio = 1.0,
   isSystemPromptOverride = false,
   provider = 'openai',
+  perCallImageMultiplier = 0,
+  perCallPrice = 0
 ) {
   return renderPriceSimpleCore({
     modelRatio,
@@ -1378,7 +1432,9 @@ export function renderModelPriceSimple(
     cacheCreationRatio,
     image,
     imageRatio,
-    isSystemPromptOverride
+    isSystemPromptOverride,
+    perCallImageMultiplier,
+    perCallPrice
   });
 }
 

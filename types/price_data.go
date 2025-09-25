@@ -27,5 +27,5 @@ type PerCallPriceData struct {
 }
 
 func (p PriceData) ToSetting() string {
-	return fmt.Sprintf("ModelPrice: %f, ModelRatio: %f, CompletionRatio: %f, CacheRatio: %f, GroupRatio: %f, UsePrice: %t, CacheCreationRatio: %f, ShouldPreConsumedQuota: %d, ImageRatio: %f", p.ModelPrice, p.ModelRatio, p.CompletionRatio, p.CacheRatio, p.GroupRatioInfo.GroupRatio, p.UsePrice, p.CacheCreationRatio, p.ShouldPreConsumedQuota, p.ImageRatio)
+	return fmt.Sprintf("ModelPrice: %g, ModelRatio: %g, CompletionRatio: %g, CacheRatio: %g, GroupRatio: %g, UsePrice: %t, CacheCreationRatio: %g, ShouldPreConsumedQuota: %d, ImageRatio: %g", p.ModelPrice, p.ModelRatio, p.CompletionRatio, p.CacheRatio, p.GroupRatioInfo.GroupRatio, p.UsePrice, p.CacheCreationRatio, p.ShouldPreConsumedQuota, p.ImageRatio)
 }
