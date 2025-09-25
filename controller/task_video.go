@@ -13,8 +13,9 @@ import (
 	"one-api/relay"
 	"one-api/relay/channel"
 	relaycommon "one-api/relay/common"
+	"one-api/relay/helper"
 	"one-api/service"
-	"one-api/setting/ratio_setting"
+	"one-api/types"
 	"time"
 )
 
@@ -188,21 +189,36 @@ func handleVideoTaskBilling(ctx context.Context, task *model.Task, taskResult *r
 
 	logger.LogInfo(ctx, fmt.Sprintf("Task %s using model name: %s", task.TaskID, modelName))
 
-	// 获取模型价格和倍率信息
-	modelPrice, hasPrice := ratio_setting.GetModelPrice(modelName, true)
-	if !hasPrice {
-		// 如果找不到具体模型定价，尝试使用默认定价
-		defaultPrice, ok := ratio_setting.GetDefaultModelRatioMap()[modelName]
-		if !ok {
-			modelPrice = 0.1 // 最终默认值
-		} else {
-			modelPrice = defaultPrice
-		}
-		logger.LogInfo(ctx, fmt.Sprintf("Model %s price not found, using default: %.2f", modelName, modelPrice))
+	// 使用 helper.ModelPriceHelper 获取模型价格和倍率信息
+	// 构建 RelayInfo 用于价格查询
+	relayInfo := &relaycommon.RelayInfo{
+		OriginModelName: modelName,
+		UserId:          task.UserId,
+		UserGroup:       user.Group,
+		UsingGroup:      user.Group,
+		UserSetting:     dto.UserSetting{},
 	}
 
-	// 获取分组倍率
-	groupRatio := ratio_setting.GetGroupRatio(user.Group)
+	// 构建 TokenCountMeta
+	meta := &types.TokenCountMeta{
+		MaxTokens: 0, // 视频任务不需要max_tokens
+	}
+
+	// 使用 helper.ModelPriceHelper 获取价格信息
+	priceData, err := helper.ModelPriceHelper(nil, relayInfo, 1, meta)
+	if err != nil {
+		logger.LogError(ctx, fmt.Sprintf("Failed to get model price for %s: %v", modelName, err))
+		// 使用默认价格作为备选
+		priceData = types.PriceData{
+			ModelPrice: 0.1,
+			GroupRatioInfo: types.GroupRatioInfo{
+				GroupRatio: 1.0,
+			},
+		}
+	}
+
+	modelPrice := priceData.ModelPrice
+	groupRatio := priceData.GroupRatioInfo.GroupRatio
 
 	// 根据实际token消耗重新计算quota
 	// 对于视频任务，通常按固定价格计费，不是按token计费
@@ -284,11 +300,6 @@ func handleVideoTaskBilling(ctx context.Context, task *model.Task, taskResult *r
 	if err := model.LOG_DB.Create(consumeLog).Error; err != nil {
 		logger.LogError(ctx, fmt.Sprintf("Failed to insert consume log for task %s: %v", task.TaskID, err))
 	}
-
-	// 记录系统日志
-	systemLogContent := fmt.Sprintf("视频任务 %s 补扣费完成，实际消耗token: %d，quota差值: %d",
-		task.TaskID, taskResult.TotalTokens, quotaDelta)
-	model.RecordLog(task.UserId, model.LogTypeSystem, systemLogContent)
 
 	logger.LogInfo(ctx, fmt.Sprintf("Task %s billing completed successfully", task.TaskID))
 	return nil

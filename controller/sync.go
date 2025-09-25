@@ -1076,10 +1076,7 @@ func SyncVideoGeneration(c *gin.Context) {
 // @Failure 500 {object} common.Response{msg=string}
 // @Router /api/sync/system/videos/generations [get]
 func SyncGetVideoTask(c *gin.Context) {
-	common.SysLog("[SyncGetVideoTask] 开始处理视频任务查询请求")
-	common.SysLog(fmt.Sprintf("[SyncGetVideoTask] 请求方法: %s", c.Request.Method))
 	common.SysLog(fmt.Sprintf("[SyncGetVideoTask] 请求路径: %s", c.Request.URL.Path))
-	common.SysLog(fmt.Sprintf("[SyncGetVideoTask] 查询参数: %s", c.Request.URL.RawQuery))
 
 	var newAPIError *types.NewAPIError
 
@@ -1093,7 +1090,6 @@ func SyncGetVideoTask(c *gin.Context) {
 
 	// 获取任务ID
 	taskId := c.Param("task_id")
-	common.SysLog(fmt.Sprintf("[SyncGetVideoTask] 获取到任务ID: '%s'", taskId))
 	if taskId == "" {
 		common.SysError("[SyncGetVideoTask] 任务ID为空")
 		newAPIError = types.NewError(errors.New("任务ID不能为空"), types.ErrorCodeInvalidRequest)
@@ -1102,7 +1098,6 @@ func SyncGetVideoTask(c *gin.Context) {
 
 	// 获取用户ID（从URL参数）
 	userIdStr := c.Query("user_id")
-	common.SysLog(fmt.Sprintf("[SyncGetVideoTask] 获取到用户ID字符串: '%s'", userIdStr))
 	if userIdStr == "" {
 		common.SysError("[SyncGetVideoTask] 用户ID为空")
 		newAPIError = types.NewError(errors.New("用户ID不能为空"), types.ErrorCodeInvalidRequest)
@@ -1111,11 +1106,9 @@ func SyncGetVideoTask(c *gin.Context) {
 
 	userId, err := strconv.Atoi(userIdStr)
 	if err != nil || userId <= 0 {
-		common.SysError(fmt.Sprintf("[SyncGetVideoTask] 用户ID转换失败: %v, 输入: '%s'", err, userIdStr))
 		newAPIError = types.NewError(errors.New("无效的用户ID"), types.ErrorCodeInvalidRequest)
 		return
 	}
-	common.SysLog(fmt.Sprintf("[SyncGetVideoTask] 解析到用户ID: %d", userId))
 
 	// 先尝试从缓存获取用户信息
 	userCache, err := model.GetUserCache(userId)
@@ -1159,13 +1152,10 @@ func SyncGetVideoTask(c *gin.Context) {
 	newPath := "/v1/video/generations/" + taskId
 	c.Request.URL.Path = newPath
 	common.SysLog(fmt.Sprintf("[SyncGetVideoTask] 路径转换: %s -> %s", originalPath, newPath))
-	common.SysLog(fmt.Sprintf("[SyncGetVideoTask] 用户ID: %d, 任务ID: %s, 组: %s", userId, taskId, group))
 
 	// 设置请求开始时间
 	common.SetContextKey(c, constant.ContextKeyRequestStartTime, time.Now())
 
 	// 转发请求到视频任务查询接口
-	common.SysLog("[SyncGetVideoTask] 转发请求到RelayTask")
 	RelayTask(c)
-	common.SysLog("[SyncGetVideoTask] RelayTask完成")
 }
