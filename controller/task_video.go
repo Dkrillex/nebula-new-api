@@ -272,13 +272,13 @@ func handleVideoTaskBilling(ctx context.Context, task *model.Task, taskResult *r
 		actualQuota = int(modelPrice * common.QuotaPerUnit * groupRatio)
 	}
 
-	// 计算quota差值
+	// 计算quota差值（参考对话的补扣费逻辑）
 	quotaDelta := actualQuota - task.Quota
 
 	logger.LogInfo(ctx, fmt.Sprintf("Task %s billing: actual_quota=%d, pre_quota=%d, delta=%d, tokens=%d",
 		task.TaskID, actualQuota, task.Quota, quotaDelta, taskResult.TotalTokens))
 
-	// 如果有quota差值，进行补扣费或退费
+	// 如果有quota差值，进行补扣费或退费（参考对话的补扣费逻辑）
 	if quotaDelta != 0 {
 		// 构建RelayInfo用于补扣费
 		relayInfo := &relaycommon.RelayInfo{
@@ -304,16 +304,17 @@ func handleVideoTaskBilling(ctx context.Context, task *model.Task, taskResult *r
 		}
 	}
 
-	// 记录详细的消费日志
+	// 记录详细的消费日志（参考对话的补扣费日志）
 	var logContent string
-	if modelPrice == -1 {
-		// 按量计费模型
-		logContent = fmt.Sprintf("视频任务完成，实际消耗token: %d，模型倍率: %.6f，完成倍率: %.2f，分组倍率: %.2f，预扣费: %d，实际扣费: %d",
-			taskResult.TotalTokens, modelRatio, completionRatio, groupRatio, task.Quota, actualQuota)
+	if quotaDelta > 0 {
+		logContent = fmt.Sprintf("视频任务完成，预扣费后补扣费：%d（实际消耗：%d，预扣费：%d）",
+			quotaDelta, actualQuota, task.Quota)
+	} else if quotaDelta < 0 {
+		logContent = fmt.Sprintf("视频任务完成，预扣费后返还扣费：%d（实际消耗：%d，预扣费：%d）",
+			-quotaDelta, actualQuota, task.Quota)
 	} else {
-		// 固定价格模型
-		logContent = fmt.Sprintf("视频任务完成，实际消耗token: %d，模型价格: %.2f，分组倍率: %.2f，预扣费: %d，实际扣费: %d",
-			taskResult.TotalTokens, modelPrice, groupRatio, task.Quota, actualQuota)
+		logContent = fmt.Sprintf("视频任务完成，实际消耗token: %d，预扣费与实际消耗一致",
+			taskResult.TotalTokens)
 	}
 
 	// 构建其他信息
@@ -330,6 +331,8 @@ func handleVideoTaskBilling(ctx context.Context, task *model.Task, taskResult *r
 	other["actual_quota"] = actualQuota
 	other["quota_delta"] = quotaDelta
 	other["video_url"] = taskResult.Url
+	other["video_task"] = true              // 标记为视频任务
+	other["billing_type"] = "final_billing" // 标记为最终计费
 
 	// 记录消费日志
 	otherStr := common.MapToJsonStr(other)

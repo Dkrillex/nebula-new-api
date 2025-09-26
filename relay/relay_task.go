@@ -49,6 +49,8 @@ func RelayTaskSubmit(c *gin.Context, info *relaycommon.RelayInfo) (taskErr *dto.
 	if modelName == "" {
 		modelName = service.CoverTaskActionToModelName(platform, info.Action)
 	}
+	// 视频任务使用模型名称用于后续计费
+	_ = modelName
 
 	// 使用 helper.ModelPriceHelper 获取模型价格和预扣费信息
 	meta := &types.TokenCountMeta{
@@ -61,11 +63,18 @@ func RelayTaskSubmit(c *gin.Context, info *relaycommon.RelayInfo) (taskErr *dto.
 	}
 
 	quota := priceData.ShouldPreConsumedQuota
+	// 如果预扣费为0或过小，设置一个合理的默认值（参考Midjourney的预扣费逻辑）
+	if quota == 0 || quota < 1000 { // 小于1000 quota（约0.002美元）认为过小
+		// 视频任务设置一个基础的预扣费，避免余额检查失效
+		quota = int(0.1 * common.QuotaPerUnit) // 默认0.1美元的预扣费
+		common.SysLog(fmt.Sprintf("Video task pre-consume quota is too small (%d), using default value: %d", priceData.ShouldPreConsumedQuota, quota))
+	}
 	modelPrice := priceData.ModelPrice
 	groupRatio := priceData.GroupRatioInfo.GroupRatio
 	hasUserGroupRatio := priceData.GroupRatioInfo.GroupSpecialRatio != 0
 	userGroupRatio := priceData.GroupRatioInfo.GroupSpecialRatio
 
+	// 检查用户余额是否足够并进行预扣费（参考Midjourney的预扣费逻辑）
 	userQuota, err := model.GetUserQuota(info.UserId, false)
 	if err != nil {
 		taskErr = service.TaskErrorWrapper(err, "get_user_quota_failed", http.StatusInternalServerError)
@@ -74,6 +83,50 @@ func RelayTaskSubmit(c *gin.Context, info *relaycommon.RelayInfo) (taskErr *dto.
 	if userQuota-quota < 0 {
 		taskErr = service.TaskErrorWrapperLocal(errors.New("user quota is not enough"), "quota_not_enough", http.StatusForbidden)
 		return
+	}
+
+	// 先进行预扣费
+	if quota > 0 {
+		err := service.PostConsumeQuota(info, quota, 0, true)
+		if err != nil {
+			taskErr = service.TaskErrorWrapper(err, "pre_consume_quota_failed", http.StatusInternalServerError)
+			return
+		}
+		// 记录预扣费日志
+		tokenName := c.GetString("token_name")
+		var logContent string
+		if modelPrice == -1 {
+			logContent = fmt.Sprintf("模型按量计费，预扣费token: %d，分组倍率 %.2f，操作 %s", common.Max(1, common.PreConsumedQuota), groupRatio, info.Action)
+		} else {
+			logContent = fmt.Sprintf("模型固定价格 %.2f，分组倍率 %.2f，操作 %s", modelPrice, groupRatio, info.Action)
+		}
+		other := make(map[string]interface{})
+		other["model_price"] = modelPrice
+		other["group_ratio"] = groupRatio
+		if hasUserGroupRatio {
+			other["user_group_ratio"] = userGroupRatio
+		}
+		other["video_task"] = true
+		other["billing_type"] = "pre_consume"
+		if modelPrice == -1 {
+			other["model_ratio"] = 1.0
+			other["completion_ratio"] = 1.0
+		} else {
+			other["model_ratio"] = 0.0
+			other["completion_ratio"] = 0.0
+		}
+		model.RecordConsumeLog(c, info.UserId, model.RecordConsumeLogParams{
+			ChannelId: info.ChannelId,
+			ModelName: modelName,
+			TokenName: tokenName,
+			Quota:     quota,
+			Content:   logContent,
+			TokenId:   info.TokenId,
+			Group:     info.UsingGroup,
+			Other:     other,
+		})
+		model.UpdateUserUsedQuotaAndRequestCount(info.UserId, quota)
+		model.UpdateChannelUsedQuota(info.ChannelId, quota)
 	}
 
 	if info.OriginTaskID != "" {
@@ -107,12 +160,28 @@ func RelayTaskSubmit(c *gin.Context, info *relaycommon.RelayInfo) (taskErr *dto.
 	// build body
 	requestBody, err := adaptor.BuildRequestBody(c, info)
 	if err != nil {
+		// 请求构建失败，返还预扣费
+		if quota > 0 {
+			common.SysLog(fmt.Sprintf("Request build failed, returning pre-consumed quota: %d", quota))
+			err := service.PostConsumeQuota(info, -quota, 0, true)
+			if err != nil {
+				common.SysLog("error returning pre-consumed quota: " + err.Error())
+			}
+		}
 		taskErr = service.TaskErrorWrapper(err, "build_request_failed", http.StatusInternalServerError)
 		return
 	}
 	// do request
 	resp, err := adaptor.DoRequest(c, info, requestBody)
 	if err != nil {
+		// 请求发送失败，返还预扣费
+		if quota > 0 {
+			common.SysLog(fmt.Sprintf("Request send failed, returning pre-consumed quota: %d", quota))
+			err := service.PostConsumeQuota(info, -quota, 0, true)
+			if err != nil {
+				common.SysLog("error returning pre-consumed quota: " + err.Error())
+			}
+		}
 		taskErr = service.TaskErrorWrapper(err, "do_request_failed", http.StatusInternalServerError)
 		return
 	}
@@ -120,75 +189,72 @@ func RelayTaskSubmit(c *gin.Context, info *relaycommon.RelayInfo) (taskErr *dto.
 	if resp != nil && resp.StatusCode != http.StatusOK {
 		responseBody, _ := io.ReadAll(resp.Body)
 		truncatedResponseBody := common.TruncateBase64Content(string(responseBody))
-		taskErr = service.TaskErrorWrapper(fmt.Errorf(truncatedResponseBody), "fail_to_fetch_task", resp.StatusCode)
-		return
-	}
-
-	// 移除defer中的预扣费逻辑，改为在任务成功后处理
-
-	taskID, taskData, taskErr := adaptor.DoResponse(c, resp, info)
-	if taskErr != nil {
-		return
-	}
-	info.ConsumeQuota = true
-
-	// 任务提交成功后，进行预扣费和日志记录
-	if info.ConsumeQuota {
-		err := service.PostConsumeQuota(info, quota, 0, true)
-		if err != nil {
-			common.SysLog("error consuming token remain quota: " + err.Error())
-		}
-		if quota != 0 {
+		// HTTP请求失败，返还预扣费
+		if quota > 0 {
+			common.SysLog(fmt.Sprintf("HTTP request failed, returning pre-consumed quota: %d", quota))
+			err := service.PostConsumeQuota(info, -quota, 0, true)
+			if err != nil {
+				common.SysLog("error returning pre-consumed quota: " + err.Error())
+			}
+			// 记录返还日志
 			tokenName := c.GetString("token_name")
-			var logContent string
-			if modelPrice == -1 {
-				logContent = fmt.Sprintf("模型按量计费，预扣费token: %d，分组倍率 %.2f，操作 %s", common.Max(1, common.PreConsumedQuota), groupRatio, info.Action)
-			} else {
-				logContent = fmt.Sprintf("模型固定价格 %.2f，分组倍率 %.2f，操作 %s", modelPrice, groupRatio, info.Action)
-			}
+			logContent := fmt.Sprintf("HTTP请求失败，返还预扣费: %d", quota)
 			other := make(map[string]interface{})
-			other["model_price"] = modelPrice
-			other["group_ratio"] = groupRatio
-			if hasUserGroupRatio {
-				other["user_group_ratio"] = userGroupRatio
-			}
-
-			// 为视频任务添加计费相关字段，支持前端显示计费过程
-			other["video_task"] = true // 标记为视频任务
-			other["task_id"] = taskID
+			other["video_task"] = true
+			other["billing_type"] = "refund"
 			other["task_platform"] = platform
 			other["task_action"] = info.Action
-			other["billing_type"] = "pre_consume" // 标记为预扣费
-
-			// 添加模型倍率信息（用于前端计费显示）
-			if modelPrice == -1 {
-				// 按量计费：添加模型倍率
-				other["model_ratio"] = 1.0 // 视频任务使用固定倍率
-				other["completion_ratio"] = 1.0
-			} else {
-				// 固定价格：不需要模型倍率
-				other["model_ratio"] = 0.0
-				other["completion_ratio"] = 0.0
-			}
 			model.RecordConsumeLog(c, info.UserId, model.RecordConsumeLogParams{
 				ChannelId: info.ChannelId,
 				ModelName: modelName,
 				TokenName: tokenName,
-				Quota:     quota,
+				Quota:     -quota,
 				Content:   logContent,
 				TokenId:   info.TokenId,
 				Group:     info.UsingGroup,
 				Other:     other,
 			})
-			model.UpdateUserUsedQuotaAndRequestCount(info.UserId, quota)
-			model.UpdateChannelUsedQuota(info.ChannelId, quota)
 		}
+		taskErr = service.TaskErrorWrapper(fmt.Errorf("%s", truncatedResponseBody), "fail_to_fetch_task", resp.StatusCode)
+		return
 	}
+
+	taskID, taskData, taskErr := adaptor.DoResponse(c, resp, info)
+	if taskErr != nil {
+		// 任务提交失败，返还预扣费
+		if quota > 0 {
+			common.SysLog(fmt.Sprintf("Task submission failed, returning pre-consumed quota: %d", quota))
+			err := service.PostConsumeQuota(info, -quota, 0, true)
+			if err != nil {
+				common.SysLog("error returning pre-consumed quota: " + err.Error())
+			}
+			// 记录返还日志
+			tokenName := c.GetString("token_name")
+			logContent := fmt.Sprintf("任务提交失败，返还预扣费: %d", quota)
+			other := make(map[string]interface{})
+			other["video_task"] = true
+			other["billing_type"] = "refund"
+			other["task_platform"] = platform
+			other["task_action"] = info.Action
+			model.RecordConsumeLog(c, info.UserId, model.RecordConsumeLogParams{
+				ChannelId: info.ChannelId,
+				ModelName: modelName,
+				TokenName: tokenName,
+				Quota:     -quota,
+				Content:   logContent,
+				TokenId:   info.TokenId,
+				Group:     info.UsingGroup,
+				Other:     other,
+			})
+		}
+		return
+	}
+	info.ConsumeQuota = true
 
 	// insert task
 	task := model.InitTask(platform, info)
 	task.TaskID = taskID
-	task.Quota = quota
+	task.Quota = quota // 记录预扣费金额
 	task.Action = info.Action
 
 	// 保存token信息到任务数据中，用于后续补扣费日志记录
@@ -293,6 +359,10 @@ func sunoFetchRespBodyBuilder(c *gin.Context) (respBody []byte, taskResp *dto.Ta
 		Code: "success",
 		Data: tasks,
 	})
+	if err != nil {
+		taskResp = service.TaskErrorWrapper(err, "json_marshal_failed", http.StatusInternalServerError)
+		return
+	}
 	return
 }
 
@@ -314,6 +384,10 @@ func sunoFetchByIDRespBodyBuilder(c *gin.Context) (respBody []byte, taskResp *dt
 		Code: "success",
 		Data: TaskModel2Dto(originTask),
 	})
+	if err != nil {
+		taskResp = service.TaskErrorWrapper(err, "json_marshal_failed", http.StatusInternalServerError)
+		return
+	}
 	return
 }
 
@@ -616,13 +690,13 @@ func handleVideoTaskBillingInQuery(c *gin.Context, task *model.Task, taskResult 
 			actualQuota = int(float64(outputTokens) * modelPrice * common.QuotaPerUnit * groupRatio)
 		}
 
-		// 计算quota差值
+		// 计算quota差值（参考对话的补扣费逻辑）
 		quotaDelta = actualQuota - task.Quota
 
 		common.SysLog(fmt.Sprintf("[VideoTask] Task %s billing: output_tokens=%d, model_price=%.2f, group_ratio=%.2f, actual_quota=%d, pre_quota=%d, delta=%d",
 			task.TaskID, outputTokens, modelPrice, groupRatio, actualQuota, task.Quota, quotaDelta))
 
-		// 如果有quota差值，进行补扣费或退费
+		// 如果有quota差值，进行补扣费或退费（参考对话的补扣费逻辑）
 		if quotaDelta != 0 {
 			// 构建RelayInfo用于补扣费
 			relayInfo := &relaycommon.RelayInfo{
