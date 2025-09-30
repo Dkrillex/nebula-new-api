@@ -58,7 +58,7 @@ type taskQueryResponse struct {
 	FramePerSecond int    `json:"framespersecond"`
 	// 错误信息
 	Error *struct {
-		Code    int    `json:"code"`
+		Code    string `json:"code"`
 		Message string `json:"message"`
 		Type    string `json:"type"`
 		Param   string `json:"param"`
@@ -559,7 +559,7 @@ func (a *TaskAdaptor) ParseTaskResult(respBody []byte) (*relaycommon.TaskInfo, e
 		} else if doubaoResp.Error != nil {
 			taskInfo.Reason = doubaoResp.Error.Message
 			common.SysError(fmt.Sprintf("[Doubao] ParseTaskResult - 错误信息: %+v", doubaoResp.Error))
-			common.SysError(fmt.Sprintf("[Doubao] ParseTaskResult - 错误码: %d", doubaoResp.Error.Code))
+			common.SysError(fmt.Sprintf("[Doubao] ParseTaskResult - 错误码: %s", doubaoResp.Error.Code))
 			common.SysError(fmt.Sprintf("[Doubao] ParseTaskResult - 错误消息: %s", doubaoResp.Error.Message))
 			common.SysError(fmt.Sprintf("[Doubao] ParseTaskResult - 错误类型: %s", doubaoResp.Error.Type))
 		} else if doubaoResp.Reason != "" {
