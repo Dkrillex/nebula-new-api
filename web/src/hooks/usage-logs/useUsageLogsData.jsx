@@ -312,9 +312,18 @@ export const useLogsData = () => {
       let expandDataLocal = [];
 
       if (isAdminUser && (logs[i].type === 0 || logs[i].type === 2)) {
+        let channelInfo;
+        if (logs[i].channel === 999) {
+          channelInfo = '999 - [Nebula Lab系统扣费]';
+        } else {
+          const channelName = logs[i].channel_name && logs[i].channel_name.trim() !== '' 
+            ? logs[i].channel_name 
+            : '[未知]';
+          channelInfo = `${logs[i].channel} - ${channelName}`;
+        }
         expandDataLocal.push({
           key: t('渠道信息'),
-          value: `${logs[i].channel} - ${logs[i].channel_name || '[未知]'}`,
+          value: channelInfo,
         });
       }
       if (other?.ws || other?.audio) {
@@ -348,116 +357,127 @@ export const useLogsData = () => {
         });
       }
       if (logs[i].type === 2) {
-        expandDataLocal.push({
-          key: t('日志详情'),
-          value: other?.claude
-            ? renderClaudeLogContent(
-              other?.model_ratio,
-              other.completion_ratio,
-              other.model_price,
-              other.group_ratio,
-              other?.user_group_ratio,
-              other.cache_ratio || 1.0,
-              other.cache_creation_ratio || 1.0,
-            )
-            : renderLogContent(
-              other?.model_ratio,
-              other.completion_ratio,
-              other.model_price,
-              other.group_ratio,
-              other?.user_group_ratio,
-              other.cache_ratio || 1.0,
-              false,
-              1.0,
-              other.web_search || false,
-              other.web_search_call_count || 0,
-              other.file_search || false,
-              other.file_search_call_count || 0,
-            ),
-        });
+        // 当channel为999时，日志详情直接显示content内容
+        if (logs[i].channel === 999) {
+          expandDataLocal.push({
+            key: t('日志详情'),
+            value: logs[i].content,
+          });
+        } else {
+          expandDataLocal.push({
+            key: t('日志详情'),
+            value: other?.claude
+              ? renderClaudeLogContent(
+                other?.model_ratio,
+                other.completion_ratio,
+                other.model_price,
+                other.group_ratio,
+                other?.user_group_ratio,
+                other.cache_ratio || 1.0,
+                other.cache_creation_ratio || 1.0,
+              )
+              : renderLogContent(
+                other?.model_ratio,
+                other.completion_ratio,
+                other.model_price,
+                other.group_ratio,
+                other?.user_group_ratio,
+                other.cache_ratio || 1.0,
+                false,
+                1.0,
+                other.web_search || false,
+                other.web_search_call_count || 0,
+                other.file_search || false,
+                other.file_search_call_count || 0,
+              ),
+          });
+        }
       }
       if (logs[i].type === 2) {
-        let modelMapped =
-          other?.is_model_mapped &&
-          other?.upstream_model_name &&
-          other?.upstream_model_name !== '';
-        if (modelMapped) {
+        // 当channel为999时，隐藏计费过程相关的内容
+        if (logs[i].channel !== 999) {
+          let modelMapped =
+            other?.is_model_mapped &&
+            other?.upstream_model_name &&
+            other?.upstream_model_name !== '';
+          if (modelMapped) {
+            expandDataLocal.push({
+              key: t('请求并计费模型'),
+              value: logs[i].model_name,
+            });
+            expandDataLocal.push({
+              key: t('实际模型'),
+              value: other.upstream_model_name,
+            });
+          }
+          let content = '';
+          if (other?.ws || other?.audio) {
+            content = renderAudioModelPrice(
+              other?.text_input,
+              other?.text_output,
+              other?.model_ratio,
+              other?.model_price,
+              other?.completion_ratio,
+              other?.audio_input,
+              other?.audio_output,
+              other?.audio_ratio,
+              other?.audio_completion_ratio,
+              other?.group_ratio,
+              other?.user_group_ratio,
+              other?.cache_tokens || 0,
+              other?.cache_ratio || 1.0,
+            );
+          } else if (other?.claude) {
+            content = renderClaudeModelPrice(
+              logs[i].prompt_tokens,
+              logs[i].completion_tokens,
+              other.model_ratio,
+              other.model_price,
+              other.completion_ratio,
+              other.group_ratio,
+              other?.user_group_ratio,
+              other.cache_tokens || 0,
+              other.cache_ratio || 1.0,
+              other.cache_creation_tokens || 0,
+              other.cache_creation_ratio || 1.0,
+            );
+          } else {
+            content = renderModelPrice(
+              logs[i].prompt_tokens,
+              logs[i].completion_tokens,
+              other?.model_ratio,
+              other?.model_price,
+              other?.completion_ratio,
+              other?.group_ratio,
+              other?.user_group_ratio,
+              other?.cache_tokens || 0,
+              other?.cache_ratio || 1.0,
+              other?.image || false,
+              other?.image_ratio || 0,
+              other?.image_output || 0,
+              other?.web_search || false,
+              other?.web_search_call_count || 0,
+              other?.web_search_price || 0,
+              other?.file_search || false,
+              other?.file_search_call_count || 0,
+              other?.file_search_price || 0,
+              other?.audio_input_seperate_price || false,
+              other?.audio_input_token_count || 0,
+              other?.audio_input_price || 0,
+              other?.per_call_image_multiplier || 0,
+              other?.per_call_price || 0,
+            );
+          }
           expandDataLocal.push({
-            key: t('请求并计费模型'),
-            value: logs[i].model_name,
+            key: t('计费过程'),
+            value: content,
           });
-          expandDataLocal.push({
-            key: t('实际模型'),
-            value: other.upstream_model_name,
-          });
-        }
-        let content = '';
-        if (other?.ws || other?.audio) {
-          content = renderAudioModelPrice(
-            other?.text_input,
-            other?.text_output,
-            other?.model_ratio,
-            other?.model_price,
-            other?.completion_ratio,
-            other?.audio_input,
-            other?.audio_output,
-            other?.audio_ratio,
-            other?.audio_completion_ratio,
-            other?.group_ratio,
-            other?.user_group_ratio,
-            other?.cache_tokens || 0,
-            other?.cache_ratio || 1.0,
-          );
-        } else if (other?.claude) {
-          content = renderClaudeModelPrice(
-            logs[i].prompt_tokens,
-            logs[i].completion_tokens,
-            other.model_ratio,
-            other.model_price,
-            other.completion_ratio,
-            other.group_ratio,
-            other?.user_group_ratio,
-            other.cache_tokens || 0,
-            other.cache_ratio || 1.0,
-            other.cache_creation_tokens || 0,
-            other.cache_creation_ratio || 1.0,
-          );
-        } else {
-          content = renderModelPrice(
-            logs[i].prompt_tokens,
-            logs[i].completion_tokens,
-            other?.model_ratio,
-            other?.model_price,
-            other?.completion_ratio,
-            other?.group_ratio,
-            other?.user_group_ratio,
-            other?.cache_tokens || 0,
-            other?.cache_ratio || 1.0,
-            other?.image || false,
-            other?.image_ratio || 0,
-            other?.image_output || 0,
-            other?.web_search || false,
-            other?.web_search_call_count || 0,
-            other?.web_search_price || 0,
-            other?.file_search || false,
-            other?.file_search_call_count || 0,
-            other?.file_search_price || 0,
-            other?.audio_input_seperate_price || false,
-            other?.audio_input_token_count || 0,
-            other?.audio_input_price || 0,
-            other?.per_call_image_multiplier || 0,
-            other?.per_call_price || 0,
-          );
-        }
-        expandDataLocal.push({
-          key: t('计费过程'),
-          value: content,
-        });
-        if (other?.reasoning_effort) {
-          expandDataLocal.push({
-            key: t('Reasoning Effort'),
-            value: other.reasoning_effort,
-          });
+          if (other?.reasoning_effort) {
+            expandDataLocal.push({
+              key: t('Reasoning Effort'),
+              value: other.reasoning_effort,
+            });
+          }
         }
       }
       expandDatesLocal[logs[i].key] = expandDataLocal;

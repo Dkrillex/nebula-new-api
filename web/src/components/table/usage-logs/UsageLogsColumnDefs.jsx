@@ -433,8 +433,7 @@ export const getLogsColumns = ({
       title: t('补全'),
       dataIndex: 'completion_tokens',
       render: (text, record, index) => {
-        return parseInt(text) > 0 &&
-          (record.type === 0 || record.type === 2 || record.type === 5) ? (
+        return (record.type === 0 || record.type === 2 || record.type === 5) ? (
           <>{<span> {text} </span>}</>
         ) : (
           <></>
@@ -519,6 +518,24 @@ export const getLogsColumns = ({
       dataIndex: 'content',
       fixed: 'right',
       render: (text, record, index) => {
+        // 当channel为999时，直接显示content内容
+        if (record.channel === 999) {
+          return (
+            <Typography.Paragraph
+              ellipsis={{
+                rows: 2,
+                showTooltip: {
+                  type: 'popover',
+                  opts: { style: { width: 240 } },
+                },
+              }}
+              style={{ maxWidth: 240 }}
+            >
+              {text}
+            </Typography.Paragraph>
+          );
+        }
+
         let other = getLogOther(record.other);
         if (other == null || record.type !== 2) {
           return (
