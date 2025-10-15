@@ -61,24 +61,36 @@ export default function ModelSettingsVisualEditor(props) {
       const modelPrice = JSON.parse(props.options.ModelPrice || '{}');
       const modelRatio = JSON.parse(props.options.ModelRatio || '{}');
       const completionRatio = JSON.parse(props.options.CompletionRatio || '{}');
+      const originModelPrice = JSON.parse(props.options.OriginModelPrice || '{}');
+      const originModelRatio = JSON.parse(props.options.OriginModelRatio || '{}');
 
       // 合并所有模型名称
       const modelNames = new Set([
         ...Object.keys(modelPrice),
         ...Object.keys(modelRatio),
         ...Object.keys(completionRatio),
+        ...Object.keys(originModelPrice),
+        ...Object.keys(originModelRatio),
       ]);
 
       const modelData = Array.from(modelNames).map((name) => {
         const price = modelPrice[name] === undefined ? '' : modelPrice[name];
         const ratio = modelRatio[name] === undefined ? '' : modelRatio[name];
         const comp = completionRatio[name] === undefined ? '' : completionRatio[name];
+        const originPrice = originModelPrice[name] === undefined ? '' : originModelPrice[name];
+        const originRatio = originModelRatio[name] === undefined ? '' : originModelRatio[name];
+        
+        // 计算原始输入价格（从原始模型倍率转换）
+        const originTokenPrice = originRatio !== '' ? (parseFloat(originRatio) * 2).toString() : '';
 
         return {
           name,
           price,
           ratio,
           completionRatio: comp,
+          originPrice,
+          originRatio,
+          originTokenPrice,
           hasConflict: price !== '' && (ratio !== '' || comp !== ''),
         };
       });
@@ -114,6 +126,8 @@ export default function ModelSettingsVisualEditor(props) {
       ModelPrice: {},
       ModelRatio: {},
       CompletionRatio: {},
+      OriginModelPrice: {},
+      OriginModelRatio: {},
     };
     let currentConvertModelName = '';
 
@@ -132,6 +146,19 @@ export default function ModelSettingsVisualEditor(props) {
               model.completionRatio,
             );
         }
+        
+        // 处理原始模型配置
+        if (model.originPrice !== '')
+          output.OriginModelPrice[model.name] = parseFloat(model.originPrice);
+        if (model.originRatio !== '')
+          output.OriginModelRatio[model.name] = parseFloat(model.originRatio);
+        
+        // 如果有原始输入价格，转换为原始模型倍率存储
+        if (model.originTokenPrice !== '') {
+          const originTokenPrice = parseFloat(model.originTokenPrice);
+          const originRatio = originTokenPrice / 2; // 使用相同的转换逻辑
+          output.OriginModelRatio[model.name] = originRatio;
+        }
       });
 
       // 准备API请求数组
@@ -139,6 +166,8 @@ export default function ModelSettingsVisualEditor(props) {
         ModelPrice: JSON.stringify(output.ModelPrice, null, 2),
         ModelRatio: JSON.stringify(output.ModelRatio, null, 2),
         CompletionRatio: JSON.stringify(output.CompletionRatio, null, 2),
+        OriginModelPrice: JSON.stringify(output.OriginModelPrice, null, 2),
+        OriginModelRatio: JSON.stringify(output.OriginModelRatio, null, 2),
       };
 
       const requestQueue = Object.entries(finalOutput).map(([key, value]) => {
@@ -230,6 +259,30 @@ export default function ModelSettingsVisualEditor(props) {
           onChange={(value) =>
             updateModel(record.name, 'completionRatio', value)
           }
+        />
+      ),
+    },
+    {
+      title: t('原始模型固定价格'),
+      dataIndex: 'originPrice',
+      key: 'originPrice',
+      render: (text, record) => (
+        <Input
+          value={text}
+          placeholder={t('原始模型固定价格')}
+          onChange={(value) => updateModel(record.name, 'originPrice', value)}
+        />
+      ),
+    },
+    {
+      title: t('原始模型倍率'),
+      dataIndex: 'originRatio',
+      key: 'originRatio',
+      render: (text, record) => (
+        <Input
+          value={text}
+          placeholder={t('原始模型倍率')}
+          onChange={(value) => updateModel(record.name, 'originRatio', value)}
         />
       ),
     },
@@ -331,6 +384,24 @@ export default function ModelSettingsVisualEditor(props) {
     setCurrentModel(newState);
   };
 
+  const handleOriginTokenPriceChange = (value) => {
+    // Use a temporary variable to hold the new state
+    let newState = {
+      ...(currentModel || {}),
+      originTokenPrice: value,
+      originRatio: 0,
+    };
+
+    if (!isNaN(value) && value !== '') {
+      const originTokenPrice = parseFloat(value);
+      const originRatio = calculateRatioFromTokenPrice(originTokenPrice);
+      newState.originRatio = originRatio;
+    }
+
+    // Set the state with the complete updated object
+    setCurrentModel(newState);
+  };
+
   const addOrUpdateModel = (values) => {
     // Check if we're editing an existing model or adding a new one
     const existingModelIndex = models.findIndex(
@@ -347,6 +418,9 @@ export default function ModelSettingsVisualEditor(props) {
             price: values.price || '',
             ratio: values.ratio || '',
             completionRatio: values.completionRatio || '',
+            originPrice: values.originPrice || '',
+            originRatio: values.originRatio || '',
+            originTokenPrice: values.originTokenPrice || '',
           };
           updated.hasConflict =
             updated.price !== '' && (updated.ratio !== '' || updated.completionRatio !== '');
@@ -369,6 +443,9 @@ export default function ModelSettingsVisualEditor(props) {
           price: values.price || '',
           ratio: values.ratio || '',
           completionRatio: values.completionRatio || '',
+          originPrice: values.originPrice || '',
+          originRatio: values.originRatio || '',
+          originTokenPrice: values.originTokenPrice || '',
         };
         newModel.hasConflict =
           newModel.price !== '' && (newModel.ratio !== '' || newModel.completionRatio !== '');
@@ -445,6 +522,11 @@ export default function ModelSettingsVisualEditor(props) {
           formValues.modelTokenPrice = modelCopy.tokenPrice;
           formValues.completionTokenPrice = modelCopy.completionTokenPrice;
         }
+        
+        // 设置原始模型配置的初始值
+        formValues.originPrice = modelCopy.originPrice || '';
+        formValues.originRatio = modelCopy.originRatio || '';
+        formValues.originTokenPrice = modelCopy.originTokenPrice || '';
 
         formRef.current.setValues(formValues);
       }
@@ -540,6 +622,17 @@ export default function ModelSettingsVisualEditor(props) {
               }
             }
 
+            // 处理原始输入价格到原始模型倍率的转换
+            if (
+              pricingMode === 'per-token' &&
+              pricingSubMode === 'token-price' &&
+              currentModel.originTokenPrice
+            ) {
+              // Calculate and set origin ratio from origin token price
+              const originTokenPrice = parseFloat(currentModel.originTokenPrice);
+              valuesToSave.originRatio = (originTokenPrice / 2).toString();
+            }
+
             // Clear price if we're in per-token mode
             if (pricingMode === 'per-token') {
               valuesToSave.price = '';
@@ -627,29 +720,57 @@ export default function ModelSettingsVisualEditor(props) {
                       if (currentModel) {
                         const updatedModel = { ...currentModel };
 
-                        // Convert between ratio and token price
+                        // Convert between ratio and token price with full synchronization
                         if (
                           oldSubMode === 'ratio' &&
                           newSubMode === 'token-price'
                         ) {
+                          // Always calculate tokenPrice from ratio (restore original behavior)
                           if (updatedModel.ratio) {
                             updatedModel.tokenPrice =
                               calculateTokenPriceFromRatio(
                                 parseFloat(updatedModel.ratio),
                               ).toString();
-
-                            if (updatedModel.completionRatio) {
-                              updatedModel.completionTokenPrice = (
-                                parseFloat(updatedModel.tokenPrice) *
-                                parseFloat(updatedModel.completionRatio)
-                              ).toString();
-                            }
+                          }
+                          
+                          // Always calculate completionTokenPrice from completionRatio
+                          if (updatedModel.completionRatio) {
+                            updatedModel.completionTokenPrice = (
+                              parseFloat(updatedModel.tokenPrice || 0) *
+                              parseFloat(updatedModel.completionRatio)
+                            ).toString();
+                          }
+                          
+                          // Handle original model configuration - always sync
+                          if (updatedModel.originRatio) {
+                            updatedModel.originTokenPrice = (
+                              parseFloat(updatedModel.originRatio) * 2
+                            ).toString();
                           }
                         } else if (
                           oldSubMode === 'token-price' &&
                           newSubMode === 'ratio'
                         ) {
-                          // Ratio values should already be calculated by the handlers
+                          // Always calculate ratio from tokenPrice (restore original behavior)
+                          if (updatedModel.tokenPrice) {
+                            updatedModel.ratio = (
+                              parseFloat(updatedModel.tokenPrice) / 2
+                            ).toString();
+                          }
+                          
+                          // Always calculate completionRatio from completionTokenPrice
+                          if (updatedModel.completionTokenPrice && updatedModel.tokenPrice) {
+                            updatedModel.completionRatio = (
+                              parseFloat(updatedModel.completionTokenPrice) / parseFloat(updatedModel.tokenPrice)
+                            ).toString();
+                          }
+                          
+                          // Handle original model configuration - always sync
+                          if (updatedModel.originTokenPrice) {
+                            updatedModel.originRatio = (
+                              parseFloat(updatedModel.originTokenPrice) / 2
+                            ).toString();
+                          }
                         }
 
                         // Update the form values
@@ -660,11 +781,13 @@ export default function ModelSettingsVisualEditor(props) {
                             formValues.ratioInput = updatedModel.ratio || '';
                             formValues.completionRatioInput =
                               updatedModel.completionRatio || '';
+                            formValues.originRatio = updatedModel.originRatio || '';
                           } else if (newSubMode === 'token-price') {
                             formValues.modelTokenPrice =
                               updatedModel.tokenPrice || '';
                             formValues.completionTokenPrice =
                               updatedModel.completionTokenPrice || '';
+                            formValues.originTokenPrice = updatedModel.originTokenPrice || '';
                           }
 
                           formRef.current.setValues(formValues);
@@ -748,6 +871,59 @@ export default function ModelSettingsVisualEditor(props) {
               initValue={currentModel?.price || ''}
             />
           )}
+
+          <Form.Section text={t('原始模型配置')}>
+            {/* 按次计费模式：显示原始固定价格(每次) */}
+            {pricingMode === 'per-request' && (
+              <Form.Input
+                field='originPrice'
+                label={t('原始固定价格(每次)')}
+                placeholder={t('输入原始固定价格(每次)')}
+                onChange={(value) =>
+                  setCurrentModel((prev) => ({
+                    ...(prev || {}),
+                    originPrice: value,
+                  }))
+                }
+                initValue={currentModel?.originPrice || ''}
+              />
+            )}
+
+            {/* 按量计费模式：根据价格设置方式显示不同字段 */}
+            {pricingMode === 'per-token' && (
+              <>
+                {/* 按倍率设置时：显示原始模型倍率 */}
+                {pricingSubMode === 'ratio' && (
+                  <Form.Input
+                    field='originRatio'
+                    label={t('原始模型倍率')}
+                    placeholder={t('输入原始模型倍率')}
+                    onChange={(value) =>
+                      setCurrentModel((prev) => ({
+                        ...(prev || {}),
+                        originRatio: value,
+                      }))
+                    }
+                    initValue={currentModel?.originRatio || ''}
+                  />
+                )}
+
+                {/* 按价格设置时：显示原始输入价格 */}
+                {pricingSubMode === 'token-price' && (
+                  <Form.Input
+                    field='originTokenPrice'
+                    label={t('原始输入价格')}
+                    placeholder={t('输入原始输入价格')}
+                    suffix={t('$/1M tokens')}
+                    onChange={(value) => {
+                      handleOriginTokenPriceChange(value);
+                    }}
+                    initValue={currentModel?.originTokenPrice || ''}
+                  />
+                )}
+              </>
+            )}
+          </Form.Section>
         </Form>
       </Modal>
     </>
