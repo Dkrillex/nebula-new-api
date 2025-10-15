@@ -47,6 +47,7 @@ export default function ModelRatioSettings(props) {
     ExposeRatioEnabled: false,
     OriginModelPrice: '',
     OriginModelRatio: '',
+    OriginCompletionRatio: '',
   });
   const refForm = useRef();
   const [inputsRow, setInputsRow] = useState(inputs);
@@ -133,6 +134,9 @@ export default function ModelRatioSettings(props) {
     }
     if (!currentInputs.hasOwnProperty('OriginModelRatio')) {
       currentInputs.OriginModelRatio = '';
+    }
+    if (!currentInputs.hasOwnProperty('OriginCompletionRatio')) {
+      currentInputs.OriginCompletionRatio = '';
     }
     setInputs(currentInputs);
     setInputsRow(structuredClone(currentInputs));
@@ -275,6 +279,27 @@ export default function ModelRatioSettings(props) {
               ]}
               onChange={(value) =>
                 setInputs({ ...inputs, OriginModelRatio: value })
+              }
+            />
+          </Col>
+        </Row>
+        <Row gutter={16}>
+          <Col xs={24} sm={16}>
+            <Form.TextArea
+              label={t('原始模型补全倍率')}
+              placeholder={t('为一个 JSON 文本，键为模型名称，值为倍率')}
+              field={'OriginCompletionRatio'}
+              autosize={{ minRows: 6, maxRows: 12 }}
+              trigger='blur'
+              stopValidateWithError
+              rules={[
+                {
+                  validator: (rule, value) => verifyJSON(value),
+                  message: '不是合法的 JSON 字符串',
+                },
+              ]}
+              onChange={(value) =>
+                setInputs({ ...inputs, OriginCompletionRatio: value })
               }
             />
           </Col>
