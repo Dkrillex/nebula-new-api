@@ -45,6 +45,8 @@ export default function ModelRatioSettings(props) {
     CacheRatio: '',
     CompletionRatio: '',
     ExposeRatioEnabled: false,
+    OriginModelPrice: '',
+    OriginModelRatio: '',
   });
   const refForm = useRef();
   const [inputsRow, setInputsRow] = useState(inputs);
@@ -124,6 +126,13 @@ export default function ModelRatioSettings(props) {
       if (Object.keys(inputs).includes(key)) {
         currentInputs[key] = props.options[key];
       }
+    }
+    // 确保新添加的字段有默认值，即使props.options中没有
+    if (!currentInputs.hasOwnProperty('OriginModelPrice')) {
+      currentInputs.OriginModelPrice = '';
+    }
+    if (!currentInputs.hasOwnProperty('OriginModelRatio')) {
+      currentInputs.OriginModelRatio = '';
     }
     setInputs(currentInputs);
     setInputsRow(structuredClone(currentInputs));
@@ -221,6 +230,51 @@ export default function ModelRatioSettings(props) {
               ]}
               onChange={(value) =>
                 setInputs({ ...inputs, CompletionRatio: value })
+              }
+            />
+          </Col>
+        </Row>
+        <Row gutter={16}>
+          <Col xs={24} sm={16}>
+            <Form.TextArea
+              label={t('原始模型固定价格')}
+              extraText={t('原始模型固定价格')}
+              placeholder={t(
+                '为一个 JSON 文本，键为模型名称，值为一次调用消耗多少刀，比如 "gpt-4-gizmo-*": 0.1，一次消耗0.1刀',
+              )}
+              field={'OriginModelPrice'}
+              autosize={{ minRows: 6, maxRows: 12 }}
+              trigger='blur'
+              stopValidateWithError
+              rules={[
+                {
+                  validator: (rule, value) => verifyJSON(value),
+                  message: '不是合法的 JSON 字符串',
+                },
+              ]}
+              onChange={(value) =>
+                setInputs({ ...inputs, OriginModelPrice: value })
+              }
+            />
+          </Col>
+        </Row>
+        <Row gutter={16}>
+          <Col xs={24} sm={16}>
+            <Form.TextArea
+              label={t('原始模型倍率')}
+              placeholder={t('为一个 JSON 文本，键为模型名称，值为倍率')}
+              field={'OriginModelRatio'}
+              autosize={{ minRows: 6, maxRows: 12 }}
+              trigger='blur'
+              stopValidateWithError
+              rules={[
+                {
+                  validator: (rule, value) => verifyJSON(value),
+                  message: '不是合法的 JSON 字符串',
+                },
+              ]}
+              onChange={(value) =>
+                setInputs({ ...inputs, OriginModelRatio: value })
               }
             />
           </Col>
