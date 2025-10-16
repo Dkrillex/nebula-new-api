@@ -21,6 +21,8 @@ var ModelList = []string{
 	"claude-opus-4-1-20250805-thinking",
 	"claude-sonnet-4-5-20250929",
 	"claude-sonnet-4-5-20250929-thinking",
+	"claude-haiku-4-5-20251001",
+	"claude-haiku-4-5-20251001-thinking",
 }
 
 var ChannelName = "claude"
