@@ -13,6 +13,7 @@ import (
 	"one-api/relay"
 	"one-api/relay/channel"
 	relaycommon "one-api/relay/common"
+	"one-api/setting/ratio_setting"
 	"one-api/relay/helper"
 	"one-api/service"
 	"one-api/types"
@@ -49,6 +50,11 @@ func updateVideoTaskAll(ctx context.Context, platform constant.TaskPlatform, cha
 	if adaptor == nil {
 		return fmt.Errorf("video adaptor not found")
 	}
+	info := &relaycommon.RelayInfo{}
+	info.ChannelMeta = &relaycommon.ChannelMeta{
+		ChannelBaseUrl: cacheGetChannel.GetBaseURL(),
+	}
+	adaptor.Init(info)
 	for _, taskId := range taskIds {
 		if err := updateVideoSingleTask(ctx, adaptor, cacheGetChannel, taskId, taskM); err != nil {
 			logger.LogError(ctx, fmt.Sprintf("Failed to update video task %s: %s", taskId, err.Error()))
@@ -94,42 +100,44 @@ func updateVideoSingleTask(ctx context.Context, adaptor channel.TaskAdaptor, cha
 		taskResult.Url = t.FailReason
 		taskResult.Progress = t.Progress
 		taskResult.Reason = t.FailReason
+		task.Data = t.Data
 	} else if taskResult, err = adaptor.ParseTaskResult(responseBody); err != nil {
 		return fmt.Errorf("parseTaskResult failed for task %s: %w", taskId, err)
 	} else {
-		// 保留原有的token信息，合并新的响应数据
-		var existingData map[string]interface{}
-		var newData map[string]interface{}
-
-		// 解析现有数据
-		if task.Data != nil {
-			if err := json.Unmarshal(task.Data, &existingData); err != nil {
-				existingData = make(map[string]interface{})
-			}
-		} else {
-			existingData = make(map[string]interface{})
-		}
-
-		// 解析新响应数据
-		if err := json.Unmarshal(responseBody, &newData); err != nil {
-			// 如果解析失败，直接使用原始响应体
-			task.Data = responseBody
-		} else {
-			// 保留原有的token信息
-			if tokenName, exists := existingData["token_name"]; exists {
-				newData["token_name"] = tokenName
-			}
-			if tokenId, exists := existingData["token_id"]; exists {
-				newData["token_id"] = tokenId
-			}
-
-			// 合并数据并更新
-			if mergedData, err := json.Marshal(newData); err == nil {
-				task.Data = mergedData
-			} else {
-				task.Data = responseBody
-			}
-		}
+		task.Data = redactVideoResponseBody(responseBody)
+		//// 保留原有的token信息，合并新的响应数据
+		//var existingData map[string]interface{}
+		//var newData map[string]interface{}
+		//
+		//// 解析现有数据
+		//if task.Data != nil {
+		//	if err := json.Unmarshal(task.Data, &existingData); err != nil {
+		//		existingData = make(map[string]interface{})
+		//	}
+		//} else {
+		//	existingData = make(map[string]interface{})
+		//}
+		//
+		//// 解析新响应数据
+		//if err := json.Unmarshal(responseBody, &newData); err != nil {
+		//	// 如果解析失败，直接使用原始响应体
+		//	task.Data = responseBody
+		//} else {
+		//	// 保留原有的token信息
+		//	if tokenName, exists := existingData["token_name"]; exists {
+		//		newData["token_name"] = tokenName
+		//	}
+		//	if tokenId, exists := existingData["token_id"]; exists {
+		//		newData["token_id"] = tokenId
+		//	}
+		//
+		//	// 合并数据并更新
+		//	if mergedData, err := json.Marshal(newData); err == nil {
+		//		task.Data = mergedData
+		//	} else {
+		//		task.Data = responseBody
+		//	}
+		//}
 	}
 
 	now := time.Now().Unix()
@@ -152,18 +160,93 @@ func updateVideoSingleTask(ctx context.Context, adaptor channel.TaskAdaptor, cha
 		if task.FinishTime == 0 {
 			task.FinishTime = now
 		}
-		task.FailReason = taskResult.Url
+		if !(len(taskResult.Url) > 5 && taskResult.Url[:5] == "data:") {
+			task.FailReason = taskResult.Url
+		}
 
-		// 处理任务成功后的实际token消耗和补扣费
+		// 如果返回了 total_tokens 并且配置了模型倍率(非固定价格),则重新计费
 		if taskResult.TotalTokens > 0 {
-			logger.LogInfo(ctx, fmt.Sprintf("Task %s succeeded, actual tokens consumed: %d", task.TaskID, taskResult.TotalTokens))
+			// 获取模型名称
+			var taskData map[string]interface{}
+			if err := json.Unmarshal(task.Data, &taskData); err == nil {
+				if modelName, ok := taskData["model"].(string); ok && modelName != "" {
+					// 获取模型价格和倍率
+					modelRatio, hasRatioSetting, _ := ratio_setting.GetModelRatio(modelName)
 
-			// 根据实际token消耗进行补扣费处理
-			if err := handleVideoTaskBilling(ctx, task, taskResult, channel); err != nil {
-				logger.LogError(ctx, fmt.Sprintf("Failed to handle billing for task %s: %v", task.TaskID, err))
+					// 只有配置了倍率(非固定价格)时才按 token 重新计费
+					if hasRatioSetting && modelRatio > 0 {
+						// 获取用户和组的倍率信息
+						user, err := model.GetUserById(task.UserId, false)
+						if err == nil {
+							groupRatio := ratio_setting.GetGroupRatio(user.Group)
+							userGroupRatio, hasUserGroupRatio := ratio_setting.GetGroupGroupRatio(user.Group, user.Group)
+
+							var finalGroupRatio float64
+							if hasUserGroupRatio {
+								finalGroupRatio = userGroupRatio
+							} else {
+								finalGroupRatio = groupRatio
+							}
+
+							// 计算实际应扣费额度: totalTokens * modelRatio * groupRatio
+							actualQuota := int(float64(taskResult.TotalTokens) * modelRatio * finalGroupRatio)
+
+							// 计算差额
+							preConsumedQuota := task.Quota
+							quotaDelta := actualQuota - preConsumedQuota
+
+							if quotaDelta > 0 {
+								// 需要补扣费
+								logger.LogInfo(ctx, fmt.Sprintf("视频任务 %s 预扣费后补扣费：%s（实际消耗：%s，预扣费：%s，tokens：%d）",
+									task.TaskID,
+									logger.LogQuota(quotaDelta),
+									logger.LogQuota(actualQuota),
+									logger.LogQuota(preConsumedQuota),
+									taskResult.TotalTokens,
+								))
+								if err := model.DecreaseUserQuota(task.UserId, quotaDelta); err != nil {
+									logger.LogError(ctx, fmt.Sprintf("补扣费失败: %s", err.Error()))
+								} else {
+									model.UpdateUserUsedQuotaAndRequestCount(task.UserId, quotaDelta)
+									model.UpdateChannelUsedQuota(task.ChannelId, quotaDelta)
+									task.Quota = actualQuota // 更新任务记录的实际扣费额度
+
+									// 记录消费日志
+									logContent := fmt.Sprintf("视频任务成功补扣费，模型倍率 %.2f，分组倍率 %.2f，tokens %d，预扣费 %s，实际扣费 %s，补扣费 %s",
+										modelRatio, finalGroupRatio, taskResult.TotalTokens,
+										logger.LogQuota(preConsumedQuota), logger.LogQuota(actualQuota), logger.LogQuota(quotaDelta))
+									model.RecordLog(task.UserId, model.LogTypeSystem, logContent)
+								}
+							} else if quotaDelta < 0 {
+								// 需要退还多扣的费用
+								refundQuota := -quotaDelta
+								logger.LogInfo(ctx, fmt.Sprintf("视频任务 %s 预扣费后返还：%s（实际消耗：%s，预扣费：%s，tokens：%d）",
+									task.TaskID,
+									logger.LogQuota(refundQuota),
+									logger.LogQuota(actualQuota),
+									logger.LogQuota(preConsumedQuota),
+									taskResult.TotalTokens,
+								))
+								if err := model.IncreaseUserQuota(task.UserId, refundQuota, false); err != nil {
+									logger.LogError(ctx, fmt.Sprintf("退还预扣费失败: %s", err.Error()))
+								} else {
+									task.Quota = actualQuota // 更新任务记录的实际扣费额度
+
+									// 记录退款日志
+									logContent := fmt.Sprintf("视频任务成功退还多扣费用，模型倍率 %.2f，分组倍率 %.2f，tokens %d，预扣费 %s，实际扣费 %s，退还 %s",
+										modelRatio, finalGroupRatio, taskResult.TotalTokens,
+										logger.LogQuota(preConsumedQuota), logger.LogQuota(actualQuota), logger.LogQuota(refundQuota))
+									model.RecordLog(task.UserId, model.LogTypeSystem, logContent)
+								}
+							} else {
+								// quotaDelta == 0, 预扣费刚好准确
+								logger.LogInfo(ctx, fmt.Sprintf("视频任务 %s 预扣费准确（%s，tokens：%d）",
+									task.TaskID, logger.LogQuota(actualQuota), taskResult.TotalTokens))
+							}
+						}
+					}
+				}
 			}
-		} else {
-			logger.LogInfo(ctx, fmt.Sprintf("Task %s succeeded but no token usage reported", task.TaskID))
 		}
 	case model.TaskStatusFailure:
 		task.Status = model.TaskStatusFailure
@@ -363,4 +446,38 @@ func handleVideoTaskBilling(ctx context.Context, task *model.Task, taskResult *r
 
 	logger.LogInfo(ctx, fmt.Sprintf("Task %s billing completed successfully", task.TaskID))
 	return nil
+}
+
+func redactVideoResponseBody(body []byte) []byte {
+	var m map[string]any
+	if err := json.Unmarshal(body, &m); err != nil {
+		return body
+	}
+	resp, _ := m["response"].(map[string]any)
+	if resp != nil {
+		delete(resp, "bytesBase64Encoded")
+		if v, ok := resp["video"].(string); ok {
+			resp["video"] = truncateBase64(v)
+		}
+		if vs, ok := resp["videos"].([]any); ok {
+			for i := range vs {
+				if vm, ok := vs[i].(map[string]any); ok {
+					delete(vm, "bytesBase64Encoded")
+				}
+			}
+		}
+	}
+	b, err := json.Marshal(m)
+	if err != nil {
+		return body
+	}
+	return b
+}
+
+func truncateBase64(s string) string {
+	const maxKeep = 256
+	if len(s) <= maxKeep {
+		return s
+	}
+	return s[:maxKeep] + "..."
 }

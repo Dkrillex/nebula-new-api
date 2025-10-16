@@ -7,11 +7,16 @@ import (
 	"io"
 	"net/http"
 	"one-api/common"
+	"one-api/constant"
 	"one-api/dto"
+	"one-api/model"
+	"one-api/relay/channel"
 	relaycommon "one-api/relay/common"
 	"time"
+	"one-api/service"
 
 	"github.com/gin-gonic/gin"
+	"github.com/pkg/errors"
 )
 
 // 豆包视频生成请求结构体
@@ -32,12 +37,10 @@ type ImageURL struct {
 	URL string `json:"url"`
 }
 
-// 豆包视频生成任务提交响应结构体
 type responsePayload struct {
 	TaskID string `json:"id"`
 }
 
-// 豆包任务查询响应结构体（匹配官方API响应格式）
 type taskQueryResponse struct {
 	ID      string `json:"id"`
 	Model   string `json:"model"`
@@ -45,7 +48,12 @@ type taskQueryResponse struct {
 	Content struct {
 		VideoURL string `json:"video_url"`
 	} `json:"content"`
-	Usage struct {
+	Seed            int    `json:"seed"`
+	Resolution      string `json:"resolution"`
+	Duration        int    `json:"duration"`
+	Ratio           string `json:"ratio"`
+	FramesPerSecond int    `json:"framespersecond"`
+	Usage           struct {
 		CompletionTokens int `json:"completion_tokens"`
 		TotalTokens      int `json:"total_tokens"`
 	} `json:"usage"`
@@ -66,6 +74,10 @@ type taskQueryResponse struct {
 	Reason string `json:"reason,omitempty"` // 失败原因
 }
 
+// ============================
+// Adaptor implementation
+// ============================
+
 type TaskAdaptor struct {
 	ChannelType int
 	apiKey      string
@@ -76,54 +88,31 @@ func (a *TaskAdaptor) Init(info *relaycommon.RelayInfo) {
 	a.ChannelType = info.ChannelType
 	a.apiKey = info.ApiKey
 	a.baseURL = info.ChannelBaseUrl
+	a.apiKey = info.ApiKey
 }
 
+// ValidateRequestAndSetAction parses body, validates fields and sets default action.
 func (a *TaskAdaptor) ValidateRequestAndSetAction(c *gin.Context, info *relaycommon.RelayInfo) (taskErr *dto.TaskError) {
-	common.SysLog("[Doubao] ValidateRequestAndSetAction - 开始验证请求")
-
-	// 从上下文中获取已解析的请求，如果不存在则解析
-	var request *dto.VideoRequest
-	if req, exists := c.Get("task_request"); exists {
-		request = req.(*dto.VideoRequest)
-	} else {
-		// 解析请求体
-		request = &dto.VideoRequest{}
-		if err := c.ShouldBindJSON(request); err != nil {
-			common.SysError(fmt.Sprintf("[Doubao] 解析请求失败: %v", err))
-			return &dto.TaskError{
-				Code:    "invalid_request",
-				Message: "请求格式错误",
-			}
-		}
-		c.Set("task_request", request)
-	}
-
-	// 验证模型
-	if request.Model == "" {
-		return &dto.TaskError{
-			Code:    "invalid_request",
-			Message: "模型参数不能为空",
-		}
-	}
-
-	common.SysLog("[Doubao] ValidateRequestAndSetAction - 验证通过")
-	return nil
+	// Accept only POST /v1/video/generations as "generate" action.
+	return relaycommon.ValidateBasicTaskRequest(c, info, constant.TaskActionGenerate)
 }
 
+// BuildRequestURL constructs the upstream URL.
 func (a *TaskAdaptor) BuildRequestURL(info *relaycommon.RelayInfo) (string, error) {
-	// 使用豆包官方的API端点
-	url := fmt.Sprintf("%s/api/v3/contents/generations/tasks", a.baseURL)
-	common.SysLog(fmt.Sprintf("[Doubao] BuildRequestURL: %s", url))
-	return url, nil
+	return fmt.Sprintf("%s/api/v3/contents/generations/tasks", a.baseURL), nil
 }
 
+// BuildRequestHeader sets required headers.
 func (a *TaskAdaptor) BuildRequestHeader(c *gin.Context, req *http.Request, info *relaycommon.RelayInfo) error {
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "application/json")
 	req.Header.Set("Authorization", "Bearer "+a.apiKey)
 	req.Header.Set("Content-Type", "application/json")
 
 	return nil
 }
 
+// BuildRequestBody converts request into Doubao specific format.
 func (a *TaskAdaptor) BuildRequestBody(c *gin.Context, info *relaycommon.RelayInfo) (io.Reader, error) {
 
 	// 从上下文获取请求
@@ -145,6 +134,7 @@ func (a *TaskAdaptor) BuildRequestBody(c *gin.Context, info *relaycommon.RelayIn
 	return bytes.NewReader(jsonData), nil
 }
 
+// DoRequest delegates to common helper.
 func (a *TaskAdaptor) DoRequest(c *gin.Context, info *relaycommon.RelayInfo, requestBody io.Reader) (*http.Response, error) {
 	common.SysLog("[Doubao] DoRequest - 开始发送请求")
 
@@ -241,6 +231,7 @@ func (a *TaskAdaptor) DoRequest(c *gin.Context, info *relaycommon.RelayInfo, req
 	return resp, nil
 }
 
+// DoResponse handles upstream response, returns taskID etc.
 func (a *TaskAdaptor) DoResponse(c *gin.Context, resp *http.Response, info *relaycommon.RelayInfo) (taskID string, taskData []byte, taskErr *dto.TaskError) {
 	// 读取响应体
 	body, err := io.ReadAll(resp.Body)
@@ -251,6 +242,7 @@ func (a *TaskAdaptor) DoResponse(c *gin.Context, resp *http.Response, info *rela
 			Message: "读取响应失败",
 		}
 	}
+	_ = resp.Body.Close()
 
 	// 使用截断函数处理base64内容，保留其他信息
 	truncatedContent := common.TruncateBase64Content(string(body))
@@ -344,6 +336,7 @@ func (a *TaskAdaptor) DoResponse(c *gin.Context, resp *http.Response, info *rela
 	return response.TaskID, body, nil
 }
 
+// FetchTask fetch task status
 func (a *TaskAdaptor) FetchTask(baseUrl, key string, body map[string]any) (*http.Response, error) {
 
 	// 从body中获取任务ID
@@ -369,6 +362,7 @@ func (a *TaskAdaptor) FetchTask(baseUrl, key string, body map[string]any) (*http
 	// 设置请求头
 	req.Header.Set("Authorization", "Bearer "+key)
 	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+key)
 
 	// 发送请求
 	client := &http.Client{
@@ -463,8 +457,9 @@ func convertVideoRequestToDoubaoPayload(request *dto.VideoRequest) *requestPaylo
 					Type: "text",
 					Text: "视频生成请求", // 默认文本
 				},
-			}
+			})
 		}
+	}
 
 		// 提取 callback_url
 		if callbackURL, ok := request.Metadata["callback_url"].(string); ok && callbackURL != "" {

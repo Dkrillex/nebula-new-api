@@ -25,9 +25,13 @@ import (
 	"one-api/relay/channel/perplexity"
 	"one-api/relay/channel/siliconflow"
 	"one-api/relay/channel/task/doubao"
+	"one-api/relay/channel/submodel"
+	taskdoubao "one-api/relay/channel/task/doubao"
 	taskjimeng "one-api/relay/channel/task/jimeng"
 	"one-api/relay/channel/task/kling"
+	tasksora "one-api/relay/channel/task/sora"
 	"one-api/relay/channel/task/suno"
+	taskvertex "one-api/relay/channel/task/vertex"
 	taskVidu "one-api/relay/channel/task/vidu"
 	"one-api/relay/channel/tencent"
 	"one-api/relay/channel/vertex"
@@ -105,6 +109,8 @@ func GetAdaptor(apiType int) channel.Adaptor {
 		return &volcengine.Adaptor{}
 	case constant.APITypeMoonshot:
 		return &moonshot.Adaptor{} // Moonshot uses Claude API
+	case constant.APITypeSubmodel:
+		return &submodel.Adaptor{}
 	}
 	return nil
 }
@@ -130,12 +136,18 @@ func GetTaskAdaptor(platform constant.TaskPlatform) channel.TaskAdaptor {
 			return &kling.TaskAdaptor{}
 		case constant.ChannelTypeJimeng:
 			return &taskjimeng.TaskAdaptor{}
+		case constant.ChannelTypeVertexAi:
+			return &taskvertex.TaskAdaptor{}
 		case constant.ChannelTypeVidu:
 			return &taskVidu.TaskAdaptor{}
 		case constant.ChannelTypeVolcEngine:
 			return &doubao.TaskAdaptor{}
 		case constant.APITypeDoubao:
 			return &doubao.TaskAdaptor{}
+		case constant.ChannelTypeDoubaoVideo:
+			return &taskdoubao.TaskAdaptor{}
+		case constant.ChannelTypeSora:
+			return &tasksora.TaskAdaptor{}
 		}
 	}
 	return nil

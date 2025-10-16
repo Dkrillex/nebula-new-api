@@ -35,7 +35,7 @@ import {
   renderLogContent,
   renderAudioModelPrice,
   renderClaudeModelPrice,
-  renderModelPrice
+  renderModelPrice,
 } from '../../helpers';
 import { ITEMS_PER_PAGE } from '../../constants';
 import { useTableCompactMode } from '../common/useTableCompactMode';
@@ -75,7 +75,9 @@ export const useLogsData = () => {
   // User and admin
   const isAdminUser = isAdmin();
   // Role-specific storage key to prevent different roles from overwriting each other
-  const STORAGE_KEY = isAdminUser ? 'logs-table-columns-admin' : 'logs-table-columns-user';
+  const STORAGE_KEY = isAdminUser
+    ? 'logs-table-columns-admin'
+    : 'logs-table-columns-user';
 
   // Statistics state
   const [stat, setStat] = useState({
@@ -316,8 +318,8 @@ export const useLogsData = () => {
         if (logs[i].channel === 999) {
           channelInfo = '999 - [Nebula Lab系统扣费]';
         } else {
-          const channelName = logs[i].channel_name && logs[i].channel_name.trim() !== '' 
-            ? logs[i].channel_name 
+          const channelName = logs[i].channel_name && logs[i].channel_name.trim() !== ''
+            ? logs[i].channel_name
             : '[未知]';
           channelInfo = `${logs[i].channel} - ${channelName}`;
         }
@@ -357,41 +359,33 @@ export const useLogsData = () => {
         });
       }
       if (logs[i].type === 2) {
-        // 当channel为999时，日志详情直接显示content内容
-        if (logs[i].channel === 999) {
-          expandDataLocal.push({
-            key: t('日志详情'),
-            value: logs[i].content,
-          });
-        } else {
-          expandDataLocal.push({
-            key: t('日志详情'),
-            value: other?.claude
-              ? renderClaudeLogContent(
-                other?.model_ratio,
-                other.completion_ratio,
-                other.model_price,
-                other.group_ratio,
-                other?.user_group_ratio,
-                other.cache_ratio || 1.0,
-                other.cache_creation_ratio || 1.0,
-              )
-              : renderLogContent(
-                other?.model_ratio,
-                other.completion_ratio,
-                other.model_price,
-                other.group_ratio,
-                other?.user_group_ratio,
-                other.cache_ratio || 1.0,
-                false,
-                1.0,
-                other.web_search || false,
-                other.web_search_call_count || 0,
-                other.file_search || false,
-                other.file_search_call_count || 0,
-              ),
-          });
-        }
+        expandDataLocal.push({
+          key: t('日志详情'),
+          value: other?.claude
+            ? renderClaudeLogContent(
+              other?.model_ratio,
+              other.completion_ratio,
+              other.model_price,
+              other.group_ratio,
+              other?.user_group_ratio,
+              other.cache_ratio || 1.0,
+              other.cache_creation_ratio || 1.0,
+            )
+            : renderLogContent(
+              other?.model_ratio,
+              other.completion_ratio,
+              other.model_price,
+              other.group_ratio,
+              other?.user_group_ratio,
+              other.cache_ratio || 1.0,
+              false,
+              1.0,
+              other.web_search || false,
+              other.web_search_call_count || 0,
+              other.file_search || false,
+              other.file_search_call_count || 0,
+            ),
+        });
       }
       if (logs[i].type === 2) {
         // 当channel为999时，隐藏计费过程相关的内容
@@ -466,6 +460,8 @@ export const useLogsData = () => {
               other?.audio_input_price || 0,
               other?.per_call_image_multiplier || 0,
               other?.per_call_price || 0,
+              other?.image_generation_call || false,
+              other?.image_generation_call_price || 0,
             );
           }
           expandDataLocal.push({
@@ -536,7 +532,7 @@ export const useLogsData = () => {
   // Page handlers
   const handlePageChange = (page) => {
     setActivePage(page);
-    loadLogs(page, pageSize).then((r) => { });
+    loadLogs(page, pageSize).then((r) => {});
   };
 
   const handlePageSizeChange = async (size) => {
@@ -646,4 +642,4 @@ export const useLogsData = () => {
     // Translation
     t,
   };
-}; 
+};

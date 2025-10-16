@@ -11,11 +11,15 @@ import (
 	"one-api/constant"
 	"one-api/dto"
 	"one-api/model"
+	"one-api/relay/channel"
 	relaycommon "one-api/relay/common"
 	relayconstant "one-api/relay/constant"
 	"one-api/relay/helper"
 	"one-api/service"
 	"one-api/types"
+	"one-api/setting/ratio_setting"
+	"strconv"
+	"strings"
 
 	"github.com/gin-gonic/gin"
 )
@@ -34,6 +38,7 @@ func RelayTaskSubmit(c *gin.Context, info *relaycommon.RelayInfo) (taskErr *dto.
 		platform = GetTaskPlatform(c)
 	}
 
+	info.InitChannelMeta(c)
 	adaptor := GetTaskAdaptor(platform)
 	if adaptor == nil {
 		return service.TaskErrorWrapperLocal(fmt.Errorf("invalid api platform: %s", platform), "invalid_api_platform", http.StatusBadRequest)
@@ -319,6 +324,9 @@ func RelayTaskFetch(c *gin.Context, relayMode int) (taskResp *dto.TaskError) {
 	if taskErr != nil {
 		common.SysError(fmt.Sprintf("[TaskFetch] 响应构建失败: %+v", taskErr))
 		return taskErr
+	}
+	if len(respBody) == 0 {
+		respBody = []byte("{\"code\":\"success\",\"data\":null}")
 	}
 
 	c.Writer.Header().Set("Content-Type", "application/json")

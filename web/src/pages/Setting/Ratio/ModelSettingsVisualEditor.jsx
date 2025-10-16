@@ -28,7 +28,7 @@ import {
   RadioGroup,
   Radio,
   Checkbox,
-  Tag
+  Tag,
 } from '@douyinfe/semi-ui';
 import {
   IconDelete,
@@ -82,13 +82,13 @@ export default function ModelSettingsVisualEditor(props) {
         const originPrice = originModelPrice[name] === undefined ? '' : originModelPrice[name];
         const originRatio = originModelRatio[name] === undefined ? '' : originModelRatio[name];
         const originComp = originCompletionRatio[name] === undefined ? '' : originCompletionRatio[name];
-        
+
         // 计算原始输入价格（从原始模型倍率转换）
         const originTokenPrice = originRatio !== '' ? (parseFloat(originRatio) * 2).toString() : '';
-        
+
         // 计算原始输出价格（从原始模型补全倍率转换）
-        const originCompletionTokenPrice = originComp !== '' && originTokenPrice !== '' 
-          ? (parseFloat(originComp) * parseFloat(originTokenPrice)).toString() 
+        const originCompletionTokenPrice = originComp !== '' && originTokenPrice !== ''
+          ? (parseFloat(originComp) * parseFloat(originTokenPrice)).toString()
           : '';
 
         return {
@@ -120,9 +120,7 @@ export default function ModelSettingsVisualEditor(props) {
 
   // 在 return 语句之前，先处理过滤和分页逻辑
   const filteredModels = models.filter((model) => {
-    const keywordMatch = searchText
-      ? model.name.toLowerCase().includes(searchText.toLowerCase())
-      : true;
+    const keywordMatch = searchText ? model.name.includes(searchText) : true;
     const conflictMatch = conflictOnly ? model.hasConflict : true;
     return keywordMatch && conflictMatch;
   });
@@ -157,7 +155,7 @@ export default function ModelSettingsVisualEditor(props) {
               model.completionRatio,
             );
         }
-        
+
         // 处理原始模型配置
         if (model.originPrice !== '')
           output.OriginModelPrice[model.name] = parseFloat(model.originPrice);
@@ -165,7 +163,7 @@ export default function ModelSettingsVisualEditor(props) {
           output.OriginModelRatio[model.name] = parseFloat(model.originRatio);
         if (model.originCompletionRatio !== '')
           output.OriginCompletionRatio[model.name] = parseFloat(model.originCompletionRatio);
-        
+
         // 如果有原始输入价格，转换为原始模型倍率存储
         if (model.originTokenPrice !== '') {
           const originTokenPrice = parseFloat(model.originTokenPrice);
@@ -342,7 +340,8 @@ export default function ModelSettingsVisualEditor(props) {
         if (model.name !== name) return model;
         const updated = { ...model, [field]: value };
         updated.hasConflict =
-          updated.price !== '' && (updated.ratio !== '' || updated.completionRatio !== '');
+          updated.price !== '' &&
+          (updated.ratio !== '' || updated.completionRatio !== '');
         return updated;
       }),
     );
@@ -473,7 +472,8 @@ export default function ModelSettingsVisualEditor(props) {
             originCompletionTokenPrice: values.originCompletionTokenPrice || '',
           };
           updated.hasConflict =
-            updated.price !== '' && (updated.ratio !== '' || updated.completionRatio !== '');
+            updated.price !== '' &&
+            (updated.ratio !== '' || updated.completionRatio !== '');
           return updated;
         }),
       );
@@ -500,7 +500,8 @@ export default function ModelSettingsVisualEditor(props) {
           originCompletionTokenPrice: values.originCompletionTokenPrice || '',
         };
         newModel.hasConflict =
-          newModel.price !== '' && (newModel.ratio !== '' || newModel.completionRatio !== '');
+          newModel.price !== '' &&
+          (newModel.ratio !== '' || newModel.completionRatio !== '');
         return [newModel, ...prev];
       });
       setVisible(false);
@@ -574,7 +575,7 @@ export default function ModelSettingsVisualEditor(props) {
           formValues.modelTokenPrice = modelCopy.tokenPrice;
           formValues.completionTokenPrice = modelCopy.completionTokenPrice;
         }
-        
+
         // 设置原始模型配置的初始值
         formValues.originPrice = modelCopy.originPrice || '';
         formValues.originRatio = modelCopy.originRatio || '';
@@ -801,7 +802,7 @@ export default function ModelSettingsVisualEditor(props) {
                                 parseFloat(updatedModel.ratio),
                               ).toString();
                           }
-                          
+
                           // Always calculate completionTokenPrice from completionRatio
                           if (updatedModel.completionRatio) {
                             updatedModel.completionTokenPrice = (
@@ -809,14 +810,14 @@ export default function ModelSettingsVisualEditor(props) {
                               parseFloat(updatedModel.completionRatio)
                             ).toString();
                           }
-                          
+
                           // Handle original model configuration - always sync
                           if (updatedModel.originRatio) {
                             updatedModel.originTokenPrice = (
                               parseFloat(updatedModel.originRatio) * 2
                             ).toString();
                           }
-                          
+
                           // Handle original completion configuration - always sync
                           if (updatedModel.originCompletionRatio) {
                             updatedModel.originCompletionTokenPrice = (
@@ -833,21 +834,21 @@ export default function ModelSettingsVisualEditor(props) {
                               parseFloat(updatedModel.tokenPrice) / 2
                             ).toString();
                           }
-                          
+
                           // Always calculate completionRatio from completionTokenPrice
                           if (updatedModel.completionTokenPrice && updatedModel.tokenPrice) {
                             updatedModel.completionRatio = (
                               parseFloat(updatedModel.completionTokenPrice) / parseFloat(updatedModel.tokenPrice)
                             ).toString();
                           }
-                          
+
                           // Handle original model configuration - always sync
                           if (updatedModel.originTokenPrice) {
                             updatedModel.originRatio = (
                               parseFloat(updatedModel.originTokenPrice) / 2
                             ).toString();
                           }
-                          
+
                           // Handle original completion configuration - always sync
                           if (updatedModel.originCompletionTokenPrice && updatedModel.originTokenPrice) {
                             updatedModel.originCompletionRatio = (
