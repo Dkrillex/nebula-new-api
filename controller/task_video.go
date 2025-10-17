@@ -51,6 +51,8 @@ func updateVideoTaskAll(ctx context.Context, platform constant.TaskPlatform, cha
 	}
 	info := &relaycommon.RelayInfo{}
 	info.ChannelMeta = &relaycommon.ChannelMeta{
+		ChannelType:    cacheGetChannel.Type,
+		ApiKey:         cacheGetChannel.Key,
 		ChannelBaseUrl: cacheGetChannel.GetBaseURL(),
 	}
 	adaptor.Init(info)

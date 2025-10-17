@@ -314,9 +314,26 @@ func DoTaskApiRequest(a TaskAdaptor, c *gin.Context, info *common.RelayInfo, req
 	if err != nil {
 		return nil, fmt.Errorf("setup request header failed: %w", err)
 	}
+
+	// 添加调试日志
+	common2.SysLog(fmt.Sprintf("[DoTaskApiRequest] Method: %s, URL: %s", req.Method, fullRequestURL))
+	common2.SysLog(fmt.Sprintf("[DoTaskApiRequest] Headers: Content-Type=%s, Authorization=%s",
+		req.Header.Get("Content-Type"),
+		maskString(req.Header.Get("Authorization"))))
+	if apiKey := req.Header.Get("Api-key"); apiKey != "" {
+		common2.SysLog(fmt.Sprintf("[DoTaskApiRequest] Api-key: %s", maskString(apiKey)))
+	}
+
 	resp, err := doRequest(c, req, info)
 	if err != nil {
 		return nil, fmt.Errorf("do request failed: %w", err)
 	}
 	return resp, nil
+}
+
+func maskString(s string) string {
+	if len(s) <= 10 {
+		return "***"
+	}
+	return s[:5] + "***" + s[len(s)-5:]
 }

@@ -200,9 +200,25 @@ func getModelRequest(c *gin.Context) (*ModelRequest, bool, error) {
 	} else if strings.Contains(c.Request.URL.Path, "/v1/video/generations") {
 		relayMode := relayconstant.RelayModeUnknown
 		if c.Request.Method == http.MethodPost {
-			err = common.UnmarshalBodyReusable(c, &modelRequest)
-			if err != nil {
-				return nil, false, errors.New("video无效的请求, " + err.Error())
+			contentType := c.Request.Header.Get("Content-Type")
+			if strings.HasPrefix(contentType, "multipart/form-data") {
+				// 处理 multipart/form-data 格式（图片/视频上传）
+				form, err := common.ParseMultipartFormReusable(c)
+				if err != nil {
+					return nil, false, errors.New("无效的 video multipart 请求, " + err.Error())
+				}
+				defer form.RemoveAll()
+				if form != nil {
+					if values, ok := form.Value["model"]; ok && len(values) > 0 {
+						modelRequest.Model = values[0]
+					}
+				}
+			} else if strings.HasPrefix(contentType, "application/json") {
+				// 处理 JSON 格式（纯文本提示）
+				err = common.UnmarshalBodyReusable(c, &modelRequest)
+				if err != nil {
+					return nil, false, errors.New("video无效的请求, " + err.Error())
+				}
 			}
 			relayMode = relayconstant.RelayModeVideoSubmit
 		} else if c.Request.Method == http.MethodGet {

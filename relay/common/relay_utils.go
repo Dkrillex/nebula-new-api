@@ -115,22 +115,33 @@ func ValidateMultipartDirect(c *gin.Context, info *RelayInfo) *dto.TaskError {
 	var hasInputReference bool
 
 	if strings.HasPrefix(contentType, "multipart/form-data") {
+		common.SysLog("[RelayUtils] 开始解析 multipart/form-data 请求")
+
 		form, err := common.ParseMultipartFormReusable(c)
 		if err != nil {
+			common.SysLog(fmt.Sprintf("[RelayUtils] 解析 multipart 表单失败: %v", err))
 			return createTaskError(err, "invalid_multipart_form", http.StatusBadRequest, true)
 		}
 		defer form.RemoveAll()
 
+		// 添加调试日志
+		common.SysLog(fmt.Sprintf("[RelayUtils] 解析到的表单字段: %v", form.Value))
+		common.SysLog(fmt.Sprintf("[RelayUtils] 解析到的文件字段: %v", form.File))
+
 		prompts, ok := form.Value["prompt"]
 		if !ok || len(prompts) == 0 {
+			common.SysLog("[RelayUtils] 缺少 prompt 字段")
 			return createTaskError(fmt.Errorf("prompt field is required"), "missing_prompt", http.StatusBadRequest, true)
 		}
 		prompt = prompts[0]
+		common.SysLog(fmt.Sprintf("[RelayUtils] 找到 prompt: %s", prompt))
 
 		if _, ok := form.Value["model"]; !ok {
+			common.SysLog("[RelayUtils] 缺少 model 字段")
 			return createTaskError(fmt.Errorf("model field is required"), "missing_model", http.StatusBadRequest, true)
 		}
 		model = form.Value["model"][0]
+		common.SysLog(fmt.Sprintf("[RelayUtils] 找到 model: %s", model))
 
 		if _, ok := form.File["input_reference"]; ok {
 			hasInputReference = true
