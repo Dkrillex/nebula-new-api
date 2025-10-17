@@ -162,7 +162,12 @@ func (a *TaskAdaptor) DoResponse(c *gin.Context, resp *http.Response, _ *relayco
 		dResp.TaskID = ""
 	}
 
-	c.JSON(http.StatusOK, dResp)
+	// 按照统一视频生成接口文档的格式发送响应（与 doubao 保持一致）
+	responseData := gin.H{
+		"task_id": dResp.ID,
+		"status":  "submitted",
+	}
+	c.JSON(http.StatusOK, responseData)
 	return dResp.ID, responseBody, nil
 }
 

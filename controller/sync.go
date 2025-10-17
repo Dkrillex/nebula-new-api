@@ -1159,3 +1159,87 @@ func SyncGetVideoTask(c *gin.Context) {
 	// 转发请求到视频任务查询接口
 	RelayTask(c)
 }
+
+// SyncDownloadVideoBase64 外部系统下载视频（base64）
+// @Summary 外部系统下载视频（base64）
+// @Description 供外部系统调用，传入 user_id、task_id、generation_id 下载视频并返回 base64
+// @Tags 外部系统集成
+// @Accept json
+// @Produce json
+// @Param task_id path string true "任务ID"
+// @Param gen_id path string true "生成ID"
+// @Param user_id query int true "用户ID"
+// @Success 200 {object} common.Response{data=object}
+// @Failure 400 {object} common.Response{msg=string}
+// @Failure 500 {object} common.Response{msg=string}
+// @Router /api/sync/system/videos/generations/{task_id}/download/{gen_id} [get]
+func SyncDownloadVideoBase64(c *gin.Context) {
+	var newAPIError *types.NewAPIError
+
+	defer func() {
+		if newAPIError != nil {
+			c.JSON(newAPIError.StatusCode, gin.H{
+				"error": newAPIError.ToOpenAIError(),
+			})
+		}
+	}()
+
+	// 获取路径参数
+	taskId := c.Param("task_id")
+	genId := c.Param("gen_id")
+	if taskId == "" || genId == "" {
+		newAPIError = types.NewError(errors.New("task_id 和 gen_id 不能为空"), types.ErrorCodeInvalidRequest)
+		return
+	}
+
+	// 获取用户ID
+	userIdStr := c.Query("user_id")
+	if userIdStr == "" {
+		newAPIError = types.NewError(errors.New("用户ID不能为空"), types.ErrorCodeInvalidRequest)
+		return
+	}
+	userId, err := strconv.Atoi(userIdStr)
+	if err != nil || userId <= 0 {
+		newAPIError = types.NewError(errors.New("无效的用户ID"), types.ErrorCodeInvalidRequest)
+		return
+	}
+
+	// 校验并写入用户上下文（与 SyncGetVideoTask 同逻辑）
+	userCache, err := model.GetUserCache(userId)
+	if err != nil {
+		user, dbErr := model.GetUserById(userId, true)
+		if dbErr != nil {
+			newAPIError = types.NewError(errors.New("用户不存在"), types.ErrorCodeInvalidRequest)
+			return
+		}
+		userCache = user.ToBaseUser()
+	}
+	if userCache.Status != common.UserStatusEnabled {
+		newAPIError = types.NewError(errors.New("用户已被禁用"), types.ErrorCodeInvalidRequest)
+		return
+	}
+	group := userCache.Group
+	c.Set("group", group)
+	c.Set("id", userId)
+	userCache.WriteContext(c)
+
+	// 创建临时令牌并注入上下文（用于后续查任务和鉴权）
+	tempToken := &model.Token{
+		UserId: userId,
+		Name:   fmt.Sprintf("nebula-video-download-%s", group),
+		Group:  group,
+	}
+	_ = middleware.SetupContextForToken(c, tempToken)
+
+	// 直接复用内部下载逻辑：路径转换并转发到内部受保护下载接口
+	originalPath := c.Request.URL.Path
+	newPath := "/v1/video/generations/" + taskId + "/download/" + genId
+	c.Request.URL.Path = newPath
+	common.SysLog(fmt.Sprintf("[SyncDownloadVideoBase64] 路径转换: %s -> %s", originalPath, newPath))
+
+	// 设置请求开始时间
+	common.SetContextKey(c, constant.ContextKeyRequestStartTime, time.Now())
+
+	// 转发到内部处理
+	VideoDownloadBase64(c)
+}

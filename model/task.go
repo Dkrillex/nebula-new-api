@@ -210,6 +210,19 @@ func GetByTaskId(userId int, taskId string) (*Task, bool, error) {
 	return task, exist, err
 }
 
+// GetSuccessTasksByLimit 查询最近成功的任务（用于按 generation_id 查找）
+func GetSuccessTasksByLimit(limit int) ([]*Task, error) {
+	var tasks []*Task
+	err := DB.Where("status = ?", TaskStatusSuccess).
+		Order("created_at DESC").
+		Limit(limit).
+		Find(&tasks).Error
+	if err != nil {
+		return nil, err
+	}
+	return tasks, nil
+}
+
 func GetByTaskIds(userId int, taskIds []any) ([]*Task, error) {
 	if len(taskIds) == 0 {
 		return nil, nil

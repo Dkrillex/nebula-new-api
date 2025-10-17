@@ -271,6 +271,7 @@ func SetApiRouter(router *gin.Engine) {
 			syncSystemRoute.POST("/images/generations", controller.SyncImageGeneration)
 			syncSystemRoute.POST("/videos/generations", controller.SyncVideoGeneration)
 			syncSystemRoute.GET("/videos/generations/:task_id", controller.SyncGetVideoTask)
+			syncSystemRoute.GET("/videos/generations/:task_id/download/:gen_id", controller.SyncDownloadVideoBase64)
 		}
 	}
 }

@@ -17,6 +17,7 @@ func SetVideoRouter(router *gin.Engine) {
 	{
 		videoV1Router.POST("/video/generations", controller.RelayTask)
 		videoV1Router.GET("/video/generations/:task_id", controller.RelayTask)
+		videoV1Router.GET("/video/generations/:task_id/download/:gen_id", controller.VideoDownloadBase64) // 下载视频并转 base64
 	}
 	// openai compatible API video routes
 	// docs: https://platform.openai.com/docs/api-reference/videos/create
