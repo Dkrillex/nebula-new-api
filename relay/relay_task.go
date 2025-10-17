@@ -11,15 +11,11 @@ import (
 	"one-api/constant"
 	"one-api/dto"
 	"one-api/model"
-	"one-api/relay/channel"
 	relaycommon "one-api/relay/common"
 	relayconstant "one-api/relay/constant"
 	"one-api/relay/helper"
 	"one-api/service"
 	"one-api/types"
-	"one-api/setting/ratio_setting"
-	"strconv"
-	"strings"
 
 	"github.com/gin-gonic/gin"
 )
@@ -190,8 +186,8 @@ func RelayTaskSubmit(c *gin.Context, info *relaycommon.RelayInfo) (taskErr *dto.
 		taskErr = service.TaskErrorWrapper(err, "do_request_failed", http.StatusInternalServerError)
 		return
 	}
-	// handle response
-	if resp != nil && resp.StatusCode != http.StatusOK {
+	// handle response - 接受 200 和 201 状态码（201 Created 用于资源创建）
+	if resp != nil && resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated {
 		responseBody, _ := io.ReadAll(resp.Body)
 		truncatedResponseBody := common.TruncateBase64Content(string(responseBody))
 		// HTTP请求失败，返还预扣费
@@ -438,7 +434,7 @@ func videoFetchByIDRespBodyBuilder(c *gin.Context) (respBody []byte, taskResp *d
 		originTask.ID, originTask.TaskID, originTask.Status, originTask.Platform))
 
 	// 检查任务是否成功，如果成功且是豆包火山平台，需要处理实际token消耗和补扣费
-	if originTask.Status == model.TaskStatusSuccess && originTask.Platform == "doubao" {
+	if originTask.Status == model.TaskStatusSuccess && originTask.Platform == "45" {
 		common.SysLog("[VideoTask] 检测到豆包火山任务成功，开始处理实际token消耗")
 
 		// 获取渠道信息

@@ -1135,7 +1135,14 @@ export function renderModelPrice(
   audioInputSeperatePrice = false,
   audioInputTokens = 0,
   audioInputPrice = 0,
+  perCallImageMultiplier = 0,
+  perCallPrice = 0,
+  imageGenerationCall = false,
+  imageGenerationCallPrice = 0,
 ) {
+  // 获取货币配置
+  const { symbol, rate } = getCurrencyConfig();
+  
   const { ratio: effectiveGroupRatio, label: ratioLabel } = getEffectiveRatio(
     groupRatio,
     user_group_ratio,

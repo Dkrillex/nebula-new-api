@@ -297,11 +297,11 @@ type GeminiChatPromptFeedback struct {
 }
 
 type GeminiChatResponse struct {
-	Candidates     []GeminiChatCandidate    `json:"candidates"`
-	PromptFeedback GeminiChatPromptFeedback `json:"promptFeedback"`
-	UsageMetadata  GeminiUsageMetadata      `json:"usageMetadata"`
-	ModelVersion   string                   `json:"modelVersion"`
-	CreateTime     string                   `json:"createTime"`
+	Candidates     []GeminiChatCandidate     `json:"candidates"`
+	PromptFeedback *GeminiChatPromptFeedback `json:"promptFeedback,omitempty"`
+	UsageMetadata  GeminiUsageMetadata       `json:"usageMetadata"`
+	ModelVersion   string                    `json:"modelVersion"`
+	CreateTime     string                    `json:"createTime"`
 }
 
 type GeminiUsageMetadata struct {

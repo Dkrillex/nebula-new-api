@@ -24,8 +24,8 @@ import (
 	"one-api/relay/channel/palm"
 	"one-api/relay/channel/perplexity"
 	"one-api/relay/channel/siliconflow"
-	"one-api/relay/channel/task/doubao"
 	"one-api/relay/channel/submodel"
+	"one-api/relay/channel/task/doubao"
 	taskdoubao "one-api/relay/channel/task/doubao"
 	taskjimeng "one-api/relay/channel/task/jimeng"
 	"one-api/relay/channel/task/kling"
@@ -147,6 +147,9 @@ func GetTaskAdaptor(platform constant.TaskPlatform) channel.TaskAdaptor {
 		case constant.ChannelTypeDoubaoVideo:
 			return &taskdoubao.TaskAdaptor{}
 		case constant.ChannelTypeSora:
+			return &tasksora.TaskAdaptor{}
+		case constant.ChannelTypeAzure:
+			// Azure 渠道用于 Sora 视频生成
 			return &tasksora.TaskAdaptor{}
 		}
 	}

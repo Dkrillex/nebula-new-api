@@ -1,9 +1,12 @@
 package controller
 
 import (
+	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
+	"one-api/common"
+	"one-api/constant"
 	"one-api/logger"
 	"one-api/model"
 	"time"
@@ -13,6 +16,8 @@ import (
 
 func VideoProxy(c *gin.Context) {
 	taskID := c.Param("task_id")
+	genID := c.Param("gen_id") // 可选，用于 Azure Sora
+
 	if taskID == "" {
 		c.JSON(http.StatusBadRequest, gin.H{
 			"error": gin.H{
@@ -22,6 +27,8 @@ func VideoProxy(c *gin.Context) {
 		})
 		return
 	}
+
+	common.SysLog(fmt.Sprintf("[VideoProxy] 获取视频内容 - TaskID: %s, GenID: %s", taskID, genID))
 
 	task, exists, err := model.GetByOnlyTaskId(taskID)
 	if err != nil {
@@ -35,7 +42,7 @@ func VideoProxy(c *gin.Context) {
 		return
 	}
 	if !exists || task == nil {
-		logger.LogError(c.Request.Context(), fmt.Sprintf("Failed to get task %s: %s", taskID, err.Error()))
+		logger.LogError(c.Request.Context(), fmt.Sprintf("Failed to get task %s: task not found", taskID))
 		c.JSON(http.StatusNotFound, gin.H{
 			"error": gin.H{
 				"message": "Task not found",
@@ -66,14 +73,64 @@ func VideoProxy(c *gin.Context) {
 		})
 		return
 	}
+
 	baseURL := channel.GetBaseURL()
 	if baseURL == "" {
 		baseURL = "https://api.openai.com"
 	}
-	videoURL := fmt.Sprintf("%s/v1/videos/%s/content", baseURL, task.TaskID)
+
+	var videoURL string
+	var authHeader string
+
+	// 根据渠道类型构建不同的 URL
+	if channel.Type == constant.ChannelTypeAzure {
+		// Azure Sora: 需要 gen_id
+		if genID == "" {
+			// 尝试从任务数据中提取 gen_id
+			if task.Data != nil {
+				var taskData map[string]interface{}
+				if err := json.Unmarshal(task.Data, &taskData); err == nil {
+					if generations, ok := taskData["generations"].([]interface{}); ok && len(generations) > 0 {
+						if gen, ok := generations[0].(map[string]interface{}); ok {
+							if id, ok := gen["id"].(string); ok {
+								genID = id
+								common.SysLog(fmt.Sprintf("[VideoProxy] 从任务数据中提取到 GenID: %s", genID))
+							}
+						}
+					}
+				}
+			}
+		}
+
+		if genID == "" {
+			logger.LogError(c.Request.Context(), "Azure Sora requires gen_id but not provided")
+			c.JSON(http.StatusBadRequest, gin.H{
+				"error": gin.H{
+					"message": "Generation ID is required for Azure Sora",
+					"type":    "invalid_request_error",
+				},
+			})
+			return
+		}
+
+		// Azure 格式: /openai/v1/video/generations/jobs/{job_id}/generations/{gen_id}/content?api-version=preview
+		apiVersion := channel.Other
+		if apiVersion == "" {
+			apiVersion = "preview"
+		}
+		videoURL = fmt.Sprintf("%s/openai/v1/video/generations/jobs/%s/generations/%s/content?api-version=%s",
+			baseURL, taskID, genID, apiVersion)
+		authHeader = "Api-key"
+		common.SysLog(fmt.Sprintf("[VideoProxy] Azure Sora URL: %s", videoURL))
+	} else {
+		// 原生 OpenAI Sora
+		videoURL = fmt.Sprintf("%s/v1/videos/%s/content", baseURL, task.TaskID)
+		authHeader = "Authorization"
+		common.SysLog(fmt.Sprintf("[VideoProxy] OpenAI Sora URL: %s", videoURL))
+	}
 
 	client := &http.Client{
-		Timeout: 60 * time.Second,
+		Timeout: 120 * time.Second, // 增加超时时间，视频文件可能较大
 	}
 
 	req, err := http.NewRequestWithContext(c.Request.Context(), http.MethodGet, videoURL, nil)
@@ -88,7 +145,14 @@ func VideoProxy(c *gin.Context) {
 		return
 	}
 
-	req.Header.Set("Authorization", "Bearer "+channel.Key)
+	// 设置认证头
+	if authHeader == "Api-key" {
+		req.Header.Set("Api-key", channel.Key)
+	} else {
+		req.Header.Set("Authorization", "Bearer "+channel.Key)
+	}
+
+	common.SysLog(fmt.Sprintf("[VideoProxy] 发送请求到上游 - URL: %s", videoURL))
 
 	resp, err := client.Do(req)
 	if err != nil {
@@ -103,17 +167,23 @@ func VideoProxy(c *gin.Context) {
 	}
 	defer resp.Body.Close()
 
+	common.SysLog(fmt.Sprintf("[VideoProxy] 上游响应状态码: %d", resp.StatusCode))
+
 	if resp.StatusCode != http.StatusOK {
-		logger.LogError(c.Request.Context(), fmt.Sprintf("Upstream returned status %d for %s", resp.StatusCode, videoURL))
+		bodyBytes, _ := io.ReadAll(resp.Body)
+		logger.LogError(c.Request.Context(), fmt.Sprintf("Upstream returned status %d for %s, body: %s",
+			resp.StatusCode, videoURL, string(bodyBytes)))
 		c.JSON(http.StatusBadGateway, gin.H{
 			"error": gin.H{
 				"message": fmt.Sprintf("Upstream service returned status %d", resp.StatusCode),
 				"type":    "server_error",
+				"details": string(bodyBytes),
 			},
 		})
 		return
 	}
 
+	// 复制响应头
 	for key, values := range resp.Header {
 		for _, value := range values {
 			c.Writer.Header().Add(key, value)
@@ -122,8 +192,12 @@ func VideoProxy(c *gin.Context) {
 
 	c.Writer.Header().Set("Cache-Control", "public, max-age=86400") // Cache for 24 hours
 	c.Writer.WriteHeader(resp.StatusCode)
-	_, err = io.Copy(c.Writer, resp.Body)
+
+	// 流式传输视频内容
+	written, err := io.Copy(c.Writer, resp.Body)
 	if err != nil {
 		logger.LogError(c.Request.Context(), fmt.Sprintf("Failed to stream video content: %s", err.Error()))
+	} else {
+		common.SysLog(fmt.Sprintf("[VideoProxy] 成功传输视频内容，大小: %d bytes", written))
 	}
 }

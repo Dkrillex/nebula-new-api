@@ -17,14 +17,14 @@ var awsModelIDMap = map[string]string{
 	"claude-opus-4-20250514":     "anthropic.claude-opus-4-20250514-v1:0",
 	"claude-opus-4-1-20250805":   "anthropic.claude-opus-4-1-20250805-v1:0",
 	// Nova models
-	"nova-micro-v1:0":   "amazon.nova-micro-v1:0",
-	"nova-lite-v1:0":    "amazon.nova-lite-v1:0",
-	"nova-pro-v1:0":     "amazon.nova-pro-v1:0",
-	"nova-premier-v1:0": "amazon.nova-premier-v1:0",
-	"nova-canvas-v1:0":  "amazon.nova-canvas-v1:0",
-	"nova-reel-v1:0":    "amazon.nova-reel-v1:0",
-	"nova-reel-v1:1":    "amazon.nova-reel-v1:1",
-	"nova-sonic-v1:0":   "amazon.nova-sonic-v1:0",
+	"nova-micro-v1:0":            "amazon.nova-micro-v1:0",
+	"nova-lite-v1:0":             "amazon.nova-lite-v1:0",
+	"nova-pro-v1:0":              "amazon.nova-pro-v1:0",
+	"nova-premier-v1:0":          "amazon.nova-premier-v1:0",
+	"nova-canvas-v1:0":           "amazon.nova-canvas-v1:0",
+	"nova-reel-v1:0":             "amazon.nova-reel-v1:0",
+	"nova-reel-v1:1":             "amazon.nova-reel-v1:1",
+	"nova-sonic-v1:0":            "amazon.nova-sonic-v1:0",
 	"claude-sonnet-4-5-20250929": "anthropic.claude-sonnet-4-5-20250929-v1:0",
 	"claude-haiku-4-5-20251001":  "anthropic.claude-haiku-4-5-20251001-v1:0",
 }
@@ -54,6 +54,11 @@ var awsModelCanCrossRegionMap = map[string]map[string]bool{
 	},
 	"anthropic.claude-3-5-haiku-20241022-v1:0": {
 		"us": true,
+	},
+	"anthropic.claude-haiku-4-5-20251001-v1:0": {
+		"us": true,
+		"ap": true,
+		"eu": true,
 	},
 	"anthropic.claude-3-7-sonnet-20250219-v1:0": {
 		"us": true,

@@ -7,16 +7,11 @@ import (
 	"io"
 	"net/http"
 	"one-api/common"
-	"one-api/constant"
 	"one-api/dto"
-	"one-api/model"
-	"one-api/relay/channel"
 	relaycommon "one-api/relay/common"
 	"time"
-	"one-api/service"
 
 	"github.com/gin-gonic/gin"
-	"github.com/pkg/errors"
 )
 
 // 豆包视频生成请求结构体
@@ -48,22 +43,17 @@ type taskQueryResponse struct {
 	Content struct {
 		VideoURL string `json:"video_url"`
 	} `json:"content"`
-	Seed            int    `json:"seed"`
-	Resolution      string `json:"resolution"`
-	Duration        int    `json:"duration"`
-	Ratio           string `json:"ratio"`
-	FramesPerSecond int    `json:"framespersecond"`
+	FramesPerSecond int `json:"framespersecond"`
 	Usage           struct {
 		CompletionTokens int `json:"completion_tokens"`
 		TotalTokens      int `json:"total_tokens"`
 	} `json:"usage"`
-	CreatedAt      int64  `json:"created_at"`
-	UpdatedAt      int64  `json:"updated_at"`
-	Seed           int    `json:"seed"`
-	Resolution     string `json:"resolution"`
-	Duration       int    `json:"duration"`
-	Ratio          string `json:"ratio"`
-	FramePerSecond int    `json:"framespersecond"`
+	CreatedAt  int64  `json:"created_at"`
+	UpdatedAt  int64  `json:"updated_at"`
+	Seed       int    `json:"seed"`
+	Resolution string `json:"resolution"`
+	Duration   int    `json:"duration"`
+	Ratio      string `json:"ratio"`
 	// 错误信息
 	Error *struct {
 		Code    string `json:"code"`
@@ -91,10 +81,36 @@ func (a *TaskAdaptor) Init(info *relaycommon.RelayInfo) {
 	a.apiKey = info.ApiKey
 }
 
-// ValidateRequestAndSetAction parses body, validates fields and sets default action.
 func (a *TaskAdaptor) ValidateRequestAndSetAction(c *gin.Context, info *relaycommon.RelayInfo) (taskErr *dto.TaskError) {
-	// Accept only POST /v1/video/generations as "generate" action.
-	return relaycommon.ValidateBasicTaskRequest(c, info, constant.TaskActionGenerate)
+	common.SysLog("[Doubao] ValidateRequestAndSetAction - 开始验证请求")
+
+	// 从上下文中获取已解析的请求，如果不存在则解析
+	var request *dto.VideoRequest
+	if req, exists := c.Get("task_request"); exists {
+		request = req.(*dto.VideoRequest)
+	} else {
+		// 解析请求体
+		request = &dto.VideoRequest{}
+		if err := c.ShouldBindJSON(request); err != nil {
+			common.SysError(fmt.Sprintf("[Doubao] 解析请求失败: %v", err))
+			return &dto.TaskError{
+				Code:    "invalid_request",
+				Message: "请求格式错误",
+			}
+		}
+		c.Set("task_request", request)
+	}
+
+	// 验证模型
+	if request.Model == "" {
+		return &dto.TaskError{
+			Code:    "invalid_request",
+			Message: "模型参数不能为空",
+		}
+	}
+
+	common.SysLog("[Doubao] ValidateRequestAndSetAction - 验证通过")
+	return nil
 }
 
 // BuildRequestURL constructs the upstream URL.
@@ -457,10 +473,8 @@ func convertVideoRequestToDoubaoPayload(request *dto.VideoRequest) *requestPaylo
 					Type: "text",
 					Text: "视频生成请求", // 默认文本
 				},
-			})
+			}
 		}
-	}
-
 		// 提取 callback_url
 		if callbackURL, ok := request.Metadata["callback_url"].(string); ok && callbackURL != "" {
 			payload.CallbackURL = callbackURL

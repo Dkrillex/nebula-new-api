@@ -49,6 +49,7 @@ func testChannel(channel *model.Channel, testModel string, endpointType string) 
 		constant.ChannelTypeJimeng,
 		constant.ChannelTypeDoubaoVideo,
 		constant.ChannelTypeVidu,
+		constant.ChannelTypeSora,
 	}
 	if lo.Contains(unsupportedTestChannelTypes, channel.Type) {
 		channelTypeName := constant.GetChannelTypeName(channel.Type)
@@ -71,6 +72,14 @@ func testChannel(channel *model.Channel, testModel string, endpointType string) 
 			if testModel == "" {
 				testModel = "gpt-4o-mini"
 			}
+		}
+	}
+
+	// 检查是否为视频生成模型（这些模型不支持标准的 chat completions 测试）
+	if common.IsVideoGenerationModel(testModel) {
+		channelTypeName := constant.GetChannelTypeName(channel.Type)
+		return testResult{
+			localErr: fmt.Errorf("%s channel with video model %s test is not supported", channelTypeName, testModel),
 		}
 	}
 
