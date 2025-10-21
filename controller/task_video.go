@@ -75,21 +75,35 @@ func updateVideoSingleTask(ctx context.Context, adaptor channel.TaskAdaptor, cha
 		logger.LogError(ctx, fmt.Sprintf("Task %s not found in taskM", taskId))
 		return fmt.Errorf("task %s not found", taskId)
 	}
+
+	// 打印轮询请求信息
+	logger.LogInfo(ctx, fmt.Sprintf("[VideoTaskPoll] 开始轮询任务 - TaskID: %s, Platform: %s, Status: %s",
+		taskId, task.Platform, task.Status))
+
 	resp, err := adaptor.FetchTask(baseURL, channel.Key, map[string]any{
 		"task_id": taskId,
 		"action":  task.Action,
 	})
 	if err != nil {
+		logger.LogError(ctx, fmt.Sprintf("[VideoTaskPoll] 调用厂商接口失败 - TaskID: %s, Error: %v", taskId, err))
 		return fmt.Errorf("fetchTask failed for task %s: %w", taskId, err)
 	}
 	//if resp.StatusCode != http.StatusOK {
 	//return fmt.Errorf("get Video Task status code: %d", resp.StatusCode)
 	//}
 	defer resp.Body.Close()
+
+	logger.LogInfo(ctx, fmt.Sprintf("[VideoTaskPoll] 厂商接口响应 - TaskID: %s, StatusCode: %d", taskId, resp.StatusCode))
+
 	responseBody, err := io.ReadAll(resp.Body)
 	if err != nil {
+		logger.LogError(ctx, fmt.Sprintf("[VideoTaskPoll] 读取响应失败 - TaskID: %s, Error: %v", taskId, err))
 		return fmt.Errorf("readAll failed for task %s: %w", taskId, err)
 	}
+
+	// 打印厂商返回的响应数据（截断过长内容）
+	truncatedResp := common.TruncateBase64Content(string(responseBody))
+	logger.LogInfo(ctx, fmt.Sprintf("[VideoTaskPoll] 厂商返回数据 - TaskID: %s, Response: %s", taskId, truncatedResp))
 
 	taskResult := &relaycommon.TaskInfo{}
 	// try parse as New API response format
@@ -102,9 +116,13 @@ func updateVideoSingleTask(ctx context.Context, adaptor channel.TaskAdaptor, cha
 		taskResult.Progress = t.Progress
 		taskResult.Reason = t.FailReason
 		task.Data = t.Data
+		logger.LogInfo(ctx, fmt.Sprintf("[VideoTaskPoll] 解析为NewAPI格式 - TaskID: %s, Status: %s", taskId, taskResult.Status))
 	} else if taskResult, err = adaptor.ParseTaskResult(responseBody); err != nil {
+		logger.LogError(ctx, fmt.Sprintf("[VideoTaskPoll] 解析任务结果失败 - TaskID: %s, Error: %v", taskId, err))
 		return fmt.Errorf("parseTaskResult failed for task %s: %w", taskId, err)
 	} else {
+		logger.LogInfo(ctx, fmt.Sprintf("[VideoTaskPoll] 解析任务结果成功 - TaskID: %s, Status: %s, TotalTokens: %d",
+			taskId, taskResult.Status, taskResult.TotalTokens))
 		task.Data = redactVideoResponseBody(responseBody)
 		//// 保留原有的token信息，合并新的响应数据
 		//var existingData map[string]interface{}
@@ -143,52 +161,66 @@ func updateVideoSingleTask(ctx context.Context, adaptor channel.TaskAdaptor, cha
 
 	now := time.Now().Unix()
 	if taskResult.Status == "" {
+		logger.LogError(ctx, fmt.Sprintf("[VideoTaskPoll] 任务状态为空 - TaskID: %s", taskId))
 		return fmt.Errorf("task %s status is empty", taskId)
 	}
+
+	// 记录状态变化
+	oldStatus := task.Status
 	task.Status = model.TaskStatus(taskResult.Status)
+	if oldStatus != task.Status {
+		logger.LogInfo(ctx, fmt.Sprintf("[VideoTaskPoll] 任务状态变化 - TaskID: %s, %s → %s",
+			taskId, oldStatus, task.Status))
+	}
+
 	switch taskResult.Status {
-	case model.TaskStatusSubmitted:
+	case string(model.TaskStatusSubmitted):
 		task.Progress = "10%"
-	case model.TaskStatusQueued:
+	case string(model.TaskStatusQueued):
 		task.Progress = "20%"
-	case model.TaskStatusInProgress:
+	case string(model.TaskStatusInProgress):
 		task.Progress = "30%"
 		if task.StartTime == 0 {
 			task.StartTime = now
 		}
-	case model.TaskStatusSuccess:
+	case string(model.TaskStatusSuccess):
 		task.Progress = "100%"
 		if task.FinishTime == 0 {
 			task.FinishTime = now
 		}
 		task.FailReason = taskResult.Url
 
+		logger.LogInfo(ctx, fmt.Sprintf("[VideoTaskPoll] ✅ 任务成功 - TaskID: %s, VideoURL: %s", taskId, taskResult.Url))
+
 		// 处理任务成功后的实际token消耗和补扣费
 		if taskResult.TotalTokens > 0 {
-			logger.LogInfo(ctx, fmt.Sprintf("Task %s succeeded, actual tokens consumed: %d", task.TaskID, taskResult.TotalTokens))
+			logger.LogInfo(ctx, fmt.Sprintf("[VideoTaskPoll] Task %s succeeded, actual tokens consumed: %d", task.TaskID, taskResult.TotalTokens))
 
 			// 根据实际token消耗进行补扣费处理
 			if err := handleVideoTaskBilling(ctx, task, taskResult, channel); err != nil {
-				logger.LogError(ctx, fmt.Sprintf("Failed to handle billing for task %s: %v", task.TaskID, err))
+				logger.LogError(ctx, fmt.Sprintf("[VideoTaskPoll] Failed to handle billing for task %s: %v", task.TaskID, err))
 			}
 		} else {
-			logger.LogInfo(ctx, fmt.Sprintf("Task %s succeeded but no token usage reported", task.TaskID))
+			logger.LogInfo(ctx, fmt.Sprintf("[VideoTaskPoll] Task %s succeeded but no token usage reported", task.TaskID))
 		}
-	case model.TaskStatusFailure:
+	case string(model.TaskStatusFailure):
 		task.Status = model.TaskStatusFailure
 		task.Progress = "100%"
 		if task.FinishTime == 0 {
 			task.FinishTime = now
 		}
 		task.FailReason = taskResult.Reason
-		logger.LogInfo(ctx, fmt.Sprintf("Task %s failed: %s", task.TaskID, task.FailReason))
+		logger.LogError(ctx, fmt.Sprintf("[VideoTaskPoll] ❌ 任务失败 - TaskID: %s, Reason: %s", task.TaskID, task.FailReason))
 		quota := task.Quota
 		if quota != 0 {
+			logger.LogInfo(ctx, fmt.Sprintf("[VideoTaskPoll] 任务失败退费 - TaskID: %s, Quota: %d", task.TaskID, quota))
 			if err := model.IncreaseUserQuota(task.UserId, quota, false); err != nil {
 				logger.LogError(ctx, "Failed to increase user quota: "+err.Error())
 			}
 			logContent := fmt.Sprintf("Video async task failed %s, refund %s", task.TaskID, logger.LogQuota(quota))
 			model.RecordLog(task.UserId, model.LogTypeSystem, logContent)
+		} else {
+			logger.LogInfo(ctx, fmt.Sprintf("[VideoTaskPoll] 任务失败无需退费 - TaskID: %s, Quota: 0 (未预扣费)", task.TaskID))
 		}
 	default:
 		return fmt.Errorf("unknown task status %s for task %s", taskResult.Status, taskId)

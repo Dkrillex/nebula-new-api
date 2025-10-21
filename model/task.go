@@ -12,12 +12,12 @@ type TaskStatus string
 
 const (
 	TaskStatusNotStart   TaskStatus = "NOT_START"
-	TaskStatusSubmitted             = "SUBMITTED"
-	TaskStatusQueued                = "QUEUED"
-	TaskStatusInProgress            = "IN_PROGRESS"
-	TaskStatusFailure               = "FAILURE"
-	TaskStatusSuccess               = "SUCCESS"
-	TaskStatusUnknown               = "UNKNOWN"
+	TaskStatusSubmitted  TaskStatus = "SUBMITTED"
+	TaskStatusQueued     TaskStatus = "QUEUED"
+	TaskStatusInProgress TaskStatus = "IN_PROGRESS"
+	TaskStatusFailure    TaskStatus = "FAILURE"
+	TaskStatusSuccess    TaskStatus = "SUCCESS"
+	TaskStatusUnknown    TaskStatus = "UNKNOWN"
 )
 
 type Task struct {
@@ -38,7 +38,9 @@ type Task struct {
 	Progress   string                `json:"progress" gorm:"type:varchar(20);index"`
 	Properties Properties            `json:"properties" gorm:"type:json"`
 
-	Data json.RawMessage `json:"data" gorm:"type:json"`
+	Data      json.RawMessage `json:"data" gorm:"type:json"`
+	ModelName string          `json:"model_name" gorm:"type:varchar(64)"` // 模型名称
+	ApiKey    string          `json:"api_key" gorm:"type:varchar(128)"`   // 密钥（用于日志记录）
 }
 
 func (t *Task) SetData(data any) {

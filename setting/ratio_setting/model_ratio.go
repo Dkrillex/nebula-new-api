@@ -292,7 +292,8 @@ var defaultModelPrice = map[string]float64{
 	"mj_upscale":              0.05,
 	"swap_face":               0.05,
 	"mj_upload":               0.05,
-	"sora-2":                  0.3,
+	"sora-2":                  0.1, // $0.1/秒，按秒数乘以此价格
+	"sora-2-landscape":        0.1, // 横屏模式，同样$0.1/秒
 	"sora-2-pro":              0.5,
 }
 

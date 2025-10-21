@@ -16,6 +16,7 @@ import (
 	"one-api/relay/helper"
 	"one-api/service"
 	"one-api/types"
+	"strings"
 
 	"github.com/gin-gonic/gin"
 )
@@ -64,8 +65,25 @@ func RelayTaskSubmit(c *gin.Context, info *relaycommon.RelayInfo) (taskErr *dto.
 	}
 
 	quota := priceData.ShouldPreConsumedQuota
-	// 如果预扣费为0或过小，设置一个合理的默认值（参考Midjourney的预扣费逻辑）
-	if quota == 0 || quota < 1000 { // 小于1000 quota（约0.002美元）认为过小
+
+	// 尝试从请求参数中获取视频秒数（sora-2按秒计费）
+	videoSeconds := 4 // 默认4秒
+	if secondsVal, exists := c.Get("video_seconds"); exists {
+		if seconds, ok := secondsVal.(int); ok && seconds > 0 {
+			videoSeconds = seconds
+		}
+	}
+
+	// 打印请求参数用于调试
+	common.SysLog(fmt.Sprintf("[RelayTaskSubmit] 接收到的参数: model=%s, videoSeconds=%d, platform=%s, action=%s",
+		modelName, videoSeconds, platform, info.Action))
+
+	// sora-2系列模型按秒计费
+	if strings.HasPrefix(modelName, "sora-2") && priceData.ModelPrice > 0 {
+		// 按秒计费：价格 * 秒数
+		quota = int(priceData.ModelPrice * float64(videoSeconds) * common.QuotaPerUnit * priceData.GroupRatioInfo.GroupRatio)
+		common.SysLog(fmt.Sprintf("Sora-2 video task billing: %d seconds × $%.2f/sec = quota %d", videoSeconds, priceData.ModelPrice, quota))
+	} else if quota == 0 || quota < 1000 { // 其他模型：如果预扣费为0或过小，设置默认值
 		// 视频任务设置一个基础的预扣费，避免余额检查失效
 		quota = int(0.1 * common.QuotaPerUnit) // 默认0.1美元的预扣费
 		common.SysLog(fmt.Sprintf("Video task pre-consume quota is too small (%d), using default value: %d", priceData.ShouldPreConsumedQuota, quota))
@@ -75,7 +93,7 @@ func RelayTaskSubmit(c *gin.Context, info *relaycommon.RelayInfo) (taskErr *dto.
 	hasUserGroupRatio := priceData.GroupRatioInfo.GroupSpecialRatio != 0
 	userGroupRatio := priceData.GroupRatioInfo.GroupSpecialRatio
 
-	// 检查用户余额是否足够并进行预扣费（参考Midjourney的预扣费逻辑）
+	// 检查用户余额是否充足（不进行预扣费，等任务成功后再扣费）
 	userQuota, err := model.GetUserQuota(info.UserId, false)
 	if err != nil {
 		taskErr = service.TaskErrorWrapper(err, "get_user_quota_failed", http.StatusInternalServerError)
@@ -86,49 +104,9 @@ func RelayTaskSubmit(c *gin.Context, info *relaycommon.RelayInfo) (taskErr *dto.
 		return
 	}
 
-	// 先进行预扣费
-	if quota > 0 {
-		err := service.PostConsumeQuota(info, quota, 0, true)
-		if err != nil {
-			taskErr = service.TaskErrorWrapper(err, "pre_consume_quota_failed", http.StatusInternalServerError)
-			return
-		}
-		// 记录预扣费日志
-		tokenName := c.GetString("token_name")
-		var logContent string
-		if modelPrice == -1 {
-			logContent = fmt.Sprintf("模型按量计费，预扣费token: %d，分组倍率 %.2f，操作 %s", common.Max(1, common.PreConsumedQuota), groupRatio, info.Action)
-		} else {
-			logContent = fmt.Sprintf("模型固定价格 %.2f，分组倍率 %.2f，操作 %s", modelPrice, groupRatio, info.Action)
-		}
-		other := make(map[string]interface{})
-		other["model_price"] = modelPrice
-		other["group_ratio"] = groupRatio
-		if hasUserGroupRatio {
-			other["user_group_ratio"] = userGroupRatio
-		}
-		other["video_task"] = true
-		other["billing_type"] = "pre_consume"
-		if modelPrice == -1 {
-			other["model_ratio"] = 1.0
-			other["completion_ratio"] = 1.0
-		} else {
-			other["model_ratio"] = 0.0
-			other["completion_ratio"] = 0.0
-		}
-		model.RecordConsumeLog(c, info.UserId, model.RecordConsumeLogParams{
-			ChannelId: info.ChannelId,
-			ModelName: modelName,
-			TokenName: tokenName,
-			Quota:     quota,
-			Content:   logContent,
-			TokenId:   info.TokenId,
-			Group:     info.UsingGroup,
-			Other:     other,
-		})
-		model.UpdateUserUsedQuotaAndRequestCount(info.UserId, quota)
-		model.UpdateChannelUsedQuota(info.ChannelId, quota)
-	}
+	// 视频任务不进行预扣费，只做余额检查
+	// 等任务成功后，根据实际生成的时长（metadata.n_seconds）进行扣费
+	common.SysLog(fmt.Sprintf("视频任务提交成功，不进行预扣费。预估费用: quota=%d (仅用于余额检查)", quota))
 
 	if info.OriginTaskID != "" {
 		originTask, exist, err := model.GetByTaskId(info.UserId, info.OriginTaskID)
@@ -161,104 +139,63 @@ func RelayTaskSubmit(c *gin.Context, info *relaycommon.RelayInfo) (taskErr *dto.
 	// build body
 	requestBody, err := adaptor.BuildRequestBody(c, info)
 	if err != nil {
-		// 请求构建失败，返还预扣费
-		if quota > 0 {
-			common.SysLog(fmt.Sprintf("Request build failed, returning pre-consumed quota: %d", quota))
-			err := service.PostConsumeQuota(info, -quota, 0, true)
-			if err != nil {
-				common.SysLog("error returning pre-consumed quota: " + err.Error())
-			}
-		}
+		// 请求构建失败（无需返还预扣费，因为没有预扣费）
 		taskErr = service.TaskErrorWrapper(err, "build_request_failed", http.StatusInternalServerError)
 		return
 	}
+
+	// 打印构建的请求体用于调试（截断过长的base64内容）
+	if bodyBytes, err := io.ReadAll(requestBody); err == nil {
+		truncatedBody := common.TruncateBase64Content(string(bodyBytes))
+		common.SysLog(fmt.Sprintf("[RelayTaskSubmit] 构建的请求体: %s", truncatedBody))
+		// 重新创建reader，因为已经读取过了
+		requestBody = bytes.NewReader(bodyBytes)
+	}
+
 	// do request
 	resp, err := adaptor.DoRequest(c, info, requestBody)
 	if err != nil {
-		// 请求发送失败，返还预扣费
-		if quota > 0 {
-			common.SysLog(fmt.Sprintf("Request send failed, returning pre-consumed quota: %d", quota))
-			err := service.PostConsumeQuota(info, -quota, 0, true)
-			if err != nil {
-				common.SysLog("error returning pre-consumed quota: " + err.Error())
-			}
-		}
+		// 请求发送失败（无需返还预扣费）
 		taskErr = service.TaskErrorWrapper(err, "do_request_failed", http.StatusInternalServerError)
 		return
 	}
+
+	// 打印响应状态码
+	common.SysLog(fmt.Sprintf("[RelayTaskSubmit] 收到响应: StatusCode=%d", resp.StatusCode))
 	// handle response - 接受 200 和 201 状态码（201 Created 用于资源创建）
 	if resp != nil && resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated {
 		responseBody, _ := io.ReadAll(resp.Body)
 		truncatedResponseBody := common.TruncateBase64Content(string(responseBody))
-		// HTTP请求失败，返还预扣费
-		if quota > 0 {
-			common.SysLog(fmt.Sprintf("HTTP request failed, returning pre-consumed quota: %d", quota))
-			err := service.PostConsumeQuota(info, -quota, 0, true)
-			if err != nil {
-				common.SysLog("error returning pre-consumed quota: " + err.Error())
-			}
-			// 记录返还日志
-			tokenName := c.GetString("token_name")
-			logContent := fmt.Sprintf("HTTP请求失败，返还预扣费: %d", quota)
-			other := make(map[string]interface{})
-			other["video_task"] = true
-			other["billing_type"] = "refund"
-			other["task_platform"] = platform
-			other["task_action"] = info.Action
-			model.RecordConsumeLog(c, info.UserId, model.RecordConsumeLogParams{
-				ChannelId: info.ChannelId,
-				ModelName: modelName,
-				TokenName: tokenName,
-				Quota:     -quota,
-				Content:   logContent,
-				TokenId:   info.TokenId,
-				Group:     info.UsingGroup,
-				Other:     other,
-			})
-		}
+		// HTTP请求失败（无需返还预扣费）
 		taskErr = service.TaskErrorWrapper(fmt.Errorf("%s", truncatedResponseBody), "fail_to_fetch_task", resp.StatusCode)
 		return
 	}
 
 	taskID, taskData, taskErr := adaptor.DoResponse(c, resp, info)
 	if taskErr != nil {
-		// 任务提交失败，返还预扣费
-		if quota > 0 {
-			common.SysLog(fmt.Sprintf("Task submission failed, returning pre-consumed quota: %d", quota))
-			err := service.PostConsumeQuota(info, -quota, 0, true)
-			if err != nil {
-				common.SysLog("error returning pre-consumed quota: " + err.Error())
-			}
-			// 记录返还日志
-			tokenName := c.GetString("token_name")
-			logContent := fmt.Sprintf("任务提交失败，返还预扣费: %d", quota)
-			other := make(map[string]interface{})
-			other["video_task"] = true
-			other["billing_type"] = "refund"
-			other["task_platform"] = platform
-			other["task_action"] = info.Action
-			model.RecordConsumeLog(c, info.UserId, model.RecordConsumeLogParams{
-				ChannelId: info.ChannelId,
-				ModelName: modelName,
-				TokenName: tokenName,
-				Quota:     -quota,
-				Content:   logContent,
-				TokenId:   info.TokenId,
-				Group:     info.UsingGroup,
-				Other:     other,
-			})
-		}
+		// 任务提交失败（无需返还预扣费）
 		return
 	}
+
+	// 打印解析后的任务信息
+	truncatedTaskData := common.TruncateBase64Content(string(taskData))
+	common.SysLog(fmt.Sprintf("[RelayTaskSubmit] 解析响应成功: taskID=%s, taskData=%s", taskID, truncatedTaskData))
+
 	info.ConsumeQuota = true
+
+	// 提前获取token信息（后面会用到）
+	tokenName := c.GetString("token_name")
+	tokenId := c.GetInt("token_id")
 
 	// insert task
 	task := model.InitTask(platform, info)
 	task.TaskID = taskID
-	task.Quota = quota // 记录预扣费金额
+	task.Quota = 0 // 不记录预扣费，等任务成功后根据实际情况扣费
 	task.Action = info.Action
+	task.ModelName = modelName // 保存模型名称到表字段
+	task.ApiKey = tokenName    // 保存token名称到api_key字段（用于日志记录）
 
-	// 保存token信息到任务数据中，用于后续补扣费日志记录
+	// 保存token信息和计费相关信息到任务数据中，用于后续扣费日志记录
 	var taskDataMap map[string]interface{}
 	if taskData != nil {
 		// 如果已有数据，先解析
@@ -270,19 +207,30 @@ func RelayTaskSubmit(c *gin.Context, info *relaycommon.RelayInfo) (taskErr *dto.
 		taskDataMap = make(map[string]interface{})
 	}
 
-	// 添加token信息
-	tokenName := c.GetString("token_name")
-	tokenId := c.GetInt("token_id")
+	// 添加token信息到taskDataMap
 	taskDataMap["token_name"] = tokenName
 	taskDataMap["token_id"] = tokenId
 
+	// 添加计费相关信息（用于后续扣费）
+	taskDataMap["model_name"] = modelName
+	taskDataMap["model_price"] = modelPrice
+	taskDataMap["group_ratio"] = groupRatio
+	if hasUserGroupRatio {
+		taskDataMap["user_group_ratio"] = userGroupRatio
+	}
+	taskDataMap["requested_seconds"] = videoSeconds // 保存请求的秒数
+	taskDataMap["billing_pending"] = true           // 标记待扣费
+
 	// 记录调试信息
-	common.SysLog(fmt.Sprintf("[RelayTaskSubmit] 保存token信息: token_name=%s, token_id=%d", tokenName, tokenId))
+	common.SysLog(fmt.Sprintf("[RelayTaskSubmit] 保存任务信息: token_name=%s, token_id=%d, model=%s, requested_seconds=%d, model_price=%.2f, group_ratio=%.2f",
+		tokenName, tokenId, modelName, videoSeconds, modelPrice, groupRatio))
 
 	// 重新序列化为JSON
 	if updatedData, err := json.Marshal(taskDataMap); err == nil {
 		task.Data = updatedData
-		common.SysLog("[RelayTaskSubmit] 任务数据已更新，包含token信息")
+		// 打印最终保存的完整数据（方便调试）
+		truncatedData := common.TruncateBase64Content(string(updatedData))
+		common.SysLog(fmt.Sprintf("[RelayTaskSubmit] 任务数据已更新，完整数据: %s", truncatedData))
 	} else {
 		common.SysError(fmt.Sprintf("[RelayTaskSubmit] 序列化任务数据失败: %v", err))
 		// 如果序列化失败，至少保存原始数据
@@ -294,6 +242,9 @@ func RelayTaskSubmit(c *gin.Context, info *relaycommon.RelayInfo) (taskErr *dto.
 		taskErr = service.TaskErrorWrapper(err, "insert_task_failed", http.StatusInternalServerError)
 		return
 	}
+
+	// 不记录任务提交日志，等任务成功后再扣费并记录日志
+	common.SysLog(fmt.Sprintf("[RelayTaskSubmit] 任务提交完成: TaskID=%s, 不记录日志，等待轮询成功后扣费", taskID))
 
 	return nil
 }
@@ -432,38 +383,122 @@ func videoFetchByIDRespBodyBuilder(c *gin.Context) (respBody []byte, taskResp *d
 
 	common.SysLog(fmt.Sprintf("[VideoTask] 找到任务记录: ID=%d, TaskID=%s, Status=%s, Platform=%s",
 		originTask.ID, originTask.TaskID, originTask.Status, originTask.Platform))
+	common.SysLog(fmt.Sprintf("[VideoTask] 任务表字段: ModelName=%s, ApiKey(TokenName)=%s, Quota=%d",
+		originTask.ModelName, originTask.ApiKey, originTask.Quota))
 
-	// 检查任务是否成功，如果成功且是豆包火山平台，需要处理实际token消耗和补扣费
-	if originTask.Status == model.TaskStatusSuccess && originTask.Platform == "45" {
-		common.SysLog("[VideoTask] 检测到豆包火山任务成功，开始处理实际token消耗")
+	// 检查任务是否成功，如果成功需要进行扣费处理
+	if originTask.Status == model.TaskStatusSuccess {
+		common.SysLog("[VideoTask] 检测到视频任务成功，开始处理扣费")
 
 		// 获取渠道信息
 		channel, err := model.GetChannelById(originTask.ChannelId, true)
 		if err != nil {
 			common.SysError(fmt.Sprintf("[VideoTask] 获取渠道信息失败: %v", err))
 		} else {
-			// 解析任务数据中的usage信息
+			// 解析任务数据
 			if originTask.Data != nil {
+				// 打印原始任务数据用于调试
+				truncatedData := common.TruncateBase64Content(string(originTask.Data))
+				common.SysLog(fmt.Sprintf("[VideoTask] 任务原始数据: %s", truncatedData))
+
 				var taskData map[string]interface{}
 				if err := json.Unmarshal(originTask.Data, &taskData); err == nil {
-					// 检查是否有usage信息
-					if usageData, ok := taskData["usage"].(map[string]interface{}); ok {
-						if totalTokens, exists := usageData["total_tokens"].(float64); exists && totalTokens > 0 {
-							common.SysLog(fmt.Sprintf("[VideoTask] 发现实际token消耗: %d", int(totalTokens)))
+					// 检查是否已经处理过扣费
+					if billingProcessed, ok := taskData["billing_processed"].(bool); ok && billingProcessed {
+						common.SysLog("[VideoTask] 任务已处理过扣费，跳过")
+					} else {
+						// 处理不同平台的扣费逻辑
 
-							// 构建TaskInfo用于补扣费处理
-							taskResult := &relaycommon.TaskInfo{
-								TaskID:      originTask.TaskID,
-								Status:      "SUCCESS",
-								TotalTokens: int(totalTokens),
-								Url:         originTask.FailReason, // 视频URL存储在FailReason字段中
+						// 1. 豆包火山平台：按token计费
+						if originTask.Platform == "45" {
+							if usageData, ok := taskData["usage"].(map[string]interface{}); ok {
+								if totalTokens, exists := usageData["total_tokens"].(float64); exists && totalTokens > 0 {
+									common.SysLog(fmt.Sprintf("[VideoTask] 豆包平台-发现实际token消耗: %d", int(totalTokens)))
+
+									taskResult := &relaycommon.TaskInfo{
+										TaskID:      originTask.TaskID,
+										Status:      "SUCCESS",
+										TotalTokens: int(totalTokens),
+										Url:         originTask.FailReason,
+									}
+
+									if err := handleVideoTaskBillingInQuery(c, originTask, taskResult, channel); err != nil {
+										common.SysError(fmt.Sprintf("[VideoTask] 豆包平台扣费处理失败: %v", err))
+									} else {
+										common.SysLog("[VideoTask] 豆包平台扣费处理完成")
+									}
+								}
+							}
+						} else {
+							// 2. sora-2等其他平台：按实际秒数计费
+							// Azure返回的n_seconds在根层级，不在metadata中
+							actualSeconds := 0
+
+							// 先尝试从根层级获取n_seconds
+							if nSeconds, exists := taskData["n_seconds"].(float64); exists && nSeconds > 0 {
+								actualSeconds = int(nSeconds)
+							} else if nSecondsInt, exists := taskData["n_seconds"].(int); exists && nSecondsInt > 0 {
+								actualSeconds = nSecondsInt
 							}
 
-							// 调用补扣费处理逻辑
-							if err := handleVideoTaskBillingInQuery(c, originTask, taskResult, channel); err != nil {
-								common.SysError(fmt.Sprintf("[VideoTask] 补扣费处理失败: %v", err))
+							// 如果根层级没有，再尝试从metadata中获取
+							if actualSeconds == 0 {
+								if metadata, ok := taskData["metadata"].(map[string]interface{}); ok {
+									if nSeconds, exists := metadata["n_seconds"].(float64); exists && nSeconds > 0 {
+										actualSeconds = int(nSeconds)
+									}
+								}
+							}
+
+							// 如果找到了实际秒数，进行扣费
+							if actualSeconds > 0 {
+								// 获取请求的秒数用于对比
+								requestedSeconds := 0
+								if rs, ok := taskData["requested_seconds"].(float64); ok {
+									requestedSeconds = int(rs)
+								} else if rs, ok := taskData["requested_seconds"].(int); ok {
+									requestedSeconds = rs
+								}
+
+								common.SysLog(fmt.Sprintf("[VideoTask] Sora-2平台-实际生成秒数: %d, 请求秒数: %d", actualSeconds, requestedSeconds))
+
+								// 警告：时长不匹配
+								if requestedSeconds > 0 && actualSeconds != requestedSeconds {
+									common.SysLog(fmt.Sprintf("⚠️ [VideoTask] 时长不匹配！请求%d秒，实际生成%d秒", requestedSeconds, actualSeconds))
+								}
+
+								taskResult := &relaycommon.TaskInfo{
+									TaskID:      originTask.TaskID,
+									Status:      "SUCCESS",
+									TotalTokens: actualSeconds, // 使用秒数作为token数
+									Url:         originTask.FailReason,
+								}
+
+								if err := handleVideoTaskBillingBySeconds(c, originTask, taskResult, channel, actualSeconds); err != nil {
+									common.SysError(fmt.Sprintf("[VideoTask] Sora-2平台扣费处理失败: %v", err))
+								} else {
+									common.SysLog("[VideoTask] Sora-2平台扣费处理完成")
+								}
 							} else {
-								common.SysLog("[VideoTask] 补扣费处理完成")
+								common.SysError("[VideoTask] 未找到n_seconds字段（尝试了根层级和metadata）")
+								// 使用请求的秒数作为兜底（避免不扣费）
+								if requestedSeconds, ok := taskData["requested_seconds"].(float64); ok && requestedSeconds > 0 {
+									fallbackSeconds := int(requestedSeconds)
+									common.SysLog(fmt.Sprintf("⚠️ [VideoTask] 使用请求秒数作为兜底扣费: %d秒", fallbackSeconds))
+
+									taskResult := &relaycommon.TaskInfo{
+										TaskID:      originTask.TaskID,
+										Status:      "SUCCESS",
+										TotalTokens: fallbackSeconds,
+										Url:         originTask.FailReason,
+									}
+
+									if err := handleVideoTaskBillingBySeconds(c, originTask, taskResult, channel, fallbackSeconds); err != nil {
+										common.SysError(fmt.Sprintf("[VideoTask] 兜底扣费失败: %v", err))
+									}
+								} else {
+									common.SysError("[VideoTask] 无法获取扣费依据，任务可能未扣费！")
+								}
 							}
 						}
 					}
@@ -624,10 +659,11 @@ func handleVideoTaskBillingInQuery(c *gin.Context, task *model.Task, taskResult 
 		return fmt.Errorf("failed to get user %d: %v", task.UserId, err)
 	}
 
-	// 获取原始模型名称
-	var modelName string
-	if task.Data != nil {
-		// 尝试从任务数据中提取原始模型名称
+	// 优先从表字段获取模型名称
+	modelName := task.ModelName
+
+	// 如果表字段为空，尝试从任务数据中提取（兼容旧数据）
+	if modelName == "" && task.Data != nil {
 		var taskData map[string]interface{}
 		if err := json.Unmarshal(task.Data, &taskData); err == nil {
 			if model, ok := taskData["model"].(string); ok && model != "" {
@@ -636,12 +672,12 @@ func handleVideoTaskBillingInQuery(c *gin.Context, task *model.Task, taskResult 
 		}
 	}
 
-	// 如果没有找到模型名称，使用平台-动作组合作为备选
+	// 如果仍然没有找到模型名称，使用平台-动作组合作为备选
 	if modelName == "" {
 		modelName = fmt.Sprintf("%s-%s", task.Platform, task.Action)
 	}
 
-	common.SysLog(fmt.Sprintf("[VideoTask] Task %s using model name: %s", task.TaskID, modelName))
+	common.SysLog(fmt.Sprintf("[VideoTask] Task %s using model name: %s (from table: %s)", task.TaskID, modelName, task.ModelName))
 
 	// 豆包火山视频模型计费逻辑：输入免费，按输出计费
 	// 根据实际token消耗重新计算quota
@@ -823,5 +859,149 @@ func updateExistingConsumeLog(task *model.Task, taskResult *relaycommon.TaskInfo
 	}
 
 	common.SysLog(fmt.Sprintf("[VideoTask] Successfully updated existing log for task %s", task.TaskID))
+	return nil
+}
+
+// handleVideoTaskBillingBySeconds 处理按秒计费的视频任务（sora-2等模型）
+func handleVideoTaskBillingBySeconds(c *gin.Context, task *model.Task, taskResult *relaycommon.TaskInfo, channel *model.Channel, actualSeconds int) error {
+	common.SysLog(fmt.Sprintf("[VideoTask] 开始处理按秒计费，任务ID: %s，实际秒数: %d", task.TaskID, actualSeconds))
+
+	// 获取用户信息
+	user, err := model.GetUserById(task.UserId, false)
+	if err != nil {
+		return fmt.Errorf("failed to get user %d: %v", task.UserId, err)
+	}
+
+	// 优先从表字段获取模型名称和token名称
+	modelName := task.ModelName
+	tokenName := task.ApiKey // ApiKey字段存储的是token名称
+
+	// 从任务数据中获取其他计费信息
+	var taskData map[string]interface{}
+	var modelPrice float64
+	var groupRatio float64
+	var tokenId int
+
+	if task.Data != nil {
+		if err := json.Unmarshal(task.Data, &taskData); err == nil {
+			if price, ok := taskData["model_price"].(float64); ok {
+				modelPrice = price
+			}
+			if ratio, ok := taskData["group_ratio"].(float64); ok {
+				groupRatio = ratio
+			}
+			if tid, ok := taskData["token_id"].(float64); ok {
+				tokenId = int(tid)
+			}
+		}
+	}
+
+	// 如果表字段为空，尝试从JSON获取（兼容旧数据）
+	if modelName == "" && taskData != nil {
+		if name, ok := taskData["model_name"].(string); ok {
+			modelName = name
+		}
+	}
+	if tokenName == "" && taskData != nil {
+		if tn, ok := taskData["token_name"].(string); ok {
+			tokenName = tn
+		}
+	}
+
+	// 如果仍然没有，使用默认值
+	if modelName == "" {
+		modelName = fmt.Sprintf("%s-%s", task.Platform, task.Action)
+	}
+	if groupRatio == 0 {
+		groupRatio = 1.0
+	}
+
+	common.SysLog(fmt.Sprintf("[VideoTask] 从表字段读取: model_name=%s, api_key(token_name)=%s", task.ModelName, task.ApiKey))
+
+	common.SysLog(fmt.Sprintf("[VideoTask] 计费信息: model=%s, price=%.2f, ratio=%.2f, seconds=%d",
+		modelName, modelPrice, groupRatio, actualSeconds))
+
+	// 计算实际quota
+	var actualQuota int
+	if strings.HasPrefix(modelName, "sora-2") && modelPrice > 0 {
+		// sora-2系列按秒计费：价格 * 秒数
+		actualQuota = int(modelPrice * float64(actualSeconds) * common.QuotaPerUnit * groupRatio)
+	} else if modelPrice > 0 {
+		// 其他固定价格模型
+		actualQuota = int(modelPrice * float64(actualSeconds) * common.QuotaPerUnit * groupRatio)
+	} else {
+		// 如果没有价格信息，使用默认价格（$0.1/秒）
+		actualQuota = int(0.1 * float64(actualSeconds) * common.QuotaPerUnit * groupRatio)
+	}
+
+	common.SysLog(fmt.Sprintf("[VideoTask] 计算实际费用: seconds=%d, quota=%d", actualSeconds, actualQuota))
+
+	// 构建RelayInfo用于扣费
+	relayInfo := &relaycommon.RelayInfo{
+		UserId:   task.UserId,
+		TokenId:  tokenId,
+		TokenKey: "",
+		ChannelMeta: &relaycommon.ChannelMeta{
+			ChannelId: task.ChannelId,
+		},
+		UsingGroup: user.Group,
+	}
+
+	// 执行扣费
+	if actualQuota > 0 {
+		err := service.PostConsumeQuota(relayInfo, actualQuota, 0, true)
+		if err != nil {
+			common.SysError(fmt.Sprintf("[VideoTask] 扣费失败: %v", err))
+			return err
+		}
+		common.SysLog(fmt.Sprintf("[VideoTask] 扣费成功: %d", actualQuota))
+	}
+
+	// 记录扣费日志
+	other := make(map[string]interface{})
+	other["video_task"] = true
+	other["billing_type"] = "final_billing"
+	other["billing_processed"] = true
+	other["billing_processed_at"] = common.GetTimestamp()
+	other["task_id"] = task.TaskID
+	other["actual_seconds"] = actualSeconds
+	other["actual_quota"] = actualQuota
+	other["video_url"] = taskResult.Url
+	other["model_name"] = modelName
+	other["model_price"] = modelPrice
+	other["group_ratio"] = groupRatio
+
+	model.RecordConsumeLog(c, task.UserId, model.RecordConsumeLogParams{
+		ChannelId: task.ChannelId,
+		ModelName: modelName,
+		TokenName: tokenName,
+		Quota:     actualQuota,
+		Content:   fmt.Sprintf("视频任务完成，实际生成 %d 秒，扣费 quota: %d", actualSeconds, actualQuota),
+		TokenId:   tokenId,
+		Group:     user.Group,
+		Other:     other,
+	})
+
+	// 更新用户和渠道的配额使用情况
+	model.UpdateUserUsedQuotaAndRequestCount(task.UserId, actualQuota)
+	model.UpdateChannelUsedQuota(task.ChannelId, actualQuota)
+
+	// 更新任务数据，标记已处理扣费
+	if taskData != nil {
+		taskData["billing_processed"] = true
+		taskData["billing_processed_at"] = common.GetTimestamp()
+		taskData["actual_seconds"] = actualSeconds
+		taskData["actual_quota"] = actualQuota
+
+		if updatedData, err := json.Marshal(taskData); err == nil {
+			task.Data = updatedData
+			task.Quota = actualQuota // 更新任务记录的quota字段
+			if err := task.Update(); err != nil {
+				common.SysError(fmt.Sprintf("[VideoTask] 更新任务数据失败: %v", err))
+			}
+		}
+	}
+
+	common.SysLog(fmt.Sprintf("[VideoTask] 任务 %s 按秒计费完成", task.TaskID))
 	return nil
 }

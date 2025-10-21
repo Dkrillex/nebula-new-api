@@ -130,7 +130,7 @@ func VideoProxy(c *gin.Context) {
 	}
 
 	client := &http.Client{
-		Timeout: 120 * time.Second, // 增加超时时间，视频文件可能较大
+		Timeout: 8 * time.Minute, // 8分钟超时，视频文件可能较大
 	}
 
 	req, err := http.NewRequestWithContext(c.Request.Context(), http.MethodGet, videoURL, nil)
