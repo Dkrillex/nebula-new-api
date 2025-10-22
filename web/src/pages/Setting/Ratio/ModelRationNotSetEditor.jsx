@@ -86,19 +86,26 @@ export default function ModelRatioNotSetEditor(props) {
       const modelRatio = JSON.parse(props.options.ModelRatio || '{}');
       const completionRatio = JSON.parse(props.options.CompletionRatio || '{}');
 
-      // 找出所有未设置价格和倍率的模型
+      // 读取视频每秒价格配置（需要参与是否已设置的判断）
+      const videoModelPricePerSecond = JSON.parse(
+        props.options.VideoModelPricePerSecond || '{}',
+      );
+
+      // 找出所有未设置价格、倍率、以及视频每秒价格的模型
       const unsetModels = enabledModels.filter((modelName) => {
         const hasPrice = modelPrice[modelName] !== undefined;
         const hasRatio = modelRatio[modelName] !== undefined;
+        const hasVideoPrice = videoModelPricePerSecond[modelName] !== undefined;
 
-        // 如果模型没有价格或者没有倍率设置，则显示
-        return !hasPrice && !hasRatio;
+        // 仅当三者都未设置时才显示
+        return !hasPrice && !hasRatio && !hasVideoPrice;
       });
 
       // 创建模型数据
       const modelData = unsetModels.map((name) => ({
         name,
         price: modelPrice[name] || '',
+        videoPrice: videoModelPricePerSecond[name] || '',
         ratio: modelRatio[name] || '',
         completionRatio: completionRatio[name] || '',
       }));
@@ -142,14 +149,18 @@ export default function ModelRatioNotSetEditor(props) {
       ModelPrice: JSON.parse(props.options.ModelPrice || '{}'),
       ModelRatio: JSON.parse(props.options.ModelRatio || '{}'),
       CompletionRatio: JSON.parse(props.options.CompletionRatio || '{}'),
+      VideoModelPricePerSecond: JSON.parse(props.options.VideoModelPricePerSecond || '{}'),
     };
 
     try {
       // 数据转换 - 只处理已修改的模型
       models.forEach((model) => {
-        // 只有当用户设置了值时才更新
-        if (model.price !== '') {
-          // 如果价格不为空，则转换为浮点数，忽略倍率参数
+        // 视频每秒价格、固定价格、倍率三者互斥
+        if (model.videoPrice !== '') {
+          // 如果视频价格不为空，则转换为浮点数，忽略其他价格和倍率参数
+          output.VideoModelPricePerSecond[model.name] = parseFloat(model.videoPrice);
+        } else if (model.price !== '') {
+          // 如果固定价格不为空，则转换为浮点数，忽略倍率参数
           output.ModelPrice[model.name] = parseFloat(model.price);
         } else {
           if (model.ratio !== '')
@@ -166,6 +177,7 @@ export default function ModelRatioNotSetEditor(props) {
         ModelPrice: JSON.stringify(output.ModelPrice, null, 2),
         ModelRatio: JSON.stringify(output.ModelRatio, null, 2),
         CompletionRatio: JSON.stringify(output.CompletionRatio, null, 2),
+        VideoModelPricePerSecond: JSON.stringify(output.VideoModelPricePerSecond, null, 2),
       };
 
       const requestQueue = Object.entries(finalOutput).map(([key, value]) => {
@@ -220,7 +232,21 @@ export default function ModelRatioNotSetEditor(props) {
         <Input
           value={text}
           placeholder={t('按量计费')}
+          disabled={record.videoPrice !== ''}
           onChange={(value) => updateModel(record.name, 'price', value)}
+        />
+      ),
+    },
+    {
+      title: t('视频每秒价格'),
+      dataIndex: 'videoPrice',
+      key: 'videoPrice',
+      render: (text, record) => (
+        <Input
+          value={text}
+          placeholder={t('视频按秒计费')}
+          disabled={record.price !== ''}
+          onChange={(value) => updateModel(record.name, 'videoPrice', value)}
         />
       ),
     },
@@ -231,8 +257,8 @@ export default function ModelRatioNotSetEditor(props) {
       render: (text, record) => (
         <Input
           value={text}
-          placeholder={record.price !== '' ? t('模型倍率') : t('输入模型倍率')}
-          disabled={record.price !== ''}
+          placeholder={record.price !== '' || record.videoPrice !== '' ? t('模型倍率') : t('输入模型倍率')}
+          disabled={record.price !== '' || record.videoPrice !== ''}
           onChange={(value) => updateModel(record.name, 'ratio', value)}
         />
       ),
@@ -244,8 +270,8 @@ export default function ModelRatioNotSetEditor(props) {
       render: (text, record) => (
         <Input
           value={text}
-          placeholder={record.price !== '' ? t('补全倍率') : t('输入补全倍率')}
-          disabled={record.price !== ''}
+          placeholder={record.price !== '' || record.videoPrice !== '' ? t('补全倍率') : t('输入补全倍率')}
+          disabled={record.price !== '' || record.videoPrice !== ''}
           onChange={(value) =>
             updateModel(record.name, 'completionRatio', value)
           }
@@ -276,6 +302,7 @@ export default function ModelRatioNotSetEditor(props) {
       {
         name: values.name,
         price: values.price || '',
+        videoPrice: values.videoPrice || '',
         ratio: values.ratio || '',
         completionRatio: values.completionRatio || '',
       },
@@ -320,6 +347,15 @@ export default function ModelRatioNotSetEditor(props) {
             return {
               ...model,
               price: batchFillValue,
+              videoPrice: '',
+              ratio: '',
+              completionRatio: '',
+            };
+          } else if (batchFillType === 'videoPrice') {
+            return {
+              ...model,
+              price: '',
+              videoPrice: batchFillValue,
               ratio: '',
               completionRatio: '',
             };
@@ -327,18 +363,21 @@ export default function ModelRatioNotSetEditor(props) {
             return {
               ...model,
               price: '',
+              videoPrice: '',
               ratio: batchFillValue,
             };
           } else if (batchFillType === 'completionRatio') {
             return {
               ...model,
               price: '',
+              videoPrice: '',
               completionRatio: batchFillValue,
             };
           } else if (batchFillType === 'bothRatio') {
             return {
               ...model,
               price: '',
+              videoPrice: '',
               ratio: batchRatioValue,
               completionRatio: batchCompletionRatioValue,
             };
@@ -356,11 +395,13 @@ export default function ModelRatioNotSetEditor(props) {
         type:
           batchFillType === 'price'
             ? t('固定价格')
-            : batchFillType === 'ratio'
-              ? t('模型倍率')
-              : batchFillType === 'completionRatio'
-                ? t('补全倍率')
-                : t('模型倍率和补全倍率'),
+            : batchFillType === 'videoPrice'
+              ? t('视频每秒价格')
+              : batchFillType === 'ratio'
+                ? t('模型倍率')
+                : batchFillType === 'completionRatio'
+                  ? t('补全倍率')
+                  : t('模型倍率和补全倍率'),
       }),
       duration: 3,
     });
@@ -544,18 +585,24 @@ export default function ModelRatioNotSetEditor(props) {
                 >
                   {t('模型倍率')}
                 </Radio>
-                <Radio
-                  checked={batchFillType === 'completionRatio'}
-                  onChange={() => handleBatchTypeChange('completionRatio')}
-                >
-                  {t('补全倍率')}
-                </Radio>
-                <Radio
-                  checked={batchFillType === 'bothRatio'}
-                  onChange={() => handleBatchTypeChange('bothRatio')}
-                >
-                  {t('模型倍率和补全倍率同时设置')}
-                </Radio>
+        <Radio
+          checked={batchFillType === 'completionRatio'}
+          onChange={() => handleBatchTypeChange('completionRatio')}
+        >
+          {t('补全倍率')}
+        </Radio>
+        <Radio
+          checked={batchFillType === 'videoPrice'}
+          onChange={() => handleBatchTypeChange('videoPrice')}
+        >
+          {t('视频每秒价格')}
+        </Radio>
+        <Radio
+          checked={batchFillType === 'bothRatio'}
+          onChange={() => handleBatchTypeChange('bothRatio')}
+        >
+          {t('模型倍率和补全倍率同时设置')}
+        </Radio>
               </Space>
             </div>
           </Form.Section>
@@ -583,9 +630,11 @@ export default function ModelRatioNotSetEditor(props) {
               label={
                 batchFillType === 'price'
                   ? t('固定价格值')
-                  : batchFillType === 'ratio'
-                    ? t('模型倍率值')
-                    : t('补全倍率值')
+                  : batchFillType === 'videoPrice'
+                    ? t('视频每秒价格值')
+                    : batchFillType === 'ratio'
+                      ? t('模型倍率值')
+                      : t('补全倍率值')
               }
               placeholder={t('请输入数值')}
               value={batchFillValue}
@@ -603,11 +652,13 @@ export default function ModelRatioNotSetEditor(props) {
               <Text strong>
                 {batchFillType === 'price'
                   ? t('固定价格')
-                  : batchFillType === 'ratio'
-                    ? t('模型倍率')
-                    : batchFillType === 'completionRatio'
-                      ? t('补全倍率')
-                      : t('模型倍率和补全倍率')}
+                  : batchFillType === 'videoPrice'
+                    ? t('视频每秒价格')
+                    : batchFillType === 'ratio'
+                      ? t('模型倍率')
+                      : batchFillType === 'completionRatio'
+                        ? t('补全倍率')
+                        : t('模型倍率和补全倍率')}
               </Text>
             </Text>
           </div>

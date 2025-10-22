@@ -39,6 +39,7 @@ import {
   renderAudioModelPrice,
   renderClaudeModelPrice,
   renderModelPrice,
+  renderVideoPerSecondPrice,
 } from '../../../helpers';
 import { IconHelpCircle } from '@douyinfe/semi-icons';
 import { Route } from 'lucide-react';
@@ -558,39 +559,56 @@ export const getLogsColumns = ({
             </Typography.Paragraph>
           );
         }
-        let content = other?.claude
-          ? renderModelPriceSimple(
-            other.model_ratio,
-            other.model_price,
+        
+        let content;
+        // 检查是否为视频按秒计费
+        if (other?.video_seconds && other?.video_price_per_second) {
+          content = renderVideoPerSecondPrice(
+            other.video_seconds,
+            other.video_price_per_second,
             other.group_ratio,
-            other?.user_group_ratio,
-            other.cache_tokens || 0,
-            other.cache_ratio || 1.0,
-            other.cache_creation_tokens || 0,
-            other.cache_creation_ratio || 1.0,
-            false,
-            1.0,
-            other?.is_system_prompt_overwritten,
-            'claude',
-            other?.per_call_image_multiplier || 0,
-            other?.per_call_price || 0
-          )
-          : renderModelPriceSimple(
-            other.model_ratio,
-            other.model_price,
-            other.group_ratio,
-            other?.user_group_ratio,
-            other.cache_tokens || 0,
-            other.cache_ratio || 1.0,
-            0,
-            1.0,
-            false,
-            1.0,
-            other?.is_system_prompt_overwritten,
-            'openai',
-            other?.per_call_image_multiplier || 0,
-            other?.per_call_price || 0
+            other?.user_group_ratio
           );
+        } else {
+          // 原有的逻辑
+          content = other?.claude
+            ? renderModelPriceSimple(
+              other.model_ratio,
+              other.model_price,
+              other.group_ratio,
+              other?.user_group_ratio,
+              other.cache_tokens || 0,
+              other.cache_ratio || 1.0,
+              other.cache_creation_tokens || 0,
+              other.cache_creation_ratio || 1.0,
+              false,
+              1.0,
+              other?.is_system_prompt_overwritten,
+              'claude',
+              other?.per_call_image_multiplier || 0,
+              other?.per_call_price || 0,
+              other?.video_seconds || 0,
+              other?.video_price_per_second || -1
+            )
+            : renderModelPriceSimple(
+              other.model_ratio,
+              other.model_price,
+              other.group_ratio,
+              other?.user_group_ratio,
+              other.cache_tokens || 0,
+              other.cache_ratio || 1.0,
+              0,
+              1.0,
+              false,
+              1.0,
+              other?.is_system_prompt_overwritten,
+              'openai',
+              other?.per_call_image_multiplier || 0,
+              other?.per_call_price || 0,
+              other?.video_seconds || 0,
+              other?.video_price_per_second || -1
+            );
+        }
         return (
           <Typography.Paragraph
             ellipsis={{

@@ -15,8 +15,8 @@ import (
 	relayconstant "one-api/relay/constant"
 	"one-api/relay/helper"
 	"one-api/service"
+	"one-api/setting/ratio_setting"
 	"one-api/types"
-	"strings"
 
 	"github.com/gin-gonic/gin"
 )
@@ -78,15 +78,24 @@ func RelayTaskSubmit(c *gin.Context, info *relaycommon.RelayInfo) (taskErr *dto.
 	common.SysLog(fmt.Sprintf("[RelayTaskSubmit] 接收到的参数: model=%s, videoSeconds=%d, platform=%s, action=%s",
 		modelName, videoSeconds, platform, info.Action))
 
-	// sora-2系列模型按秒计费
-	if strings.HasPrefix(modelName, "sora-2") && priceData.ModelPrice > 0 {
+	// 视频模型计费优先级：VideoModelPricePerSecond > ModelPrice > ModelRatio
+	// 1. 优先检查视频每秒价格
+	videoPrice, hasVideoPrice := ratio_setting.GetVideoModelPricePerSecond(modelName)
+	if hasVideoPrice && videoPrice > 0 {
 		// 按秒计费：价格 * 秒数
-		quota = int(priceData.ModelPrice * float64(videoSeconds) * common.QuotaPerUnit * priceData.GroupRatioInfo.GroupRatio)
-		common.SysLog(fmt.Sprintf("Sora-2 video task billing: %d seconds × $%.2f/sec = quota %d", videoSeconds, priceData.ModelPrice, quota))
-	} else if quota == 0 || quota < 1000 { // 其他模型：如果预扣费为0或过小，设置默认值
-		// 视频任务设置一个基础的预扣费，避免余额检查失效
+		quota = int(videoPrice * float64(videoSeconds) * common.QuotaPerUnit * priceData.GroupRatioInfo.GroupRatio)
+		common.SysLog(fmt.Sprintf("[RelayTaskSubmit] Video task per-second billing: %d seconds × $%.4f/sec × group_ratio %.2f = quota %d",
+			videoSeconds, videoPrice, priceData.GroupRatioInfo.GroupRatio, quota))
+	} else if priceData.ModelPrice > 0 {
+		// 2. 固定价格（按次计费）
+		quota = int(priceData.ModelPrice * common.QuotaPerUnit * priceData.GroupRatioInfo.GroupRatio)
+		common.SysLog(fmt.Sprintf("[RelayTaskSubmit] Video task per-call billing: $%.4f × group_ratio %.2f = quota %d",
+			priceData.ModelPrice, priceData.GroupRatioInfo.GroupRatio, quota))
+	} else if quota == 0 || quota < 1000 {
+		// 3. 如果预扣费为0或过小，设置默认值
 		quota = int(0.1 * common.QuotaPerUnit) // 默认0.1美元的预扣费
-		common.SysLog(fmt.Sprintf("Video task pre-consume quota is too small (%d), using default value: %d", priceData.ShouldPreConsumedQuota, quota))
+		common.SysLog(fmt.Sprintf("[RelayTaskSubmit] Video task pre-consume quota is too small (%d), using default value: %d",
+			priceData.ShouldPreConsumedQuota, quota))
 	}
 	modelPrice := priceData.ModelPrice
 	groupRatio := priceData.GroupRatioInfo.GroupRatio
@@ -918,20 +927,67 @@ func handleVideoTaskBillingBySeconds(c *gin.Context, task *model.Task, taskResul
 
 	common.SysLog(fmt.Sprintf("[VideoTask] 从表字段读取: model_name=%s, api_key(token_name)=%s", task.ModelName, task.ApiKey))
 
-	common.SysLog(fmt.Sprintf("[VideoTask] 计费信息: model=%s, price=%.2f, ratio=%.2f, seconds=%d",
-		modelName, modelPrice, groupRatio, actualSeconds))
+	// 获取模型倍率信息（用于按token计费的视频模型，如doubao）
+	modelRatio, hasModelRatio, _ := ratio_setting.GetModelRatio(modelName)
+	completionRatio := ratio_setting.GetCompletionRatio(modelName)
 
-	// 计算实际quota
+	common.SysLog(fmt.Sprintf("[VideoTask] 计费信息: model=%s, price=%.2f, ratio=%.2f, completion_ratio=%.2f, seconds=%d, tokens=%d",
+		modelName, modelPrice, groupRatio, completionRatio, actualSeconds, taskResult.TotalTokens))
+
+	// 计算实际quota - 四级优先级判断
 	var actualQuota int
-	if strings.HasPrefix(modelName, "sora-2") && modelPrice > 0 {
-		// sora-2系列按秒计费：价格 * 秒数
-		actualQuota = int(modelPrice * float64(actualSeconds) * common.QuotaPerUnit * groupRatio)
+	var billingType string
+	var videoPricePerSecond float64
+
+	// 1. 优先检查视频每秒价格（sora-2等按秒计费的模型）
+	videoPrice, hasVideoPrice := ratio_setting.GetVideoModelPricePerSecond(modelName)
+	if hasVideoPrice && videoPrice > 0 && actualSeconds > 0 {
+		// 按秒计费：价格 * 秒数
+		actualQuota = int(videoPrice * float64(actualSeconds) * common.QuotaPerUnit * groupRatio)
+		billingType = "per_second"
+		videoPricePerSecond = videoPrice
+		common.SysLog(fmt.Sprintf("[VideoTask] Per-second billing: %d seconds × $%.4f/sec × group_ratio %.2f = quota %d",
+			actualSeconds, videoPrice, groupRatio, actualQuota))
 	} else if modelPrice > 0 {
-		// 其他固定价格模型
-		actualQuota = int(modelPrice * float64(actualSeconds) * common.QuotaPerUnit * groupRatio)
-	} else {
-		// 如果没有价格信息，使用默认价格（$0.1/秒）
+		// 2. 固定价格（按次计费）
+		actualQuota = int(modelPrice * common.QuotaPerUnit * groupRatio)
+		billingType = "per_call"
+		common.SysLog(fmt.Sprintf("[VideoTask] Per-call billing: $%.4f × group_ratio %.2f = quota %d",
+			modelPrice, groupRatio, actualQuota))
+	} else if hasModelRatio && modelRatio > 0 && taskResult.TotalTokens > 0 {
+		// 3. 按token计费（doubao等返回tokens的视频模型）
+		// 使用和文本模型相同的计费逻辑：ratio * 2 * tokens / 1M
+		inputTokens := taskResult.TotalTokens // doubao只返回total_tokens
+		outputTokens := 0
+		if completionRatio > 0 {
+			// 如果有completion_ratio，按比例分配
+			outputTokens = int(float64(inputTokens) * completionRatio)
+		}
+
+		inputRatioPrice := modelRatio * 2.0 // 1倍率=0.002刀/1K tokens
+		outputRatioPrice := inputRatioPrice
+		if completionRatio > 0 {
+			outputRatioPrice = inputRatioPrice * completionRatio
+		}
+
+		actualQuota = int((float64(inputTokens)/1000000)*inputRatioPrice*groupRatio +
+			(float64(outputTokens)/1000000)*outputRatioPrice*groupRatio)
+		billingType = "per_token"
+		common.SysLog(fmt.Sprintf("[VideoTask] Per-token billing: %d tokens × ratio %.2f × group_ratio %.2f = quota %d",
+			taskResult.TotalTokens, modelRatio, groupRatio, actualQuota))
+	} else if actualSeconds > 0 {
+		// 4. 如果没有价格信息且有秒数，使用默认价格（$0.1/秒）
 		actualQuota = int(0.1 * float64(actualSeconds) * common.QuotaPerUnit * groupRatio)
+		billingType = "per_second"
+		videoPricePerSecond = 0.1
+		common.SysLog(fmt.Sprintf("[VideoTask] Default per-second billing: %d seconds × $0.1/sec × group_ratio %.2f = quota %d",
+			actualSeconds, groupRatio, actualQuota))
+	} else {
+		// 5. 兜底：使用最小扣费
+		actualQuota = int(0.01 * common.QuotaPerUnit * groupRatio)
+		billingType = "fallback"
+		common.SysLog(fmt.Sprintf("[VideoTask] Fallback billing: $0.01 × group_ratio %.2f = quota %d",
+			groupRatio, actualQuota))
 	}
 
 	common.SysLog(fmt.Sprintf("[VideoTask] 计算实际费用: seconds=%d, quota=%d", actualSeconds, actualQuota))
@@ -960,7 +1016,7 @@ func handleVideoTaskBillingBySeconds(c *gin.Context, task *model.Task, taskResul
 	// 记录扣费日志
 	other := make(map[string]interface{})
 	other["video_task"] = true
-	other["billing_type"] = "final_billing"
+	other["billing_type"] = billingType
 	other["billing_processed"] = true
 	other["billing_processed_at"] = common.GetTimestamp()
 	other["task_id"] = task.TaskID
@@ -971,15 +1027,43 @@ func handleVideoTaskBillingBySeconds(c *gin.Context, task *model.Task, taskResul
 	other["model_price"] = modelPrice
 	other["group_ratio"] = groupRatio
 
+	// 根据计费类型记录不同的元数据
+	if billingType == "per_second" && videoPricePerSecond > 0 {
+		other["video_seconds"] = actualSeconds
+		other["video_price_per_second"] = videoPricePerSecond
+	} else if billingType == "per_token" {
+		other["total_tokens"] = taskResult.TotalTokens
+		other["model_ratio"] = modelRatio
+		if completionRatio > 0 {
+			other["completion_ratio"] = completionRatio
+		}
+	}
+
+	// 根据计费类型记录不同的日志内容和tokens
+	var logContent string
+	var promptTokens, completionTokens int
+
+	if billingType == "per_token" {
+		logContent = fmt.Sprintf("视频任务 %s 实际扣费: %d tokens，quota: %d", task.TaskID, taskResult.TotalTokens, actualQuota)
+		promptTokens = 0 // doubao视频没有prompt tokens
+		completionTokens = taskResult.TotalTokens
+	} else if billingType == "per_second" {
+		logContent = fmt.Sprintf("视频任务完成，实际生成 %d 秒，扣费 quota: %d", actualSeconds, actualQuota)
+	} else {
+		logContent = fmt.Sprintf("视频任务 %s 实际扣费 quota: %d", task.TaskID, actualQuota)
+	}
+
 	model.RecordConsumeLog(c, task.UserId, model.RecordConsumeLogParams{
-		ChannelId: task.ChannelId,
-		ModelName: modelName,
-		TokenName: tokenName,
-		Quota:     actualQuota,
-		Content:   fmt.Sprintf("视频任务完成，实际生成 %d 秒，扣费 quota: %d", actualSeconds, actualQuota),
-		TokenId:   tokenId,
-		Group:     user.Group,
-		Other:     other,
+		ChannelId:        task.ChannelId,
+		ModelName:        modelName,
+		TokenName:        tokenName,
+		Quota:            actualQuota,
+		PromptTokens:     promptTokens,
+		CompletionTokens: completionTokens,
+		Content:          logContent,
+		TokenId:          tokenId,
+		Group:            user.Group,
+		Other:            other,
 	})
 
 	// 更新用户和渠道的配额使用情况

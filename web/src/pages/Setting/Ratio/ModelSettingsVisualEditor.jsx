@@ -64,6 +64,7 @@ export default function ModelSettingsVisualEditor(props) {
       const originModelPrice = JSON.parse(props.options.OriginModelPrice || '{}');
       const originModelRatio = JSON.parse(props.options.OriginModelRatio || '{}');
       const originCompletionRatio = JSON.parse(props.options.OriginCompletionRatio || '{}');
+      const videoModelPricePerSecond = JSON.parse(props.options.VideoModelPricePerSecond || '{}');
 
       // 合并所有模型名称
       const modelNames = new Set([
@@ -73,6 +74,7 @@ export default function ModelSettingsVisualEditor(props) {
         ...Object.keys(originModelPrice),
         ...Object.keys(originModelRatio),
         ...Object.keys(originCompletionRatio),
+        ...Object.keys(videoModelPricePerSecond),
       ]);
 
       const modelData = Array.from(modelNames).map((name) => {
@@ -82,6 +84,7 @@ export default function ModelSettingsVisualEditor(props) {
         const originPrice = originModelPrice[name] === undefined ? '' : originModelPrice[name];
         const originRatio = originModelRatio[name] === undefined ? '' : originModelRatio[name];
         const originComp = originCompletionRatio[name] === undefined ? '' : originCompletionRatio[name];
+        const videoPrice = videoModelPricePerSecond[name] === undefined ? '' : videoModelPricePerSecond[name];
 
         // 计算原始输入价格（从原始模型倍率转换）
         const originTokenPrice = originRatio !== '' ? (parseFloat(originRatio) * 2).toString() : '';
@@ -101,7 +104,8 @@ export default function ModelSettingsVisualEditor(props) {
           originCompletionRatio: originComp,
           originTokenPrice,
           originCompletionTokenPrice,
-          hasConflict: price !== '' && (ratio !== '' || comp !== ''),
+          videoPrice,
+          hasConflict: (price !== '' || videoPrice !== '') && (ratio !== '' || comp !== ''),
         };
       });
 
@@ -137,6 +141,7 @@ export default function ModelSettingsVisualEditor(props) {
       OriginModelPrice: {},
       OriginModelRatio: {},
       OriginCompletionRatio: {},
+      VideoModelPricePerSecond: {},
     };
     let currentConvertModelName = '';
 
@@ -144,8 +149,12 @@ export default function ModelSettingsVisualEditor(props) {
       // 数据转换
       models.forEach((model) => {
         currentConvertModelName = model.name;
-        if (model.price !== '') {
-          // 如果价格不为空，则转换为浮点数，忽略倍率参数
+        // 视频每秒价格、固定价格、倍率三者互斥
+        if (model.videoPrice !== '') {
+          // 如果视频价格不为空，则转换为浮点数，忽略其他价格和倍率参数
+          output.VideoModelPricePerSecond[model.name] = parseFloat(model.videoPrice);
+        } else if (model.price !== '') {
+          // 如果固定价格不为空，则转换为浮点数，忽略倍率参数
           output.ModelPrice[model.name] = parseFloat(model.price);
         } else {
           if (model.ratio !== '')
@@ -180,6 +189,7 @@ export default function ModelSettingsVisualEditor(props) {
         OriginModelPrice: JSON.stringify(output.OriginModelPrice, null, 2),
         OriginModelRatio: JSON.stringify(output.OriginModelRatio, null, 2),
         OriginCompletionRatio: JSON.stringify(output.OriginCompletionRatio, null, 2),
+        VideoModelPricePerSecond: JSON.stringify(output.VideoModelPricePerSecond, null, 2),
       };
 
       const requestQueue = Object.entries(finalOutput).map(([key, value]) => {
@@ -242,7 +252,21 @@ export default function ModelSettingsVisualEditor(props) {
         <Input
           value={text}
           placeholder={t('按量计费')}
+          disabled={record.videoPrice !== ''}
           onChange={(value) => updateModel(record.name, 'price', value)}
+        />
+      ),
+    },
+    {
+      title: t('视频每秒价格'),
+      dataIndex: 'videoPrice',
+      key: 'videoPrice',
+      render: (text, record) => (
+        <Input
+          value={text}
+          placeholder={t('视频按秒计费')}
+          disabled={record.price !== ''}
+          onChange={(value) => updateModel(record.name, 'videoPrice', value)}
         />
       ),
     },
@@ -253,8 +277,8 @@ export default function ModelSettingsVisualEditor(props) {
       render: (text, record) => (
         <Input
           value={text}
-          placeholder={record.price !== '' ? t('模型倍率') : t('默认补全倍率')}
-          disabled={record.price !== ''}
+          placeholder={record.price !== '' || record.videoPrice !== '' ? t('模型倍率') : t('默认补全倍率')}
+          disabled={record.price !== '' || record.videoPrice !== ''}
           onChange={(value) => updateModel(record.name, 'ratio', value)}
         />
       ),
@@ -266,8 +290,8 @@ export default function ModelSettingsVisualEditor(props) {
       render: (text, record) => (
         <Input
           value={text}
-          placeholder={record.price !== '' ? t('补全倍率') : t('默认补全倍率')}
-          disabled={record.price !== ''}
+          placeholder={record.price !== '' || record.videoPrice !== '' ? t('补全倍率') : t('默认补全倍率')}
+          disabled={record.price !== '' || record.videoPrice !== ''}
           onChange={(value) =>
             updateModel(record.name, 'completionRatio', value)
           }
@@ -331,7 +355,7 @@ export default function ModelSettingsVisualEditor(props) {
   ];
 
   const updateModel = (name, field, value) => {
-    if (isNaN(value)) {
+    if (value !== '' && isNaN(value)) {
       showError('请输入数字');
       return;
     }
@@ -340,7 +364,7 @@ export default function ModelSettingsVisualEditor(props) {
         if (model.name !== name) return model;
         const updated = { ...model, [field]: value };
         updated.hasConflict =
-          updated.price !== '' &&
+          (updated.price !== '' || updated.videoPrice !== '') &&
           (updated.ratio !== '' || updated.completionRatio !== '');
         return updated;
       }),
@@ -463,6 +487,7 @@ export default function ModelSettingsVisualEditor(props) {
           const updated = {
             name: values.name,
             price: values.price || '',
+            videoPrice: values.videoPrice || '',
             ratio: values.ratio || '',
             completionRatio: values.completionRatio || '',
             originPrice: values.originPrice || '',
@@ -472,7 +497,7 @@ export default function ModelSettingsVisualEditor(props) {
             originCompletionTokenPrice: values.originCompletionTokenPrice || '',
           };
           updated.hasConflict =
-            updated.price !== '' &&
+            (updated.price !== '' || updated.videoPrice !== '') &&
             (updated.ratio !== '' || updated.completionRatio !== '');
           return updated;
         }),
@@ -491,6 +516,7 @@ export default function ModelSettingsVisualEditor(props) {
         const newModel = {
           name: values.name,
           price: values.price || '',
+          videoPrice: values.videoPrice || '',
           ratio: values.ratio || '',
           completionRatio: values.completionRatio || '',
           originPrice: values.originPrice || '',
@@ -500,7 +526,7 @@ export default function ModelSettingsVisualEditor(props) {
           originCompletionTokenPrice: values.originCompletionTokenPrice || '',
         };
         newModel.hasConflict =
-          newModel.price !== '' &&
+          (newModel.price !== '' || newModel.videoPrice !== '') &&
           (newModel.ratio !== '' || newModel.completionRatio !== '');
         return [newModel, ...prev];
       });
@@ -526,7 +552,9 @@ export default function ModelSettingsVisualEditor(props) {
     let initialPricingMode = 'per-token';
     let initialPricingSubMode = 'ratio';
 
-    if (record.price !== '') {
+    if (record.videoPrice !== '') {
+      initialPricingMode = 'per-second';
+    } else if (record.price !== '') {
       initialPricingMode = 'per-request';
     } else {
       initialPricingMode = 'per-token';
@@ -567,7 +595,9 @@ export default function ModelSettingsVisualEditor(props) {
           name: modelCopy.name,
         };
 
-        if (initialPricingMode === 'per-request') {
+        if (initialPricingMode === 'per-second') {
+          formValues.videoPriceInput = modelCopy.videoPrice;
+        } else if (initialPricingMode === 'per-request') {
           formValues.priceInput = modelCopy.price;
         } else if (initialPricingMode === 'per-token') {
           formValues.ratioInput = modelCopy.ratio;
@@ -703,11 +733,16 @@ export default function ModelSettingsVisualEditor(props) {
               }
             }
 
-            // Clear price if we're in per-token mode
+            // 根据定价模式清空互斥字段
             if (pricingMode === 'per-token') {
               valuesToSave.price = '';
-            } else {
-              // Clear ratios if we're in per-request mode
+              valuesToSave.videoPrice = '';
+            } else if (pricingMode === 'per-request') {
+              valuesToSave.ratio = '';
+              valuesToSave.completionRatio = '';
+              valuesToSave.videoPrice = '';
+            } else if (pricingMode === 'per-second') {
+              valuesToSave.price = '';
               valuesToSave.ratio = '';
               valuesToSave.completionRatio = '';
             }
@@ -748,7 +783,9 @@ export default function ModelSettingsVisualEditor(props) {
                         name: updatedModel.name,
                       };
 
-                      if (newMode === 'per-request') {
+                      if (newMode === 'per-second') {
+                        formValues.videoPriceInput = updatedModel.videoPrice || '';
+                      } else if (newMode === 'per-request') {
                         formValues.priceInput = updatedModel.price || '';
                       } else if (newMode === 'per-token') {
                         formValues.ratioInput = updatedModel.ratio || '';
@@ -770,6 +807,7 @@ export default function ModelSettingsVisualEditor(props) {
               >
                 <Radio value='per-token'>{t('按量计费')}</Radio>
                 <Radio value='per-request'>{t('按次计费')}</Radio>
+                <Radio value='per-second'>{t('按秒计费')}</Radio>
               </RadioGroup>
             </div>
           </Form.Section>
@@ -958,7 +996,24 @@ export default function ModelSettingsVisualEditor(props) {
             />
           )}
 
+          {pricingMode === 'per-second' && (
+            <Form.Input
+              field='videoPriceInput'
+              label={t('视频每秒价格')}
+              placeholder={t('输入每秒价格')}
+              onChange={(value) =>
+                setCurrentModel((prev) => ({
+                  ...(prev || {}),
+                  videoPrice: value,
+                }))
+              }
+              initValue={currentModel?.videoPrice || ''}
+              suffix={t('$/秒')}
+            />
+          )}
+
           <Form.Section text={t('原始模型配置')}>
+
             {/* 按次计费模式：显示原始固定价格(每次) */}
             {pricingMode === 'per-request' && (
               <Form.Input

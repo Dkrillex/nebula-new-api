@@ -1455,6 +1455,23 @@ export function renderLogContent(
   }
 }
 
+// 渲染视频按秒计费
+export function renderVideoPerSecondPrice(
+  seconds,
+  pricePerSecond,
+  groupRatio,
+  user_group_ratio
+) {
+  const { ratio, label } = getEffectiveRatio(groupRatio, user_group_ratio);
+  const { symbol, rate } = getCurrencyConfig();
+  const displayPrice = (pricePerSecond * rate).toFixed(6);
+  const total = (pricePerSecond * seconds * ratio * rate).toFixed(6);
+  return i18next.t(
+    '视频时长: {{seconds}}秒 × 每秒价格: {{symbol}}{{price}} × {{ratioType}}: {{ratio}} = {{symbol}}{{total}}',
+    { seconds, symbol, price: displayPrice, ratio, total, ratioType: label }
+  );
+}
+
 export function renderModelPriceSimple(
   modelRatio,
   modelPrice = -1,
@@ -1469,8 +1486,15 @@ export function renderModelPriceSimple(
   isSystemPromptOverride = false,
   provider = 'openai',
   perCallImageMultiplier = 0,
-  perCallPrice = 0
+  perCallPrice = 0,
+  videoSeconds = 0,
+  videoPricePerSecond = -1
 ) {
+  // 如果是视频按秒计费，使用专门的渲染函数
+  if (videoSeconds > 0 && videoPricePerSecond > 0) {
+    return renderVideoPerSecondPrice(videoSeconds, videoPricePerSecond, groupRatio, user_group_ratio);
+  }
+  
   return renderPriceSimpleCore({
     modelRatio,
     modelPrice,

@@ -51,6 +51,8 @@ export default function ModelRatioSettings(props) {
     OriginModelPrice: '',
     OriginModelRatio: '',
     OriginCompletionRatio: '',
+    VideoModelPricePerSecond: '',
+    OriginVideoModelPricePerSecond: '',
   });
   const refForm = useRef();
   const [inputsRow, setInputsRow] = useState(inputs);
@@ -61,16 +63,38 @@ export default function ModelRatioSettings(props) {
       await refForm.current
         .validate()
         .then(() => {
-          const updateArray = compareObjects(inputs, inputsRow);
-          if (!updateArray.length)
+          // 标准化：去除首尾空白；对JSON类字段将空串提交为"{}"
+          const normalize = (key, v) => {
+            if (typeof v === 'boolean') return String(v);
+            const str = (v || '').toString().trim();
+            const jsonKeys = [
+              'ModelPrice',
+              'OriginModelPrice',
+              'ModelRatio',
+              'CompletionRatio',
+              'OriginModelRatio',
+              'OriginCompletionRatio',
+              'CacheRatio',
+              'ImageRatio',
+              'AudioRatio',
+              'AudioCompletionRatio',
+              'VideoModelPricePerSecond',
+              'OriginVideoModelPricePerSecond',
+            ];
+            if (jsonKeys.includes(key) && str === '') return '{}';
+            return str;
+          };
+
+          // 逐字段比较（标准化后）
+          const changedKeys = Object.keys(inputs).filter((k) =>
+            normalize(k, inputs[k]) !== normalize(k, inputsRow[k]),
+          );
+          if (!changedKeys.length)
             return showWarning(t('你似乎并没有修改什么'));
 
-          const requestQueue = updateArray.map((item) => {
-            const value =
-              typeof inputs[item.key] === 'boolean'
-                ? String(inputs[item.key])
-                : inputs[item.key];
-            return API.put('/api/option/', { key: item.key, value });
+          const requestQueue = changedKeys.map((key) => {
+            const value = normalize(key, inputs[key]);
+            return API.put('/api/option/', { key, value });
           });
 
           setLoading(true);
@@ -141,6 +165,12 @@ export default function ModelRatioSettings(props) {
     if (!currentInputs.hasOwnProperty('OriginCompletionRatio')) {
       currentInputs.OriginCompletionRatio = '';
     }
+    if (!currentInputs.hasOwnProperty('VideoModelPricePerSecond')) {
+      currentInputs.VideoModelPricePerSecond = '';
+    }
+    if (!currentInputs.hasOwnProperty('OriginVideoModelPricePerSecond')) {
+      currentInputs.OriginVideoModelPricePerSecond = '';
+    }
     setInputs(currentInputs);
     setInputsRow(structuredClone(currentInputs));
     refForm.current.setValues(currentInputs);
@@ -178,6 +208,30 @@ export default function ModelRatioSettings(props) {
         <Row gutter={16}>
           <Col xs={24} sm={16}>
             <Form.TextArea
+              label={t('原始模型固定价格')}
+              extraText={t('原始模型固定价格')}
+              placeholder={t(
+                '为一个 JSON 文本，键为模型名称，值为一次调用消耗多少刀，比如 "gpt-4-gizmo-*": 0.1，一次消耗0.1刀',
+              )}
+              field={'OriginModelPrice'}
+              autosize={{ minRows: 6, maxRows: 12 }}
+              trigger='blur'
+              stopValidateWithError
+              rules={[
+                {
+                  validator: (rule, value) => verifyJSON(value),
+                  message: '不是合法的 JSON 字符串',
+                },
+              ]}
+              onChange={(value) =>
+                setInputs({ ...inputs, OriginModelPrice: value })
+              }
+            />
+          </Col>
+        </Row>
+        <Row gutter={16}>
+          <Col xs={24} sm={16}>
+            <Form.TextArea
               label={t('模型倍率')}
               placeholder={t('为一个 JSON 文本，键为模型名称，值为倍率')}
               field={'ModelRatio'}
@@ -191,25 +245,6 @@ export default function ModelRatioSettings(props) {
                 },
               ]}
               onChange={(value) => setInputs({ ...inputs, ModelRatio: value })}
-            />
-          </Col>
-        </Row>
-        <Row gutter={16}>
-          <Col xs={24} sm={16}>
-            <Form.TextArea
-              label={t('提示缓存倍率')}
-              placeholder={t('为一个 JSON 文本，键为模型名称，值为倍率')}
-              field={'CacheRatio'}
-              autosize={{ minRows: 6, maxRows: 12 }}
-              trigger='blur'
-              stopValidateWithError
-              rules={[
-                {
-                  validator: (rule, value) => verifyJSON(value),
-                  message: '不是合法的 JSON 字符串',
-                },
-              ]}
-              onChange={(value) => setInputs({ ...inputs, CacheRatio: value })}
             />
           </Col>
         </Row>
@@ -231,30 +266,6 @@ export default function ModelRatioSettings(props) {
               ]}
               onChange={(value) =>
                 setInputs({ ...inputs, CompletionRatio: value })
-              }
-            />
-          </Col>
-        </Row>
-        <Row gutter={16}>
-          <Col xs={24} sm={16}>
-            <Form.TextArea
-              label={t('原始模型固定价格')}
-              extraText={t('原始模型固定价格')}
-              placeholder={t(
-                '为一个 JSON 文本，键为模型名称，值为一次调用消耗多少刀，比如 "gpt-4-gizmo-*": 0.1，一次消耗0.1刀',
-              )}
-              field={'OriginModelPrice'}
-              autosize={{ minRows: 6, maxRows: 12 }}
-              trigger='blur'
-              stopValidateWithError
-              rules={[
-                {
-                  validator: (rule, value) => verifyJSON(value),
-                  message: '不是合法的 JSON 字符串',
-                },
-              ]}
-              onChange={(value) =>
-                setInputs({ ...inputs, OriginModelPrice: value })
               }
             />
           </Col>
@@ -297,6 +308,73 @@ export default function ModelRatioSettings(props) {
               ]}
               onChange={(value) =>
                 setInputs({ ...inputs, OriginCompletionRatio: value })
+              }
+            />
+          </Col>
+        </Row>
+        <Row gutter={16}>
+          <Col xs={24} sm={16}>
+            <Form.TextArea
+              label={t('提示缓存倍率')}
+              placeholder={t('为一个 JSON 文本，键为模型名称，值为倍率')}
+              field={'CacheRatio'}
+              autosize={{ minRows: 6, maxRows: 12 }}
+              trigger='blur'
+              stopValidateWithError
+              rules={[
+                {
+                  validator: (rule, value) => verifyJSON(value),
+                  message: '不是合法的 JSON 字符串',
+                },
+              ]}
+              onChange={(value) => setInputs({ ...inputs, CacheRatio: value })}
+            />
+          </Col>
+        </Row>
+        <Row gutter={16}>
+          <Col xs={24} sm={16}>
+            <Form.TextArea
+              label={t('视频模型每秒价格')}
+              extraText={t('视频模型按秒计费的价格，单位：美元/秒')}
+              placeholder={t(
+                '为一个 JSON 文本，键为模型名称，值为每秒价格，比如 "sora-2": 0.1，表示每秒0.1美元',
+              )}
+              field={'VideoModelPricePerSecond'}
+              autosize={{ minRows: 6, maxRows: 12 }}
+              trigger='blur'
+              stopValidateWithError
+              rules={[
+                {
+                  validator: (rule, value) => verifyJSON(value),
+                  message: '不是合法的 JSON 字符串',
+                },
+              ]}
+              onChange={(value) =>
+                setInputs({ ...inputs, VideoModelPricePerSecond: value })
+              }
+            />
+          </Col>
+        </Row>
+        <Row gutter={16}>
+          <Col xs={24} sm={16}>
+            <Form.TextArea
+              label={t('原始视频模型每秒价格')}
+              extraText={t('原始视频模型按秒计费的价格，单位：美元/秒')}
+              placeholder={t(
+                '为一个 JSON 文本，键为模型名称，值为每秒价格，用于对比展示',
+              )}
+              field={'OriginVideoModelPricePerSecond'}
+              autosize={{ minRows: 6, maxRows: 12 }}
+              trigger='blur'
+              stopValidateWithError
+              rules={[
+                {
+                  validator: (rule, value) => verifyJSON(value),
+                  message: '不是合法的 JSON 字符串',
+                },
+              ]}
+              onChange={(value) =>
+                setInputs({ ...inputs, OriginVideoModelPricePerSecond: value })
               }
             />
           </Col>

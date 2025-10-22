@@ -292,9 +292,12 @@ var defaultModelPrice = map[string]float64{
 	"mj_upscale":              0.05,
 	"swap_face":               0.05,
 	"mj_upload":               0.05,
-	"sora-2":                  0.1, // $0.1/秒，按秒数乘以此价格
-	"sora-2-landscape":        0.1, // 横屏模式，同样$0.1/秒
-	"sora-2-pro":              0.5,
+}
+
+var defaultVideoModelPricePerSecond = map[string]float64{
+	"sora-2":           0.1, // $0.1/秒
+	"sora-2-landscape": 0.1, // 横屏模式，同样$0.1/秒
+	"sora-2-pro":       0.5, // $0.5/秒
 }
 
 var defaultAudioRatio = map[string]float64{
@@ -312,6 +315,11 @@ var defaultAudioCompletionRatio = map[string]float64{
 var (
 	modelPriceMap      map[string]float64 = nil
 	modelPriceMapMutex                    = sync.RWMutex{}
+)
+
+var (
+	videoModelPricePerSecondMap      map[string]float64 = nil
+	videoModelPricePerSecondMapMutex                    = sync.RWMutex{}
 )
 var (
 	modelRatioMap      map[string]float64 = nil
@@ -346,6 +354,9 @@ func InitRatioSettings() {
 
 	// Load imageRatioMap from database
 	loadImageRatioFromDatabase()
+
+	// Load videoModelPricePerSecondMap from database
+	loadVideoModelPricePerSecondFromDatabase()
 
 	// initialize audioRatioMap
 	audioRatioMapMutex.Lock()
@@ -463,6 +474,10 @@ func GetDefaultAudioRatioMap() map[string]float64 {
 
 func GetDefaultAudioCompletionRatioMap() map[string]float64 {
 	return defaultAudioCompletionRatio
+}
+
+func GetDefaultVideoModelPricePerSecondMap() map[string]float64 {
+	return defaultVideoModelPricePerSecond
 }
 
 func GetCompletionRatioMap() map[string]float64 {
@@ -797,6 +812,52 @@ func GetCompletionRatioCopy() map[string]float64 {
 	return copyMap
 }
 
+// VideoModelPricePerSecond related functions
+func GetVideoModelPricePerSecond(name string) (float64, bool) {
+	videoModelPricePerSecondMapMutex.RLock()
+	defer videoModelPricePerSecondMapMutex.RUnlock()
+
+	name = FormatMatchingModelName(name)
+
+	price, ok := videoModelPricePerSecondMap[name]
+	if !ok {
+		return -1, false
+	}
+	return price, true
+}
+
+func UpdateVideoModelPricePerSecondByJSONString(jsonStr string) error {
+	videoModelPricePerSecondMapMutex.Lock()
+	defer videoModelPricePerSecondMapMutex.Unlock()
+	videoModelPricePerSecondMap = make(map[string]float64)
+	err := common.Unmarshal([]byte(jsonStr), &videoModelPricePerSecondMap)
+	if err == nil {
+		InvalidateExposedDataCache()
+	}
+	return err
+}
+
+func VideoModelPricePerSecond2JSONString() string {
+	videoModelPricePerSecondMapMutex.RLock()
+	defer videoModelPricePerSecondMapMutex.RUnlock()
+
+	jsonBytes, err := common.Marshal(videoModelPricePerSecondMap)
+	if err != nil {
+		common.SysError("error marshalling video model price per second: " + err.Error())
+	}
+	return string(jsonBytes)
+}
+
+func GetVideoModelPricePerSecondCopy() map[string]float64 {
+	videoModelPricePerSecondMapMutex.RLock()
+	defer videoModelPricePerSecondMapMutex.RUnlock()
+	copyMap := make(map[string]float64, len(videoModelPricePerSecondMap))
+	for k, v := range videoModelPricePerSecondMap {
+		copyMap[k] = v
+	}
+	return copyMap
+}
+
 // 转换模型名，减少渠道必须配置各种带参数模型
 func FormatMatchingModelName(name string) string {
 
@@ -917,6 +978,26 @@ func loadImageRatioFromDatabase() {
 	common.SysLog("Using default image ratio configuration")
 }
 
+// loadVideoModelPricePerSecondFromDatabase loads video model price per second configuration from database
+func loadVideoModelPricePerSecondFromDatabase() {
+	videoModelPricePerSecondMapMutex.Lock()
+	defer videoModelPricePerSecondMapMutex.Unlock()
+
+	// Try to get from database first
+	if videoStr, exists := common.OptionMap["VideoModelPricePerSecond"]; exists && videoStr != "" {
+		var videoMap map[string]float64
+		if err := common.Unmarshal([]byte(videoStr), &videoMap); err == nil {
+			videoModelPricePerSecondMap = videoMap
+			common.SysLog("Loaded video model price per second configuration from database")
+			return
+		}
+	}
+
+	// Fallback to default if database load fails
+	videoModelPricePerSecondMap = defaultVideoModelPricePerSecond
+	common.SysLog("Using default video model price per second configuration")
+}
+
 // printLoadedConfiguration prints the loaded configuration summary
 func printLoadedConfiguration() {
 	modelPriceMapMutex.RLock()
@@ -924,6 +1005,7 @@ func printLoadedConfiguration() {
 	CompletionRatioMutex.RLock()
 	cacheRatioMapMutex.RLock()
 	imageRatioMapMutex.RLock()
+	videoModelPricePerSecondMapMutex.RLock()
 
 	common.SysLog("=== Ratio Settings Configuration Loaded ===")
 
@@ -952,6 +1034,11 @@ func printLoadedConfiguration() {
 		common.SysLog("Image Ratio Map (" + strconv.Itoa(len(imageRatioMap)) + " entries): " + string(imageJSON))
 	}
 
+	// Print Video Model Price Per Second Map JSON
+	if videoJSON, err := common.Marshal(videoModelPricePerSecondMap); err == nil {
+		common.SysLog("Video Model Price Per Second Map (" + strconv.Itoa(len(videoModelPricePerSecondMap)) + " entries): " + string(videoJSON))
+	}
+
 	common.SysLog("=== Configuration Loading Complete ===")
 
 	modelPriceMapMutex.RUnlock()
@@ -959,4 +1046,5 @@ func printLoadedConfiguration() {
 	CompletionRatioMutex.RUnlock()
 	cacheRatioMapMutex.RUnlock()
 	imageRatioMapMutex.RUnlock()
+	videoModelPricePerSecondMapMutex.RUnlock()
 }
