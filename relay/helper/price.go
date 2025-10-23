@@ -65,11 +65,16 @@ func ModelPriceHelper(c *gin.Context, info *relaycommon.RelayInfo, promptTokens 
 		var matchName string
 		modelRatio, success, matchName = ratio_setting.GetModelRatio(info.OriginModelName)
 		if !success {
+			// 检查是否配置了视频每秒价格（第三种定价方式）
+			_, hasVideoPrice := ratio_setting.GetVideoModelPricePerSecond(info.OriginModelName)
+
 			acceptUnsetRatio := false
 			if info.UserSetting.AcceptUnsetRatioModel {
 				acceptUnsetRatio = true
 			}
-			if !acceptUnsetRatio {
+
+			// 只有当三种定价方式（ModelPrice、ModelRatio、VideoModelPricePerSecond）都没有配置时才报错
+			if !acceptUnsetRatio && !hasVideoPrice {
 				return types.PriceData{}, fmt.Errorf("模型 %s 倍率或价格未配置，请联系管理员设置或开始自用模式；Model %s ratio or price not set, please set or start self-use mode", matchName, matchName)
 			}
 		}
@@ -133,11 +138,18 @@ func ModelPriceHelperPerCall(c *gin.Context, info *relaycommon.RelayInfo) types.
 }
 
 func ContainPriceOrRatio(modelName string) bool {
+	// 检查 ModelPrice（按次计费）
 	_, ok := ratio_setting.GetModelPrice(modelName, false)
 	if ok {
 		return true
 	}
+	// 检查 ModelRatio（按token计费）
 	_, ok, _ = ratio_setting.GetModelRatio(modelName)
+	if ok {
+		return true
+	}
+	// 检查 VideoModelPricePerSecond（视频按秒计费）
+	_, ok = ratio_setting.GetVideoModelPricePerSecond(modelName)
 	if ok {
 		return true
 	}

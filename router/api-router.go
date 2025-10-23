@@ -270,8 +270,8 @@ func SetApiRouter(router *gin.Engine) {
 			syncSystemRoute.POST("/pg/chat/completions", controller.SyncPlayground)
 			syncSystemRoute.POST("/images/generations", controller.SyncImageGeneration)
 			syncSystemRoute.POST("/videos/generations", controller.SyncVideoGeneration)
+			syncSystemRoute.GET("/videos/generations/download", controller.SyncDownloadVideoBase64) // ⚠️ 必须在:task_id之前
 			syncSystemRoute.GET("/videos/generations/:task_id", controller.SyncGetVideoTask)
-			syncSystemRoute.GET("/videos/generations/:task_id/download/:gen_id", controller.SyncDownloadVideoBase64)
 		}
 	}
 }

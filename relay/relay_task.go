@@ -17,6 +17,7 @@ import (
 	"one-api/service"
 	"one-api/setting/ratio_setting"
 	"one-api/types"
+	"strings"
 
 	"github.com/gin-gonic/gin"
 )
@@ -395,131 +396,16 @@ func videoFetchByIDRespBodyBuilder(c *gin.Context) (respBody []byte, taskResp *d
 	common.SysLog(fmt.Sprintf("[VideoTask] 任务表字段: ModelName=%s, ApiKey(TokenName)=%s, Quota=%d",
 		originTask.ModelName, originTask.ApiKey, originTask.Quota))
 
-	// 检查任务是否成功，如果成功需要进行扣费处理
+	// 检查任务是否成功
 	if originTask.Status == model.TaskStatusSuccess {
-		common.SysLog("[VideoTask] 检测到视频任务成功，开始处理扣费")
-
-		// 获取渠道信息
-		channel, err := model.GetChannelById(originTask.ChannelId, true)
-		if err != nil {
-			common.SysError(fmt.Sprintf("[VideoTask] 获取渠道信息失败: %v", err))
-		} else {
-			// 解析任务数据
-			if originTask.Data != nil {
-				// 打印原始任务数据用于调试
-				truncatedData := common.TruncateBase64Content(string(originTask.Data))
-				common.SysLog(fmt.Sprintf("[VideoTask] 任务原始数据: %s", truncatedData))
-
-				var taskData map[string]interface{}
-				if err := json.Unmarshal(originTask.Data, &taskData); err == nil {
-					// 检查是否已经处理过扣费
-					if billingProcessed, ok := taskData["billing_processed"].(bool); ok && billingProcessed {
-						common.SysLog("[VideoTask] 任务已处理过扣费，跳过")
-					} else {
-						// 处理不同平台的扣费逻辑
-
-						// 1. 豆包火山平台：按token计费
-						if originTask.Platform == "45" {
-							if usageData, ok := taskData["usage"].(map[string]interface{}); ok {
-								if totalTokens, exists := usageData["total_tokens"].(float64); exists && totalTokens > 0 {
-									common.SysLog(fmt.Sprintf("[VideoTask] 豆包平台-发现实际token消耗: %d", int(totalTokens)))
-
-									taskResult := &relaycommon.TaskInfo{
-										TaskID:      originTask.TaskID,
-										Status:      "SUCCESS",
-										TotalTokens: int(totalTokens),
-										Url:         originTask.FailReason,
-									}
-
-									if err := handleVideoTaskBillingInQuery(c, originTask, taskResult, channel); err != nil {
-										common.SysError(fmt.Sprintf("[VideoTask] 豆包平台扣费处理失败: %v", err))
-									} else {
-										common.SysLog("[VideoTask] 豆包平台扣费处理完成")
-									}
-								}
-							}
-						} else {
-							// 2. sora-2等其他平台：按实际秒数计费
-							// Azure返回的n_seconds在根层级，不在metadata中
-							actualSeconds := 0
-
-							// 先尝试从根层级获取n_seconds
-							if nSeconds, exists := taskData["n_seconds"].(float64); exists && nSeconds > 0 {
-								actualSeconds = int(nSeconds)
-							} else if nSecondsInt, exists := taskData["n_seconds"].(int); exists && nSecondsInt > 0 {
-								actualSeconds = nSecondsInt
-							}
-
-							// 如果根层级没有，再尝试从metadata中获取
-							if actualSeconds == 0 {
-								if metadata, ok := taskData["metadata"].(map[string]interface{}); ok {
-									if nSeconds, exists := metadata["n_seconds"].(float64); exists && nSeconds > 0 {
-										actualSeconds = int(nSeconds)
-									}
-								}
-							}
-
-							// 如果找到了实际秒数，进行扣费
-							if actualSeconds > 0 {
-								// 获取请求的秒数用于对比
-								requestedSeconds := 0
-								if rs, ok := taskData["requested_seconds"].(float64); ok {
-									requestedSeconds = int(rs)
-								} else if rs, ok := taskData["requested_seconds"].(int); ok {
-									requestedSeconds = rs
-								}
-
-								common.SysLog(fmt.Sprintf("[VideoTask] Sora-2平台-实际生成秒数: %d, 请求秒数: %d", actualSeconds, requestedSeconds))
-
-								// 警告：时长不匹配
-								if requestedSeconds > 0 && actualSeconds != requestedSeconds {
-									common.SysLog(fmt.Sprintf("⚠️ [VideoTask] 时长不匹配！请求%d秒，实际生成%d秒", requestedSeconds, actualSeconds))
-								}
-
-								taskResult := &relaycommon.TaskInfo{
-									TaskID:      originTask.TaskID,
-									Status:      "SUCCESS",
-									TotalTokens: actualSeconds, // 使用秒数作为token数
-									Url:         originTask.FailReason,
-								}
-
-								if err := handleVideoTaskBillingBySeconds(c, originTask, taskResult, channel, actualSeconds); err != nil {
-									common.SysError(fmt.Sprintf("[VideoTask] Sora-2平台扣费处理失败: %v", err))
-								} else {
-									common.SysLog("[VideoTask] Sora-2平台扣费处理完成")
-								}
-							} else {
-								common.SysError("[VideoTask] 未找到n_seconds字段（尝试了根层级和metadata）")
-								// 使用请求的秒数作为兜底（避免不扣费）
-								if requestedSeconds, ok := taskData["requested_seconds"].(float64); ok && requestedSeconds > 0 {
-									fallbackSeconds := int(requestedSeconds)
-									common.SysLog(fmt.Sprintf("⚠️ [VideoTask] 使用请求秒数作为兜底扣费: %d秒", fallbackSeconds))
-
-									taskResult := &relaycommon.TaskInfo{
-										TaskID:      originTask.TaskID,
-										Status:      "SUCCESS",
-										TotalTokens: fallbackSeconds,
-										Url:         originTask.FailReason,
-									}
-
-									if err := handleVideoTaskBillingBySeconds(c, originTask, taskResult, channel, fallbackSeconds); err != nil {
-										common.SysError(fmt.Sprintf("[VideoTask] 兜底扣费失败: %v", err))
-									}
-								} else {
-									common.SysError("[VideoTask] 无法获取扣费依据，任务可能未扣费！")
-								}
-							}
-						}
-					}
-				}
-			}
-		}
+		common.SysLog("[VideoTask] 任务已成功，返回结果")
+		// 不再进行扣费操作，扣费由轮询线程统一处理
 	}
 
 	// 转换为统一视频生成接口文档格式
 	response := convertToUnifiedVideoResponse(originTask)
 	common.SysLog(fmt.Sprintf("[VideoTask] 转换后的响应格式: TaskId=%s, Status=%s, Url=%s",
-		response.TaskId, response.Status, response.Url))
+		response.TaskId, response.Status, common.TruncateBase64Content(response.Url)))
 
 	respBody, err = json.Marshal(response)
 	if err != nil {
@@ -553,16 +439,50 @@ func convertToUnifiedVideoResponse(task *model.Task) *dto.VideoTaskResponse {
 		Format: "mp4", // 默认格式
 	}
 
-	// 如枟任务成功且有数据
-	if task.Status == model.TaskStatusSuccess && task.Data != nil {
-		// 解析原始响应数据（支持各厂商格式）
+	// 解析并返回原厂响应数据作为metadata（所有状态都返回）
+	if task.Data != nil {
 		var rawData map[string]interface{}
 		if err := json.Unmarshal(task.Data, &rawData); err == nil {
-			// 尝试从不同厂商格式中提取视频URL
-			if videoURL := extractVideoURL(rawData); videoURL != "" {
-				response.Url = videoURL
+			// 判断是否为 veo 模型
+			modelName := strings.ToLower(task.ModelName)
+			isVeo := strings.Contains(modelName, "veo")
+
+			// 如果任务成功，尝试提取视频URL
+			if task.Status == model.TaskStatusSuccess {
+				if isVeo {
+					// Veo 模型：从 fail_reason 获取视频数据（已经是完整的 data URI）
+					common.SysLog(fmt.Sprintf("[VideoTask] Veo model detected, using data URI from fail_reason for task %s", task.TaskID))
+
+					if task.FailReason != "" {
+						// fail_reason 已经存储了完整的 data URI（由 ParseTaskResult 构造）
+						response.Url = task.FailReason
+						common.SysLog(fmt.Sprintf("[VideoTask] Veo data URI loaded, length: %d chars", len(response.Url)))
+
+						// 在 metadata 中添加截断的 base64 预览（可选）
+						if responseObj, ok := rawData["response"].(map[string]interface{}); ok {
+							if videos, ok := responseObj["videos"].([]interface{}); ok && len(videos) > 0 {
+								if video, ok := videos[0].(map[string]interface{}); ok {
+									// 提取纯 base64 部分用于预览
+									if strings.Contains(response.Url, ";base64,") {
+										base64Part := strings.Split(response.Url, ";base64,")[1]
+										video["bytesBase64Encoded"] = common.TruncateBase64Content(base64Part)
+									}
+								}
+							}
+						}
+					} else {
+						common.SysError("[VideoTask] Veo task success but fail_reason is empty")
+					}
+				} else {
+					// 其他模型：从数据库提取视频URL
+					if videoURL := extractVideoURL(rawData); videoURL != "" {
+						response.Url = videoURL
+					}
+				}
 			}
-			// 将全部原始数据作为metadata返回，不做任何结构化处理
+
+			// 将处理后的数据作为metadata返回
+			// 对于Veo，此时metadata中的base64已经被截断
 			response.Metadata = rawData
 		}
 	}

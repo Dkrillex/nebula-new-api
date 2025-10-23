@@ -11,7 +11,7 @@ import (
 // 2. 传统的 data:image/ 格式
 // 3. 纯 base64 数据
 func TruncateBase64Content(content string) string {
-	const maxBase64Length = 50
+	const maxBase64Length = 1000
 
 	// 处理 Gemini 的 inlineData 格式
 	content = truncateInlineDataBase64(content, maxBase64Length)
@@ -26,9 +26,12 @@ func TruncateBase64Content(content string) string {
 }
 
 // truncateInlineDataBase64 处理 Gemini 的 inlineData 格式中的 base64 数据
+// 同时处理 data:video/mp4;base64, 格式的视频数据
 func truncateInlineDataBase64(content string, maxLength int) string {
 	const inlineDataPattern = `"inlineData":`
 	const dataPattern = `"data":`
+	const dataVideoPattern = `data:video/`
+	const dataImagePattern = `data:image/`
 
 	var result strings.Builder
 	startIndex := 0
@@ -79,43 +82,98 @@ func truncateInlineDataBase64(content string, maxLength int) string {
 		}
 		quoteEndIndex += quoteStartIndex
 
-		// 计算 base64 数据长度
-		base64DataLength := quoteEndIndex - quoteStartIndex
+		// 获取引号内的内容
+		quotedContent := content[quoteStartIndex:quoteEndIndex]
 
-		// 如果 base64 数据长度超过指定长度，则截断
-		if base64DataLength > maxLength {
-			// 保留前缀和部分 base64 数据
-			result.WriteString(content[inlineDataIndex:quoteStartIndex])
-			result.WriteString(content[quoteStartIndex : quoteStartIndex+maxLength])
-			result.WriteString("...[base64数据已截断，长度:")
-			result.WriteString(fmt.Sprintf("%d", base64DataLength))
-			result.WriteString("]\"")
+		// 检查是否是 data:video/ 或 data:image/ 格式
+		if strings.HasPrefix(quotedContent, dataVideoPattern) || strings.HasPrefix(quotedContent, dataImagePattern) {
+			// 处理 data:video/mp4;base64, 或 data:image/ 格式
+			truncateDataUrlBase64(content, inlineDataIndex, quoteStartIndex, quoteEndIndex, maxLength, &result)
 			startIndex = quoteEndIndex + 1
 		} else {
-			// 短数据保持原样
-			result.WriteString(content[inlineDataIndex : quoteEndIndex+1])
-			startIndex = quoteEndIndex + 1
+			// 计算 base64 数据长度
+			base64DataLength := quoteEndIndex - quoteStartIndex
+
+			// 如果 base64 数据长度超过指定长度，则截断
+			if base64DataLength > maxLength {
+				// 保留前缀和部分 base64 数据
+				result.WriteString(content[inlineDataIndex:quoteStartIndex])
+				result.WriteString(content[quoteStartIndex : quoteStartIndex+maxLength])
+				result.WriteString("...[base64数据已截断，长度:")
+				result.WriteString(fmt.Sprintf("%d", base64DataLength))
+				result.WriteString("]\"")
+				startIndex = quoteEndIndex + 1
+			} else {
+				// 短数据保持原样
+				result.WriteString(content[inlineDataIndex : quoteEndIndex+1])
+				startIndex = quoteEndIndex + 1
+			}
 		}
 	}
 
 	return result.String()
 }
 
-// truncateDataImageBase64 处理传统的 data:image/ 格式中的 base64 数据
+// truncateDataUrlBase64 处理 data:video/ 或 data:image/ 格式的 base64 数据
+func truncateDataUrlBase64(content string, inlineDataIndex, quoteStartIndex, quoteEndIndex, maxLength int, result *strings.Builder) {
+	quotedContent := content[quoteStartIndex:quoteEndIndex]
+
+	// 查找 base64 数据的开始位置
+	base64Marker := ";base64,"
+	base64StartIndex := strings.Index(quotedContent, base64Marker)
+
+	if base64StartIndex == -1 {
+		// 没找到 base64 标记，保持原样
+		result.WriteString(content[inlineDataIndex : quoteEndIndex+1])
+		return
+	}
+
+	base64StartIndex += quoteStartIndex + len(base64Marker)
+	base64DataLength := quoteEndIndex - base64StartIndex
+
+	// 如果 base64 数据长度超过指定长度，则截断
+	if base64DataLength > maxLength {
+		// 保留前缀和部分 base64 数据
+		result.WriteString(content[inlineDataIndex:base64StartIndex])
+		result.WriteString(content[base64StartIndex : base64StartIndex+maxLength])
+		result.WriteString("...[base64数据已截断，长度:")
+		result.WriteString(fmt.Sprintf("%d", base64DataLength))
+		result.WriteString("]\"")
+	} else {
+		// 短数据保持原样
+		result.WriteString(content[inlineDataIndex : quoteEndIndex+1])
+	}
+}
+
+// truncateDataImageBase64 处理传统的 data:image/ 和 data:video/ 格式中的 base64 数据
 func truncateDataImageBase64(content string, maxLength int) string {
-	const base64Prefix = "data:image/"
+	const base64ImagePrefix = "data:image/"
+	const base64VideoPrefix = "data:video/"
 	const base64Marker = ";base64,"
 
 	var result strings.Builder
 	startIndex := 0
 
 	for {
-		// 查找base64前缀
-		base64Index := strings.Index(content[startIndex:], base64Prefix)
-		if base64Index == -1 {
+		// 查找base64前缀（image或video）
+		imageIndex := strings.Index(content[startIndex:], base64ImagePrefix)
+		videoIndex := strings.Index(content[startIndex:], base64VideoPrefix)
+
+		var base64Index int
+		if imageIndex == -1 && videoIndex == -1 {
 			break
+		} else if imageIndex == -1 {
+			base64Index = videoIndex + startIndex
+		} else if videoIndex == -1 {
+			base64Index = imageIndex + startIndex
+		} else {
+			// 两个都找到了，选择更早出现的
+			if imageIndex < videoIndex {
+				base64Index = imageIndex + startIndex
+			} else {
+				base64Index = videoIndex + startIndex
+			}
 		}
-		base64Index += startIndex
 
 		// 添加base64前的内容
 		result.WriteString(content[startIndex:base64Index])
@@ -130,14 +188,14 @@ func truncateDataImageBase64(content string, maxLength int) string {
 		markerIndex += base64Index
 		base64StartIndex := markerIndex + len(base64Marker)
 
-		// 查找base64数据的结束位置（下一个双引号）
+		// 查找base64数据的结束位置（下一个双引号或字符串末尾）
 		base64EndIndex := strings.Index(content[base64StartIndex:], "\"")
 		if base64EndIndex == -1 {
-			// 没找到结束引号，保持原样
-			result.WriteString(content[base64Index:])
-			break
+			// 没找到结束引号，base64数据一直到字符串末尾
+			base64EndIndex = len(content)
+		} else {
+			base64EndIndex += base64StartIndex
 		}
-		base64EndIndex += base64StartIndex
 
 		// 计算base64数据长度
 		base64DataLength := base64EndIndex - base64StartIndex
@@ -149,12 +207,21 @@ func truncateDataImageBase64(content string, maxLength int) string {
 			result.WriteString(content[base64StartIndex : base64StartIndex+maxLength])
 			result.WriteString("...[base64数据已截断，长度:")
 			result.WriteString(fmt.Sprintf("%d", base64DataLength))
-			result.WriteString("]\"")
-			startIndex = base64EndIndex + 1
+			result.WriteString("]")
+			// 如果base64数据到字符串末尾，不需要添加引号
+			if base64EndIndex < len(content) {
+				result.WriteString("\"")
+			}
+			startIndex = base64EndIndex
 		} else {
 			// 短数据保持原样
-			result.WriteString(content[base64Index : base64EndIndex+1])
-			startIndex = base64EndIndex + 1
+			if base64EndIndex < len(content) {
+				result.WriteString(content[base64Index : base64EndIndex+1])
+				startIndex = base64EndIndex + 1
+			} else {
+				result.WriteString(content[base64Index:])
+				startIndex = base64EndIndex
+			}
 		}
 	}
 
@@ -165,8 +232,8 @@ func truncateDataImageBase64(content string, maxLength int) string {
 
 // truncateRawBase64Content 处理没有前缀的纯base64数据
 func truncateRawBase64Content(content string) string {
-	const maxBase64Length = 100
-	const minBase64Length = 200 // 只有超过这个长度的才认为是需要截断的base64数据
+	const maxBase64Length = 1000
+	const minBase64Length = 2000 // 只有超过这个长度的才认为是需要截断的base64数据
 
 	var result strings.Builder
 	startIndex := 0

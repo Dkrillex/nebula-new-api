@@ -8,6 +8,7 @@ import (
 	"io"
 	"mime/multipart"
 	"net/http"
+	"net/textproto"
 	"one-api/common"
 	"one-api/constant"
 	"one-api/dto"
@@ -119,20 +120,20 @@ func (a *TaskAdaptor) ValidateRequestAndSetAction(c *gin.Context, info *relaycom
 
 func (a *TaskAdaptor) BuildRequestURL(info *relaycommon.RelayInfo) (string, error) {
 	var url string
-	// Azure OpenAI Sora API
+	// Azure OpenAI Sora 2 API
 	if a.ChannelType == constant.ChannelTypeAzure {
-		// Azure 格式: /openai/v1/video/generations/jobs?api-version=preview
 		apiVersion := info.ApiVersion
 		if apiVersion == "" {
-			apiVersion = "preview" // Azure Sora 默认使用 preview 版本
+			apiVersion = "preview" // Sora 2 仍然需要 api-version 参数
 		}
-		url = fmt.Sprintf("%s/openai/v1/video/generations/jobs?api-version=%s", a.baseURL, apiVersion)
+
+		url = fmt.Sprintf("%s/openai/v1/videos?api-version=%s", a.baseURL, apiVersion)
 	} else {
 		// 原生 OpenAI Sora API
 		url = fmt.Sprintf("%s/v1/videos", a.baseURL)
 	}
 
-	common.SysLog(fmt.Sprintf("[Sora] 提交任务请求URL: %s", url))
+	common.SysLog(fmt.Sprintf("[Sora2] 提交任务请求URL: %s", url))
 	return url, nil
 }
 
@@ -174,16 +175,96 @@ func (a *TaskAdaptor) BuildRequestBody(c *gin.Context, info *relaycommon.RelayIn
 		return bytes.NewReader(cachedBody), nil
 	}
 
-	// 参数转换：seconds → n_seconds（兼容前端不同的传参方式）
-	if seconds, exists := requestMap["seconds"]; exists {
-		// 如果有 seconds 参数，转换为 n_seconds
-		requestMap["n_seconds"] = seconds
-		delete(requestMap, "seconds") // 删除 seconds 参数
-		common.SysLog(fmt.Sprintf("[Sora] 参数转换: seconds=%v → n_seconds=%v", seconds, seconds))
+	// Sora 2 统一参数处理
+	// 1. 统一处理 seconds 参数（支持多种字段名和格式）
+	// 优先级：seconds > n_seconds > 默认值
+	secondsValue := ""
+
+	// 1.1 优先使用 seconds 参数
+	if seconds, exists := requestMap["seconds"]; exists && seconds != nil {
+		switch v := seconds.(type) {
+		case string:
+			if v != "" {
+				secondsValue = v
+				common.SysLog(fmt.Sprintf("[Sora2] 使用seconds参数: %s", secondsValue))
+			}
+		case int:
+			secondsValue = fmt.Sprintf("%d", v)
+			common.SysLog(fmt.Sprintf("[Sora2] 使用seconds参数(int): %d", v))
+		case float64:
+			secondsValue = fmt.Sprintf("%.0f", v)
+			common.SysLog(fmt.Sprintf("[Sora2] 使用seconds参数(float64): %.0f", v))
+		}
 	}
 
-	// 打印模型和分辨率信息（用于调试）
-	if model, exists := requestMap["model"]; exists {
+	// 1.2 如果没有seconds，尝试n_seconds
+	if secondsValue == "" {
+		if nSeconds, exists := requestMap["n_seconds"]; exists && nSeconds != nil {
+			switch v := nSeconds.(type) {
+			case string:
+				if v != "" {
+					secondsValue = v
+					common.SysLog(fmt.Sprintf("[Sora2] 使用n_seconds参数: %s", secondsValue))
+				}
+			case int:
+				secondsValue = fmt.Sprintf("%d", v)
+				common.SysLog(fmt.Sprintf("[Sora2] 使用n_seconds参数(int): %d", v))
+			case float64:
+				secondsValue = fmt.Sprintf("%.0f", v)
+				common.SysLog(fmt.Sprintf("[Sora2] 使用n_seconds参数(float64): %.0f", v))
+			}
+			// 删除n_seconds，统一使用seconds
+			delete(requestMap, "n_seconds")
+		}
+	}
+
+	// 1.3 验证seconds值（Sora 2只支持4/8/12秒）
+	validSeconds := []string{"4", "8", "12"}
+	if secondsValue != "" {
+		isValidSeconds := false
+		for _, validSec := range validSeconds {
+			if secondsValue == validSec {
+				isValidSeconds = true
+				break
+			}
+		}
+		if !isValidSeconds {
+			common.SysError(fmt.Sprintf("[Sora2] 无效的seconds参数: %s，仅支持: %v，使用默认值4秒", secondsValue, validSeconds))
+			secondsValue = "4"
+		}
+	} else {
+		secondsValue = "4" // 默认值
+		common.SysLog("[Sora2] 未提供seconds/n_seconds参数，使用默认值: 4秒")
+	}
+
+	// 1.4 设置最终的seconds参数
+	requestMap["seconds"] = secondsValue
+
+	// 2. 验证并转换 size 参数（Sora 2 只支持 720x1280 和 1280x720）
+	// 优先级：size > width+height > 默认值
+
+	// 首先检查是否已有 size 参数
+	if size, exists := requestMap["size"]; exists {
+		// 情况1：有 size，直接验证
+		sizeStr, ok := size.(string)
+		if ok && sizeStr != "" {
+			if sizeStr != "720x1280" && sizeStr != "1280x720" {
+				common.SysError(fmt.Sprintf("[Sora2] size参数错误: %s, 仅支持 720x1280(竖屏) 或 1280x720(横屏)，已自动修正为720x1280", sizeStr))
+				requestMap["size"] = "720x1280"
+			} else {
+				common.SysLog(fmt.Sprintf("[Sora2] size参数验证通过: %s", sizeStr))
+			}
+			// 删除 width 和 height（如果有的话）
+			delete(requestMap, "width")
+			delete(requestMap, "height")
+		} else {
+			// size 存在但为空，尝试从 width/height 获取
+			delete(requestMap, "size")
+		}
+	}
+
+	// 如果还没有 size，尝试从 width 和 height 转换
+	if _, exists := requestMap["size"]; !exists {
 		width := 0
 		height := 0
 		if w, ok := requestMap["width"].(float64); ok {
@@ -198,12 +279,81 @@ func (a *TaskAdaptor) BuildRequestBody(c *gin.Context, info *relaycommon.RelayIn
 		}
 
 		if width > 0 && height > 0 {
-			orientation := "竖屏"
-			if width > height {
-				orientation = "横屏"
+			// 情况2：没有 size，但有 width 和 height，转换为 size
+			sizeStr := fmt.Sprintf("%dx%d", width, height)
+			if sizeStr != "720x1280" && sizeStr != "1280x720" {
+				common.SysError(fmt.Sprintf("[Sora2] 从 width=%d, height=%d 转换的 size=%s 不符合要求，使用默认值 720x1280", width, height, sizeStr))
+				requestMap["size"] = "720x1280"
+			} else {
+				requestMap["size"] = sizeStr
+				common.SysLog(fmt.Sprintf("[Sora2] 参数转换: width=%d, height=%d → size=%s", width, height, sizeStr))
 			}
-			common.SysLog(fmt.Sprintf("[Sora] 模型: %v, 分辨率: %dx%d (%s)", model, width, height, orientation))
+		} else {
+			// 情况3：既没有 size，也没有 width/height，使用默认值
+			requestMap["size"] = "720x1280"
+			common.SysLog("[Sora2] 未提供size/width/height参数，使用默认值: 720x1280")
 		}
+
+		// 删除 width 和 height 参数
+		delete(requestMap, "width")
+		delete(requestMap, "height")
+	}
+
+	// 3. 统一处理 remix 参数（支持多种字段名）
+	isRemixMode := false
+	remixVideoID := ""
+
+	// 3.1 检查多种可能的 remix 参数名
+	remixFields := []string{"remix_video_id", "remixed_video_id", "remixedVideoId", "remixVideoId"}
+	for _, field := range remixFields {
+		if remixID, exists := requestMap[field]; exists && remixID != nil {
+			if remixStr, ok := remixID.(string); ok && remixStr != "" {
+				// 验证格式（必须是video_开头）
+				if strings.HasPrefix(remixStr, "video_") {
+					remixVideoID = remixStr
+					isRemixMode = true
+					common.SysLog(fmt.Sprintf("[Sora2] 检测到Remix模式 - 字段: %s, VideoID: %s", field, remixStr))
+					break
+				} else {
+					common.SysError(fmt.Sprintf("[Sora2] %s格式错误: %s, 必须是video_开头的字符串", field, remixStr))
+					delete(requestMap, field)
+				}
+			}
+		}
+	}
+
+	// 3.2 处理 Remix 模式
+	if isRemixMode {
+		// Remix 模式：将 video_id 存到 context，供 BuildRequestURL 和 DoRequest 使用
+		c.Set("sora_remix_video_id", remixVideoID)
+
+		// ⚠️ Remix API 只接受 prompt 参数！其他参数（size、seconds、model）都不能传
+		promptValue := requestMap["prompt"]
+		requestMap = map[string]interface{}{
+			"prompt": promptValue,
+		}
+		common.SysLog("[Sora2] Remix模式：仅保留 prompt 参数，删除所有其他参数")
+	}
+
+	// 4. 如果不是 Remix 模式，移除普通 API 不支持的参数
+	if !isRemixMode {
+		// 普通模式（文生/图生）仅支持: prompt, model, size, seconds, input_reference
+		delete(requestMap, "user_id")        // user_id 不应传给 Sora 2 API
+		delete(requestMap, "user")           // user 参数也删除
+		delete(requestMap, "remix_video_id") // 删除该参数
+	}
+
+	// 打印最终请求参数（用于调试）
+	if model, exists := requestMap["model"]; exists {
+		sizeStr := ""
+		if size, ok := requestMap["size"].(string); ok {
+			sizeStr = size
+		}
+		secondsStr := ""
+		if seconds, ok := requestMap["seconds"].(string); ok {
+			secondsStr = seconds
+		}
+		common.SysLog(fmt.Sprintf("[Sora2] 最终参数 - 模型: %v, 分辨率: %s, 时长: %s秒", model, sizeStr, secondsStr))
 	}
 
 	// 检查是否有 input_reference 参数（参考图）
@@ -293,10 +443,15 @@ func buildMultipartRequest(c *gin.Context, params map[string]interface{}, imageB
 		common.SysLog(fmt.Sprintf("[Sora] 添加表单字段: %s = %s", key, valueStr))
 	}
 
-	// 2. 添加图片文件
+	// 2. 添加图片文件（手动设置正确的MIME类型）
 	fileName := "reference_image" + getFileExtensionFromMimeType(mimeType)
 
-	part, err := writer.CreateFormFile("input_reference", fileName)
+	// 使用CreatePart手动设置Content-Type，而不是CreateFormFile（它会设置为application/octet-stream）
+	h := make(textproto.MIMEHeader)
+	h.Set("Content-Disposition", fmt.Sprintf(`form-data; name="input_reference"; filename="%s"`, fileName))
+	h.Set("Content-Type", mimeType) // ⚠️ 关键：设置正确的MIME类型（image/jpeg, image/png, image/webp）
+
+	part, err := writer.CreatePart(h)
 	if err != nil {
 		common.SysError(fmt.Sprintf("[Sora] 创建文件字段失败: %v", err))
 		return nil, err
@@ -307,7 +462,7 @@ func buildMultipartRequest(c *gin.Context, params map[string]interface{}, imageB
 		return nil, err
 	}
 
-	common.SysLog(fmt.Sprintf("[Sora] 添加图片文件: %s, 大小: %d bytes, MIME: %s", fileName, len(imageBytes), mimeType))
+	common.SysLog(fmt.Sprintf("[Sora] ✅ 添加图片文件: %s, 大小: %d bytes, MIME: %s", fileName, len(imageBytes), mimeType))
 
 	// 3. 关闭writer
 	if err := writer.Close(); err != nil {
@@ -339,6 +494,34 @@ func getFileExtensionFromMimeType(mimeType string) string {
 
 // DoRequest delegates to common helper.
 func (a *TaskAdaptor) DoRequest(c *gin.Context, info *relaycommon.RelayInfo, requestBody io.Reader) (*http.Response, error) {
+	// 检查是否是 Remix 模式，需要修改 URL
+	if remixVideoID, exists := c.Get("sora_remix_video_id"); exists && remixVideoID != nil {
+		if remixStr, ok := remixVideoID.(string); ok && remixStr != "" {
+			// Remix 模式：修改 URL 为 /videos/{video_id}/remix
+			apiVersion := info.ApiVersion
+			if apiVersion == "" {
+				apiVersion = "preview"
+			}
+
+			remixURL := fmt.Sprintf("%s/openai/v1/videos/%s/remix?api-version=%s", a.baseURL, remixStr, apiVersion)
+			common.SysLog(fmt.Sprintf("[Sora2] Remix模式 - 修改URL为: %s", remixURL))
+
+			// 直接构建 Remix 请求
+			req, err := http.NewRequest(http.MethodPost, remixURL, requestBody)
+			if err != nil {
+				return nil, err
+			}
+
+			// 设置请求头
+			req.Header.Set("Api-key", a.apiKey)
+			req.Header.Set("Content-Type", "application/json")
+
+			// 发送请求
+			return service.GetHttpClient().Do(req)
+		}
+	}
+
+	// 普通模式（文生/图生）使用标准流程
 	return channel.DoTaskApiRequest(a, c, info, requestBody)
 }
 
@@ -367,10 +550,19 @@ func (a *TaskAdaptor) DoResponse(c *gin.Context, resp *http.Response, _ *relayco
 		dResp.TaskID = ""
 	}
 
-	// 按照统一视频生成接口文档的格式发送响应（与 doubao 保持一致）
+	// 按照统一视频生成接口文档的格式发送响应，包含原厂响应metadata
+	// 将原厂响应解析为 map 作为 metadata
+	var metadata map[string]interface{}
+	if err := json.Unmarshal(responseBody, &metadata); err != nil {
+		metadata = nil
+		common.SysError(fmt.Sprintf("[Sora] 解析原厂响应为metadata失败: %v", err))
+	}
+
 	responseData := gin.H{
-		"task_id": dResp.ID,
-		"status":  "submitted",
+		"task_id":  dResp.ID,
+		"status":   "submitted",
+		"format":   "mp4",
+		"metadata": metadata, // 添加原厂完整响应
 	}
 	c.JSON(http.StatusOK, responseData)
 	return dResp.ID, responseBody, nil
@@ -384,17 +576,17 @@ func (a *TaskAdaptor) FetchTask(baseUrl, key string, body map[string]any) (*http
 	}
 
 	var uri string
-	// Azure OpenAI Sora API
+	// Azure OpenAI Sora 2 API
 	if a.ChannelType == constant.ChannelTypeAzure {
-		// Azure 格式: /openai/v1/video/generations/jobs/{job_id}?api-version=preview
+		// Sora 2 格式: /openai/v1/videos/{video_id}?api-version=preview
 		apiVersion := "preview"
-		uri = fmt.Sprintf("%s/openai/v1/video/generations/jobs/%s?api-version=%s", baseUrl, taskID, apiVersion)
+		uri = fmt.Sprintf("%s/openai/v1/videos/%s?api-version=%s", baseUrl, taskID, apiVersion)
 	} else {
 		// 原生 OpenAI Sora API
 		uri = fmt.Sprintf("%s/v1/videos/%s", baseUrl, taskID)
 	}
 
-	common.SysLog(fmt.Sprintf("[Sora] 查询任务状态 - TaskID: %s, URL: %s", taskID, uri))
+	common.SysLog(fmt.Sprintf("[Sora2] 查询任务状态 - TaskID: %s, URL: %s", taskID, uri))
 
 	req, err := http.NewRequest(http.MethodGet, uri, nil)
 	if err != nil {
@@ -426,16 +618,15 @@ func (a *TaskAdaptor) FetchVideoContent(baseUrl, key, jobID, genID string) (*htt
 	var uri string
 
 	if a.ChannelType == constant.ChannelTypeAzure {
-		// Azure 格式: /openai/v1/video/generations/jobs/{job_id}/generations/{gen_id}/content?api-version=preview
+		// Sora 2 格式: /openai/v1/videos/{video_id}/content?variant=video&api-version=preview
 		apiVersion := "preview"
-		uri = fmt.Sprintf("%s/openai/v1/video/generations/jobs/%s/generations/%s/content?api-version=%s",
-			baseUrl, jobID, genID, apiVersion)
+		uri = fmt.Sprintf("%s/openai/v1/videos/%s/content?variant=video&api-version=%s", baseUrl, jobID, apiVersion)
 	} else {
-		// 原生 OpenAI: /v1/videos/{video_id}/content
-		uri = fmt.Sprintf("%s/v1/videos/%s/content", baseUrl, jobID)
+		// 原生 OpenAI: /v1/videos/{video_id}/content?variant=video
+		uri = fmt.Sprintf("%s/v1/videos/%s/content?variant=video", baseUrl, jobID)
 	}
 
-	common.SysLog(fmt.Sprintf("[Sora] 获取视频内容URL: %s", uri))
+	common.SysLog(fmt.Sprintf("[Sora2] 获取视频内容URL: %s", uri))
 
 	req, err := http.NewRequest(http.MethodGet, uri, nil)
 	if err != nil {
@@ -466,57 +657,54 @@ func (a *TaskAdaptor) ParseTaskResult(respBody []byte) (*relaycommon.TaskInfo, e
 		return nil, errors.Wrap(err, "unmarshal task result failed")
 	}
 
-	common.SysLog(fmt.Sprintf("[Sora] 解析任务结果 - TaskID: %s, Status: %s, NSeconds: %d, Generations数量: %d",
-		resTask.ID, resTask.Status, resTask.NSeconds, len(resTask.Generations)))
+	// 打印解析任务结果（Sora 2 不再返回 Generations 数组）
+	common.SysLog(fmt.Sprintf("[Sora2] 解析任务结果 - VideoID: %s, Status: %s, Seconds: %s, Size: %s",
+		resTask.ID, resTask.Status, resTask.Seconds, resTask.Size))
 
 	// 打印关键参数用于调试
-	common.SysLog(fmt.Sprintf("[Sora] 任务详细信息 - Width: %d, Height: %d, Model: %s, Prompt: %s",
-		resTask.Width, resTask.Height, resTask.Model, resTask.Prompt))
+	common.SysLog(fmt.Sprintf("[Sora2] 任务详细信息 - Model: %s, Prompt: %.50s...",
+		resTask.Model, resTask.Prompt))
 
 	taskResult := relaycommon.TaskInfo{
 		Code: 0,
 	}
 
+	// Sora 2 官方文档规定的4种状态：queued, in_progress, completed, failed
 	switch resTask.Status {
-	case "queued", "pending":
+	case "queued":
+		// 任务在队列中等待
 		taskResult.Status = string(model.TaskStatusQueued)
-	case "processing", "in_progress", "preprocessing":
+		taskResult.Progress = "0%"
+		common.SysLog(fmt.Sprintf("[Sora2] 📋 任务排队中 - VideoID: %s", resTask.ID))
+
+	case "in_progress":
+		// 任务正在处理中
 		taskResult.Status = string(model.TaskStatusInProgress)
-	case "completed", "succeeded": // Azure 使用 "succeeded"
+		if resTask.Progress > 0 {
+			taskResult.Progress = fmt.Sprintf("%d%%", resTask.Progress)
+		} else {
+			taskResult.Progress = "50%"
+		}
+		common.SysLog(fmt.Sprintf("[Sora2] ⚙️ 任务处理中 - VideoID: %s, Progress: %d%%", resTask.ID, resTask.Progress))
+
+	case "completed":
+		// 任务成功完成
 		taskResult.Status = string(model.TaskStatusSuccess)
 		taskResult.Progress = "100%"
 
-		// 打印成功时的完整信息（包括n_seconds）
-		common.SysLog(fmt.Sprintf("[Sora] ✅ 任务成功 - TaskID: %s, NSeconds: %d, Model: %s",
-			resTask.ID, resTask.NSeconds, resTask.Model))
+		// 打印成功时的完整信息
+		common.SysLog(fmt.Sprintf("[Sora2] ✅ 任务成功 - VideoID: %s, Seconds: %s, Size: %s, Model: %s",
+			resTask.ID, resTask.Seconds, resTask.Size, resTask.Model))
 
-		// 尝试获取视频URL
-		if len(resTask.Generations) > 0 && resTask.Generations[0].ID != "" {
-			// Azure: generations 数组存在但没有直接的 URL
-			// 需要通过额外的 content API 获取视频
-			genID := resTask.Generations[0].ID
-			jobID := resTask.ID
+		// Sora 2: 直接使用 video_id，不再需要 genID
+		// 返回系统代理 URL，由系统处理实际的视频下载
+		taskResult.Url = fmt.Sprintf("%s/v1/videos/%s/content?variant=video",
+			system_setting.ServerAddress, resTask.ID)
 
-			// 打印第一个generation的详细信息
-			gen := resTask.Generations[0]
-			common.SysLog(fmt.Sprintf("[Sora] Generation详情 - GenID: %s, NSeconds: %d, Width: %d, Height: %d, CreatedAt: %d",
-				gen.ID, gen.NSeconds, gen.Width, gen.Height, gen.CreatedAt))
+		common.SysLog(fmt.Sprintf("[Sora2] 生成代理URL: %s", taskResult.Url))
 
-			common.SysLog(fmt.Sprintf("[Sora] Azure 任务成功 - JobID: %s, GenID: %s", jobID, genID))
-
-			// 返回系统代理 URL，由系统处理实际的视频下载
-			taskResult.Url = fmt.Sprintf("%s/v1/video/generations/%s/content/%s",
-				system_setting.ServerAddress, jobID, genID)
-
-			common.SysLog(fmt.Sprintf("[Sora] 生成代理URL: %s", taskResult.Url))
-		} else {
-			// 原生 OpenAI: 使用标准的 content endpoint
-			taskResult.Url = fmt.Sprintf("%s/v1/videos/%s/content",
-				system_setting.ServerAddress, resTask.ID)
-			common.SysLog(fmt.Sprintf("[Sora] OpenAI 标准URL: %s", taskResult.Url))
-		}
-
-	case "failed", "cancelled":
+	case "failed":
+		// 任务失败
 		taskResult.Status = string(model.TaskStatusFailure)
 		taskResult.Progress = "100%"
 		if resTask.Error != nil {
@@ -526,16 +714,19 @@ func (a *TaskAdaptor) ParseTaskResult(respBody []byte) (*relaycommon.TaskInfo, e
 		} else {
 			taskResult.Reason = "task failed"
 		}
-		common.SysLog(fmt.Sprintf("[Sora] 任务失败 - 原因: %s", taskResult.Reason))
-	default:
-		// 未知状态，保持进行中
-		taskResult.Status = string(model.TaskStatusInProgress)
-		common.SysLog(fmt.Sprintf("[Sora] 未知状态: %s", resTask.Status))
-	}
+		common.SysLog(fmt.Sprintf("[Sora2] ❌ 任务失败 - VideoID: %s, 原因: %s", resTask.ID, taskResult.Reason))
 
-	// 设置进度
-	if resTask.Progress > 0 && resTask.Progress < 100 {
-		taskResult.Progress = fmt.Sprintf("%d%%", resTask.Progress)
+	default:
+		// 未知状态（不应该出现，记录错误）
+		common.SysError(fmt.Sprintf("[Sora2] ⚠️ 检测到非官方状态: %s (官方仅支持: queued/in_progress/completed/failed)", resTask.Status))
+		// 根据具体情况判断
+		if resTask.Progress == 100 {
+			taskResult.Status = string(model.TaskStatusSuccess)
+			taskResult.Progress = "100%"
+		} else {
+			taskResult.Status = string(model.TaskStatusInProgress)
+			taskResult.Progress = "50%"
+		}
 	}
 
 	return &taskResult, nil

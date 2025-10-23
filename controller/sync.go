@@ -1184,11 +1184,10 @@ func SyncDownloadVideoBase64(c *gin.Context) {
 		}
 	}()
 
-	// 获取路径参数
-	taskId := c.Param("task_id")
-	genId := c.Param("gen_id")
-	if taskId == "" || genId == "" {
-		newAPIError = types.NewError(errors.New("task_id 和 gen_id 不能为空"), types.ErrorCodeInvalidRequest)
+	// 获取查询参数（统一简洁接口）
+	videoId := c.Query("id")
+	if videoId == "" {
+		newAPIError = types.NewError(errors.New("id 参数不能为空"), types.ErrorCodeInvalidRequest)
 		return
 	}
 
@@ -1233,9 +1232,9 @@ func SyncDownloadVideoBase64(c *gin.Context) {
 
 	// 直接复用内部下载逻辑：路径转换并转发到内部受保护下载接口
 	originalPath := c.Request.URL.Path
-	newPath := "/v1/video/generations/" + taskId + "/download/" + genId
+	newPath := "/v1/video/generations/download"
 	c.Request.URL.Path = newPath
-	common.SysLog(fmt.Sprintf("[SyncDownloadVideoBase64] 路径转换: %s -> %s", originalPath, newPath))
+	common.SysLog(fmt.Sprintf("[SyncDownloadVideoBase64] 路径转换: %s -> %s (id=%s)", originalPath, newPath, videoId))
 
 	// 设置请求开始时间
 	common.SetContextKey(c, constant.ContextKeyRequestStartTime, time.Now())

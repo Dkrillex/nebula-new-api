@@ -295,9 +295,11 @@ var defaultModelPrice = map[string]float64{
 }
 
 var defaultVideoModelPricePerSecond = map[string]float64{
-	"sora-2":           0.1, // $0.1/秒
-	"sora-2-landscape": 0.1, // 横屏模式，同样$0.1/秒
-	"sora-2-pro":       0.5, // $0.5/秒
+	"sora-2":                        0.1,  // $0.1/秒
+	"veo-3.0-generate-001":          0.15, // $0.15/秒,如果有音频是$0.4/秒
+	"veo-3.0-fast-generate-001":     0.15, // $0.15/秒
+	"veo-3.1-fast-generate-preview": 0.15, // $0.15/秒
+	"veo-3.1-generate-preview":      0.2,  // $0.2/秒,如果有音频是$0.4/秒
 }
 
 var defaultAudioRatio = map[string]float64{

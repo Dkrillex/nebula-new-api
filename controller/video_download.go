@@ -15,21 +15,26 @@ import (
 )
 
 // VideoDownloadBase64 下载视频并返回 base64 编码（用于前端直接展示）
+// 统一简洁接口：GET /video/generations/download?id={video_id}&user_id={user_id}
 func VideoDownloadBase64(c *gin.Context) {
-	taskID := c.Param("task_id")
-	genID := c.Param("gen_id")
+	// 从查询参数获取视频ID
+	videoID := c.Query("id")
 
-	if taskID == "" || genID == "" {
+	if videoID == "" {
 		c.JSON(http.StatusBadRequest, gin.H{
 			"error": gin.H{
-				"message": "task_id and generation_id are required",
+				"message": "id parameter is required",
 				"type":    "invalid_request_error",
 			},
 		})
 		return
 	}
 
-	common.SysLog(fmt.Sprintf("[VideoDownload] 开始下载视频 base64 - TaskID: %s, GenID: %s", taskID, genID))
+	// 对于Sora2，taskID和genID都是video_id
+	taskID := videoID
+	genID := videoID
+
+	common.SysLog(fmt.Sprintf("[VideoDownload] 开始下载视频 base64 - ID: %s", videoID))
 
 	// 获取用户ID
 	userId := c.GetInt("id")
@@ -73,21 +78,31 @@ func VideoDownloadBase64(c *gin.Context) {
 		return
 	}
 
-	// 构建 Azure 视频下载 URL
+	// 构建视频下载 URL（根据渠道类型区分）
 	baseURL := channel.GetBaseURL()
 	if baseURL == "" {
 		baseURL = "https://api.openai.com"
 	}
 
-	apiVersion := channel.Other
-	if apiVersion == "" {
-		apiVersion = "preview"
+	var videoURL string
+	if channel.Type == constant.ChannelTypeAzure {
+		// Azure Sora 2: 使用 video_id (taskID)，加上 variant=video 和 api-version 参数
+		apiVersion := channel.Other
+		if apiVersion == "" {
+			apiVersion = "preview"
+		}
+		videoURL = fmt.Sprintf("%s/openai/v1/videos/%s/content?variant=video&api-version=%s", baseURL, taskID, apiVersion)
+		common.SysLog(fmt.Sprintf("[VideoDownload] Sora2 视频 URL: %s", videoURL))
+	} else {
+		// 其他渠道（如doubao）保持原有逻辑
+		apiVersion := channel.Other
+		if apiVersion == "" {
+			apiVersion = "preview"
+		}
+		videoURL = fmt.Sprintf("%s/openai/v1/video/generations/%s/content/video?api-version=%s",
+			baseURL, genID, apiVersion)
+		common.SysLog(fmt.Sprintf("[VideoDownload] 其他渠道视频 URL: %s", videoURL))
 	}
-
-	videoURL := fmt.Sprintf("%s/openai/v1/video/generations/%s/content/video?api-version=%s",
-		baseURL, genID, apiVersion)
-
-	common.SysLog(fmt.Sprintf("[VideoDownload] Azure 视频 URL: %s", videoURL))
 
 	// 创建 HTTP 客户端，设置超时时间（视频文件较大，需要较长超时）
 	client := &http.Client{

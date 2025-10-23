@@ -1,7 +1,6 @@
 package controller
 
 import (
-	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
@@ -84,49 +83,19 @@ func VideoProxy(c *gin.Context) {
 
 	// 根据渠道类型构建不同的 URL
 	if channel.Type == constant.ChannelTypeAzure {
-		// Azure Sora: 需要 gen_id
-		if genID == "" {
-			// 尝试从任务数据中提取 gen_id
-			if task.Data != nil {
-				var taskData map[string]interface{}
-				if err := json.Unmarshal(task.Data, &taskData); err == nil {
-					if generations, ok := taskData["generations"].([]interface{}); ok && len(generations) > 0 {
-						if gen, ok := generations[0].(map[string]interface{}); ok {
-							if id, ok := gen["id"].(string); ok {
-								genID = id
-								common.SysLog(fmt.Sprintf("[VideoProxy] 从任务数据中提取到 GenID: %s", genID))
-							}
-						}
-					}
-				}
-			}
-		}
-
-		if genID == "" {
-			logger.LogError(c.Request.Context(), "Azure Sora requires gen_id but not provided")
-			c.JSON(http.StatusBadRequest, gin.H{
-				"error": gin.H{
-					"message": "Generation ID is required for Azure Sora",
-					"type":    "invalid_request_error",
-				},
-			})
-			return
-		}
-
-		// Azure 格式: /openai/v1/video/generations/jobs/{job_id}/generations/{gen_id}/content?api-version=preview
+		// Azure Sora 2: 使用 video_id (taskID)，加上 variant=video 和 api-version 参数
 		apiVersion := channel.Other
 		if apiVersion == "" {
 			apiVersion = "preview"
 		}
-		videoURL = fmt.Sprintf("%s/openai/v1/video/generations/jobs/%s/generations/%s/content?api-version=%s",
-			baseURL, taskID, genID, apiVersion)
+		videoURL = fmt.Sprintf("%s/openai/v1/videos/%s/content?variant=video&api-version=%s", baseURL, taskID, apiVersion)
 		authHeader = "Api-key"
-		common.SysLog(fmt.Sprintf("[VideoProxy] Azure Sora URL: %s", videoURL))
+		common.SysLog(fmt.Sprintf("[VideoProxy] Azure Sora2 URL: %s", videoURL))
 	} else {
-		// 原生 OpenAI Sora
-		videoURL = fmt.Sprintf("%s/v1/videos/%s/content", baseURL, task.TaskID)
+		// 原生 OpenAI Sora 或其他渠道
+		videoURL = fmt.Sprintf("%s/v1/videos/%s/content?variant=video", baseURL, task.TaskID)
 		authHeader = "Authorization"
-		common.SysLog(fmt.Sprintf("[VideoProxy] OpenAI Sora URL: %s", videoURL))
+		common.SysLog(fmt.Sprintf("[VideoProxy] 其他渠道 URL: %s", videoURL))
 	}
 
 	client := &http.Client{
