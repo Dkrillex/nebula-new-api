@@ -422,7 +422,7 @@ func handleVideoTaskBilling(ctx context.Context, task *model.Task, taskResult *r
 	other["pre_consumed_quota"] = task.Quota
 	other["actual_quota"] = actualQuota
 	other["quota_delta"] = quotaDelta
-	other["video_url"] = taskResult.Url
+	// 不存储 video_url，避免将 base64 视频数据存储到日志中
 	other["video_task"] = true              // 标记为视频任务
 	other["billing_type"] = "final_billing" // 标记为最终计费
 
@@ -672,7 +672,7 @@ func handleVeoTaskBilling(ctx context.Context, task *model.Task, channel *model.
 	other["video_price_per_second"] = videoPrice
 	other["group_ratio"] = groupRatio
 	other["actual_quota"] = actualQuota
-	other["video_url"] = task.FailReason
+	// 不存储 video_url，避免将 base64 视频数据存储到日志中（Veo 使用 FailReason 存储视频数据）
 	other["billing_type"] = "per_second"
 	other["platform"] = task.Platform
 	other["action"] = task.Action
@@ -866,7 +866,7 @@ func handleSora2TaskBilling(ctx context.Context, task *model.Task, channel *mode
 	other["video_price_per_second"] = videoPrice
 	other["group_ratio"] = groupRatio
 	other["actual_quota"] = actualQuota
-	other["video_url"] = task.FailReason
+	// 不存储 video_url，避免将 base64 视频数据存储到日志中（使用 FailReason 存储视频数据）
 	other["billing_type"] = "per_second"
 	other["platform"] = task.Platform
 	other["action"] = task.Action

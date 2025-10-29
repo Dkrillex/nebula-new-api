@@ -91,14 +91,18 @@ export default function ModelRatioNotSetEditor(props) {
         props.options.VideoModelPricePerSecond || '{}',
       );
 
-      // 找出所有未设置价格、倍率、以及视频每秒价格的模型
+      // 读取图像Token表定价配置
+      const imageTokenPricing = JSON.parse(props.options.ImageTokenPricing || '{}');
+
+      // 找出所有未设置价格、倍率、视频每秒价格、图像Token表定价的模型
       const unsetModels = enabledModels.filter((modelName) => {
         const hasPrice = modelPrice[modelName] !== undefined;
         const hasRatio = modelRatio[modelName] !== undefined;
         const hasVideoPrice = videoModelPricePerSecond[modelName] !== undefined;
+        const hasImageTokenPricing = imageTokenPricing[modelName] !== undefined;
 
-        // 仅当三者都未设置时才显示
-        return !hasPrice && !hasRatio && !hasVideoPrice;
+        // 仅当四者都未设置时才显示
+        return !hasPrice && !hasRatio && !hasVideoPrice && !hasImageTokenPricing;
       });
 
       // 创建模型数据
@@ -108,6 +112,7 @@ export default function ModelRatioNotSetEditor(props) {
         videoPrice: videoModelPricePerSecond[name] || '',
         ratio: modelRatio[name] || '',
         completionRatio: completionRatio[name] || '',
+        imageTokenPricingData: null, // 默认未设置
       }));
 
       setModels(modelData);
@@ -150,13 +155,17 @@ export default function ModelRatioNotSetEditor(props) {
       ModelRatio: JSON.parse(props.options.ModelRatio || '{}'),
       CompletionRatio: JSON.parse(props.options.CompletionRatio || '{}'),
       VideoModelPricePerSecond: JSON.parse(props.options.VideoModelPricePerSecond || '{}'),
+      ImageTokenPricing: JSON.parse(props.options.ImageTokenPricing || '{}'),
     };
 
     try {
       // 数据转换 - 只处理已修改的模型
       models.forEach((model) => {
-        // 视频每秒价格、固定价格、倍率三者互斥
-        if (model.videoPrice !== '') {
+        // 四种定价方式互斥：imageTokenPricing > videoPrice > price > ratio
+        if (model.imageTokenPricingData) {
+          // 图像Token表定价
+          output.ImageTokenPricing[model.name] = model.imageTokenPricingData;
+        } else if (model.videoPrice !== '') {
           // 如果视频价格不为空，则转换为浮点数，忽略其他价格和倍率参数
           output.VideoModelPricePerSecond[model.name] = parseFloat(model.videoPrice);
         } else if (model.price !== '') {
@@ -178,6 +187,7 @@ export default function ModelRatioNotSetEditor(props) {
         ModelRatio: JSON.stringify(output.ModelRatio, null, 2),
         CompletionRatio: JSON.stringify(output.CompletionRatio, null, 2),
         VideoModelPricePerSecond: JSON.stringify(output.VideoModelPricePerSecond, null, 2),
+        ImageTokenPricing: JSON.stringify(output.ImageTokenPricing, null, 2),
       };
 
       const requestQueue = Object.entries(finalOutput).map(([key, value]) => {
@@ -319,7 +329,10 @@ export default function ModelRatioNotSetEditor(props) {
       return;
     }
 
-    if (batchFillType === 'bothRatio') {
+    if (batchFillType === 'imageTokenPricing') {
+      // 图像Token表定价：使用预设的微软官方配置
+      // 不需要用户输入，直接应用标准配置
+    } else if (batchFillType === 'bothRatio') {
       if (batchRatioValue === '' || batchCompletionRatioValue === '') {
         showError(t('请输入模型倍率和补全倍率'));
         return;
@@ -343,13 +356,45 @@ export default function ModelRatioNotSetEditor(props) {
     setModels((prev) =>
       prev.map((model) => {
         if (selectedRowKeys.includes(model.name)) {
-          if (batchFillType === 'price') {
+          if (batchFillType === 'imageTokenPricing') {
+            // 图像Token表定价：应用微软官方标准配置
+            return {
+              ...model,
+              price: '',
+              videoPrice: '',
+              ratio: '',
+              completionRatio: '',
+              imageTokenPricingData: {
+                input_text_price: 5.0,
+                input_image_price: 10.0,
+                output_image_price: 40.0,
+                token_table: {
+                  low: {
+                    "1024x1024": 272,
+                    "1024x1536": 408,
+                    "1536x1024": 400
+                  },
+                  medium: {
+                    "1024x1024": 1056,
+                    "1024x1536": 1584,
+                    "1536x1024": 1568
+                  },
+                  high: {
+                    "1024x1024": 4160,
+                    "1024x1536": 6240,
+                    "1536x1024": 6208
+                  }
+                }
+              }
+            };
+          } else if (batchFillType === 'price') {
             return {
               ...model,
               price: batchFillValue,
               videoPrice: '',
               ratio: '',
               completionRatio: '',
+              imageTokenPricingData: null,
             };
           } else if (batchFillType === 'videoPrice') {
             return {
@@ -358,6 +403,7 @@ export default function ModelRatioNotSetEditor(props) {
               videoPrice: batchFillValue,
               ratio: '',
               completionRatio: '',
+              imageTokenPricingData: null,
             };
           } else if (batchFillType === 'ratio') {
             return {
@@ -365,6 +411,7 @@ export default function ModelRatioNotSetEditor(props) {
               price: '',
               videoPrice: '',
               ratio: batchFillValue,
+              imageTokenPricingData: null,
             };
           } else if (batchFillType === 'completionRatio') {
             return {
@@ -372,6 +419,7 @@ export default function ModelRatioNotSetEditor(props) {
               price: '',
               videoPrice: '',
               completionRatio: batchFillValue,
+              imageTokenPricingData: null,
             };
           } else if (batchFillType === 'bothRatio') {
             return {
@@ -380,6 +428,7 @@ export default function ModelRatioNotSetEditor(props) {
               videoPrice: '',
               ratio: batchRatioValue,
               completionRatio: batchCompletionRatioValue,
+              imageTokenPricingData: null,
             };
           }
         }
@@ -393,15 +442,17 @@ export default function ModelRatioNotSetEditor(props) {
       content: t('已为 {{count}} 个模型设置{{type}}', {
         count: selectedRowKeys.length,
         type:
-          batchFillType === 'price'
-            ? t('固定价格')
-            : batchFillType === 'videoPrice'
-              ? t('视频每秒价格')
-              : batchFillType === 'ratio'
-                ? t('模型倍率')
-                : batchFillType === 'completionRatio'
-                  ? t('补全倍率')
-                  : t('模型倍率和补全倍率'),
+          batchFillType === 'imageTokenPricing'
+            ? t('图像Token表定价')
+            : batchFillType === 'price'
+              ? t('固定价格')
+              : batchFillType === 'videoPrice'
+                ? t('视频每秒价格')
+                : batchFillType === 'ratio'
+                  ? t('模型倍率')
+                  : batchFillType === 'completionRatio'
+                    ? t('补全倍率')
+                    : t('模型倍率和补全倍率'),
       }),
       duration: 3,
     });
@@ -598,6 +649,12 @@ export default function ModelRatioNotSetEditor(props) {
           {t('视频每秒价格')}
         </Radio>
         <Radio
+          checked={batchFillType === 'imageTokenPricing'}
+          onChange={() => handleBatchTypeChange('imageTokenPricing')}
+        >
+          {t('图像Token表定价')}
+        </Radio>
+        <Radio
           checked={batchFillType === 'bothRatio'}
           onChange={() => handleBatchTypeChange('bothRatio')}
         >
@@ -607,7 +664,19 @@ export default function ModelRatioNotSetEditor(props) {
             </div>
           </Form.Section>
 
-          {batchFillType === 'bothRatio' ? (
+          {batchFillType === 'imageTokenPricing' ? (
+            <div style={{ padding: '12px', background: '#f5f5f5', borderRadius: '4px' }}>
+              <Text type='secondary'>
+                {t('将应用微软官方标准配置：')}
+              </Text>
+              <ul style={{ margin: '8px 0', paddingLeft: '20px' }}>
+                <li>{t('输入文本价格: $5.00 / 1M tokens')}</li>
+                <li>{t('输入图像价格: $10.00 / 1M tokens')}</li>
+                <li>{t('输出图像价格: $40.00 / 1M tokens')}</li>
+                <li>{t('Token表：包含low/medium/high三种质量')}</li>
+              </ul>
+            </div>
+          ) : batchFillType === 'bothRatio' ? (
             <>
               <Form.Input
                 field='batchRatioValue'
@@ -650,15 +719,17 @@ export default function ModelRatioNotSetEditor(props) {
             <Text type='tertiary'>
               {t('当前设置类型: ')}{' '}
               <Text strong>
-                {batchFillType === 'price'
-                  ? t('固定价格')
-                  : batchFillType === 'videoPrice'
-                    ? t('视频每秒价格')
-                    : batchFillType === 'ratio'
-                      ? t('模型倍率')
-                      : batchFillType === 'completionRatio'
-                        ? t('补全倍率')
-                        : t('模型倍率和补全倍率')}
+                {batchFillType === 'imageTokenPricing'
+                  ? t('图像Token表定价')
+                  : batchFillType === 'price'
+                    ? t('固定价格')
+                    : batchFillType === 'videoPrice'
+                      ? t('视频每秒价格')
+                      : batchFillType === 'ratio'
+                        ? t('模型倍率')
+                        : batchFillType === 'completionRatio'
+                          ? t('补全倍率')
+                          : t('模型倍率和补全倍率')}
               </Text>
             </Text>
           </div>

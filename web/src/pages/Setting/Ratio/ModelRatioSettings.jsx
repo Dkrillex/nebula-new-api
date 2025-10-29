@@ -53,6 +53,8 @@ export default function ModelRatioSettings(props) {
     OriginCompletionRatio: '',
     VideoModelPricePerSecond: '',
     OriginVideoModelPricePerSecond: '',
+    ImageTokenPricing: '',
+    OriginImageTokenPricing: '',
   });
   const refForm = useRef();
   const [inputsRow, setInputsRow] = useState(inputs);
@@ -80,6 +82,8 @@ export default function ModelRatioSettings(props) {
               'AudioCompletionRatio',
               'VideoModelPricePerSecond',
               'OriginVideoModelPricePerSecond',
+              'ImageTokenPricing',
+              'OriginImageTokenPricing',
             ];
             if (jsonKeys.includes(key) && str === '') return '{}';
             return str;
@@ -170,6 +174,12 @@ export default function ModelRatioSettings(props) {
     }
     if (!currentInputs.hasOwnProperty('OriginVideoModelPricePerSecond')) {
       currentInputs.OriginVideoModelPricePerSecond = '';
+    }
+    if (!currentInputs.hasOwnProperty('ImageTokenPricing')) {
+      currentInputs.ImageTokenPricing = '';
+    }
+    if (!currentInputs.hasOwnProperty('OriginImageTokenPricing')) {
+      currentInputs.OriginImageTokenPricing = '';
     }
     setInputs(currentInputs);
     setInputsRow(structuredClone(currentInputs));
@@ -447,6 +457,58 @@ export default function ModelRatioSettings(props) {
               ]}
               onChange={(value) =>
                 setInputs({ ...inputs, AudioCompletionRatio: value })
+              }
+            />
+          </Col>
+        </Row>
+        <Row gutter={16}>
+          <Col xs={24} sm={16}>
+            <Form.TextArea
+              label={t('图像Token表定价')}
+              extraText={t(
+                '用于 gpt-image-1 等特殊图像模型，包含三种价格（输入文本/输入图像/输出图像）和固定Token表',
+              )}
+              placeholder={t(
+                '为一个 JSON 文本，格式：{"gpt-image-1": {"input_text_price": 5.0, "input_image_price": 10.0, "output_image_price": 40.0, "token_table": {"medium": {"1024x1024": 1056}}}}',
+              )}
+              field={'ImageTokenPricing'}
+              autosize={{ minRows: 6, maxRows: 12 }}
+              trigger='blur'
+              stopValidateWithError
+              rules={[
+                {
+                  validator: (rule, value) => verifyJSON(value),
+                  message: '不是合法的 JSON 字符串',
+                },
+              ]}
+              onChange={(value) =>
+                setInputs({ ...inputs, ImageTokenPricing: value })
+              }
+            />
+          </Col>
+        </Row>
+        <Row gutter={16}>
+          <Col xs={24} sm={16}>
+            <Form.TextArea
+              label={t('原始图像Token表定价')}
+              extraText={t(
+                '微软官方原价，用于在模型广场中展示原价和优惠价对比，吸引用户',
+              )}
+              placeholder={t(
+                '为一个 JSON 文本，格式与 ImageTokenPricing 相同',
+              )}
+              field={'OriginImageTokenPricing'}
+              autosize={{ minRows: 6, maxRows: 12 }}
+              trigger='blur'
+              stopValidateWithError
+              rules={[
+                {
+                  validator: (rule, value) => verifyJSON(value),
+                  message: '不是合法的 JSON 字符串',
+                },
+              ]}
+              onChange={(value) =>
+                setInputs({ ...inputs, OriginImageTokenPricing: value })
               }
             />
           </Col>

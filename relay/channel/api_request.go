@@ -63,7 +63,8 @@ func DoApiRequest(a Adaptor, c *gin.Context, info *common.RelayInfo, requestBody
 		return nil, fmt.Errorf("get request url failed: %w", err)
 	}
 	if common2.DebugEnabled {
-		println("fullRequestURL:", fullRequestURL)
+		logger.LogDebug(c, fmt.Sprintf("[DoApiRequest] Method: %s, URL: %s", c.Request.Method, fullRequestURL))
+		logger.LogDebug(c, fmt.Sprintf("[DoApiRequest] Content-Type: %s", c.Request.Header.Get("Content-Type")))
 	}
 	req, err := http.NewRequest(c.Request.Method, fullRequestURL, requestBody)
 	if err != nil {

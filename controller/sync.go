@@ -1242,3 +1242,145 @@ func SyncDownloadVideoBase64(c *gin.Context) {
 	// 转发到内部处理
 	VideoDownloadBase64(c)
 }
+
+// SyncImageEdits 处理系统间的图像编辑请求
+// 支持 JSON 和 multipart/form-data 两种格式
+func SyncImageEdits(c *gin.Context) {
+	var newAPIError *types.NewAPIError
+
+	defer func() {
+		if newAPIError != nil {
+			c.JSON(newAPIError.StatusCode, gin.H{
+				"error": newAPIError.ToOpenAIError(),
+			})
+		}
+	}()
+
+	// 解析请求体
+	imageRequest := &dto.SyncImageGenerationRequest{}
+	err := common.UnmarshalBodyReusable(c, imageRequest)
+	if err != nil {
+		newAPIError = types.NewError(err, types.ErrorCodeInvalidRequest)
+		return
+	}
+
+	// 获取用户ID
+	userId := imageRequest.UserId
+	if userId <= 0 {
+		newAPIError = types.NewError(errors.New("无效的用户ID"), types.ErrorCodeInvalidRequest)
+		return
+	}
+
+	// 先尝试从缓存获取用户信息
+	userCache, err := model.GetUserCache(userId)
+	if err != nil {
+		// 缓存中没有，从数据库查询
+		user, dbErr := model.GetUserById(userId, true)
+		if dbErr != nil {
+			newAPIError = types.NewError(errors.New("用户不存在"), types.ErrorCodeInvalidRequest)
+			return
+		}
+		// 将查询结果转换为缓存对象
+		userCache = user.ToBaseUser()
+	}
+
+	// 检查用户状态
+	if userCache.Status != common.UserStatusEnabled {
+		newAPIError = types.NewError(errors.New("用户已被禁用"), types.ErrorCodeInvalidRequest)
+		return
+	}
+
+	// 验证模型参数
+	if imageRequest.Model == "" {
+		newAPIError = types.NewError(errors.New("请选择模型"), types.ErrorCodeInvalidRequest)
+		return
+	}
+	c.Set("original_model", imageRequest.Model)
+
+	// 设置分组
+	group := imageRequest.Group
+	if group == "" {
+		group = userCache.Group
+	}
+	c.Set("group", group)
+
+	// 设置用户ID到上下文
+	c.Set("id", userId)
+
+	// 写入用户缓存到上下文
+	userCache.WriteContext(c)
+
+	// 创建临时令牌
+	tempToken := &model.Token{
+		UserId: userId,
+		Name:   fmt.Sprintf("nebula-image-edits-%s", group),
+		Group:  group,
+	}
+	_ = middleware.SetupContextForToken(c, tempToken)
+
+	// 直接调用CacheGetRandomSatisfiedChannel获取最高优先级渠道，绕过getChannel的上下文依赖
+	channel, _, err := model.CacheGetRandomSatisfiedChannel(c, group, imageRequest.Model, 0)
+	if err != nil {
+		newAPIError = types.NewError(fmt.Errorf("获取分组 %s 下模型 %s 的可用渠道失败: %s", group, imageRequest.Model, err.Error()), types.ErrorCodeGetChannelFailed, types.ErrOptionWithSkipRetry())
+		return
+	}
+	if channel == nil {
+		newAPIError = types.NewError(fmt.Errorf("分组 %s 下模型 %s 的可用渠道不存在", group, imageRequest.Model), types.ErrorCodeGetChannelFailed, types.ErrOptionWithSkipRetry())
+		return
+	}
+	// 设置渠道上下文
+	newAPIError = middleware.SetupContextForSelectedChannel(c, channel, imageRequest.Model)
+	if newAPIError != nil {
+		return
+	}
+
+	// 构建标准的ImageRequest，包含Extra字段
+	standardImageRequest := &dto.ImageRequest{
+		Model:          imageRequest.Model,
+		Prompt:         imageRequest.Prompt,
+		N:              imageRequest.N,
+		Size:           imageRequest.Size,
+		Quality:        imageRequest.Quality,
+		ResponseFormat: imageRequest.ResponseFormat,
+		InputFidelity:  imageRequest.InputFidelity, // 图生图特有参数
+		Extra:          imageRequest.Extra,         // 传递私有参数（包括 image）
+	}
+
+	// 调试日志：简化输出接收到的入参
+	if common.DebugEnabled {
+		common.SysLog(fmt.Sprintf("[SyncImageEdits] 接收参数: Model=%s, Prompt=%s, Size=%s, Quality=%s, N=%d, InputFidelity=%s, UserId=%d",
+			imageRequest.Model, imageRequest.Prompt, imageRequest.Size, imageRequest.Quality, imageRequest.N, imageRequest.InputFidelity, userId))
+		if standardImageRequest.Extra != nil {
+			if _, hasImage := standardImageRequest.Extra["image"]; hasImage {
+				common.SysLog(fmt.Sprintf("[SyncImageEdits] 输入图片: 1张"))
+			} else if imagesData, ok := standardImageRequest.Extra["images"]; ok {
+				var images []string
+				if json.Unmarshal(imagesData, &images) == nil {
+					common.SysLog(fmt.Sprintf("[SyncImageEdits] 输入图片: %d张", len(images)))
+				}
+			}
+		}
+	}
+
+	// 如果有Style字段，转换为json.RawMessage
+	if imageRequest.Style != "" {
+		styleBytes, _ := json.Marshal(imageRequest.Style)
+		standardImageRequest.Style = styleBytes
+	}
+
+	// 将标准请求重新设置到请求体中
+	requestBytes, err := json.Marshal(standardImageRequest)
+	if err != nil {
+		newAPIError = types.NewError(err, types.ErrorCodeInvalidRequest)
+		return
+	}
+
+	c.Request.Body = io.NopCloser(bytes.NewReader(requestBytes))
+	c.Request.ContentLength = int64(len(requestBytes))
+
+	// 设置请求开始时间
+	common.SetContextKey(c, constant.ContextKeyRequestStartTime, time.Now())
+
+	// 转发请求到模型
+	Relay(c, types.RelayFormatOpenAIImage)
+}

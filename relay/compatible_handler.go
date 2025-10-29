@@ -198,6 +198,27 @@ func postConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, usage 
 		}
 		extraContent += "（可能是请求出错）"
 	}
+
+	modelName := relayInfo.OriginModelName
+	tokenName := ctx.GetString("token_name")
+	groupRatio := relayInfo.PriceData.GroupRatioInfo.GroupRatio
+
+	// 添加调试日志
+	logger.LogDebug(ctx, fmt.Sprintf("[postConsumeQuota] UseImageTokenPricing: %v", relayInfo.PriceData.UseImageTokenPricing))
+	logger.LogDebug(ctx, fmt.Sprintf("[postConsumeQuota] ModelName: %s", modelName))
+
+	// ========== 特殊计费：图像Token表定价（gpt-image-1）==========
+	if relayInfo.PriceData.UseImageTokenPricing {
+		logger.LogDebug(ctx, "[postConsumeQuota] 使用 ImageTokenPricing 计费")
+		quota := calculateImageTokenPricingQuota(ctx, relayInfo, usage, extraContent)
+		logger.LogDebug(ctx, fmt.Sprintf("[postConsumeQuota] 计算出的 quota: %d", quota))
+		recordImageTokenPricingConsume(ctx, relayInfo, usage, quota, tokenName)
+		return
+	} else {
+		logger.LogDebug(ctx, "[postConsumeQuota] 使用常规计费")
+	}
+
+	// ========== 常规计费流程 ==========
 	useTimeSeconds := time.Now().Unix() - relayInfo.StartTime.Unix()
 	promptTokens := usage.PromptTokens
 	cacheTokens := usage.PromptTokensDetails.CachedTokens
@@ -206,14 +227,10 @@ func postConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, usage 
 	completionTokens := usage.CompletionTokens
 	cachedCreationTokens := usage.PromptTokensDetails.CachedCreationTokens
 
-	modelName := relayInfo.OriginModelName
-
-	tokenName := ctx.GetString("token_name")
 	completionRatio := relayInfo.PriceData.CompletionRatio
 	cacheRatio := relayInfo.PriceData.CacheRatio
 	imageRatio := relayInfo.PriceData.ImageRatio
 	modelRatio := relayInfo.PriceData.ModelRatio
-	groupRatio := relayInfo.PriceData.GroupRatioInfo.GroupRatio
 	modelPrice := relayInfo.PriceData.ModelPrice
 	cachedCreationRatio := relayInfo.PriceData.CacheCreationRatio
 
@@ -375,7 +392,7 @@ func postConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, usage 
 		// in this case, must be some error happened
 		// we cannot just return, because we may have to return the pre-consumed quota
 		quota = 0
-		logContent += fmt.Sprintf("（可能是上游超时）")
+		logContent += "（可能是上游超时）"
 		logger.LogError(ctx, fmt.Sprintf("total tokens is 0, cannot consume quota, userId %d, channelId %d, "+
 			"tokenId %d, model %s， pre-consumed quota %d", relayInfo.UserId, relayInfo.ChannelId, relayInfo.TokenId, modelName, relayInfo.FinalPreConsumedQuota))
 	} else {
@@ -482,6 +499,228 @@ func postConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, usage 
 		ChannelId:        relayInfo.ChannelId,
 		PromptTokens:     promptTokens,
 		CompletionTokens: completionTokens,
+		ModelName:        logModel,
+		TokenName:        tokenName,
+		Quota:            quota,
+		Content:          logContent,
+		TokenId:          relayInfo.TokenId,
+		UseTimeSeconds:   int(useTimeSeconds),
+		IsStream:         relayInfo.IsStream,
+		Group:            relayInfo.UsingGroup,
+		Other:            other,
+	})
+}
+
+// calculateImageTokenPricingQuota 计算图像Token表定价的配额
+// 使用厂商返回的真实 tokens，价格从配置查表获取
+func calculateImageTokenPricingQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, usage *dto.Usage, extraContent string) int {
+	pricing := relayInfo.PriceData.ImageTokenPricing
+	groupRatio := relayInfo.PriceData.GroupRatioInfo.GroupRatio
+
+	// 从 usage 和 context 获取真实的 tokens（不再查表）
+	inputTextTokens := 0
+	inputImageTokens := 0
+	outputTokens := 0
+
+	if usage != nil {
+		// 输出 tokens（使用厂商返回的真实值）
+		outputTokens = usage.CompletionTokens
+
+		// 从 context 中获取 input_tokens_details
+		if inputDetails, ok := ctx.Get("input_tokens_details"); ok {
+			if details, ok := inputDetails.(map[string]interface{}); ok {
+				if imageTokens, ok := details["image_tokens"].(int); ok {
+					inputImageTokens = imageTokens
+				}
+				if textTokens, ok := details["text_tokens"].(int); ok {
+					inputTextTokens = textTokens
+				}
+			}
+		}
+
+		// 备用：从 InputTokensDetails 获取
+		if inputImageTokens == 0 && inputTextTokens == 0 && usage.InputTokensDetails != nil {
+			inputImageTokens = usage.InputTokensDetails.ImageTokens
+			inputTextTokens = usage.InputTokensDetails.TextTokens
+		}
+
+		// 最后备用：估算
+		if inputImageTokens == 0 && inputTextTokens == 0 && usage.PromptTokens > 0 {
+			inputTextTokens = 80
+			inputImageTokens = usage.PromptTokens - inputTextTokens
+		}
+	}
+
+	// 获取生成图片数量
+	imageCount := 1
+	if v, exists := ctx.Get("generated_images_count"); exists {
+		if n, ok := v.(int); ok && n > 0 {
+			imageCount = n
+		}
+	}
+
+	// 计算费用（使用真实tokens，价格从配置查表）
+	dInputTextTokens := decimal.NewFromInt(int64(inputTextTokens))
+	dInputImageTokens := decimal.NewFromInt(int64(inputImageTokens))
+	dOutputTokens := decimal.NewFromInt(int64(outputTokens))
+	dImageCount := decimal.NewFromInt(int64(imageCount))
+
+	dInputTextPrice := decimal.NewFromFloat(pricing.InputTextPrice)
+	dInputImagePrice := decimal.NewFromFloat(pricing.InputImagePrice)
+	dOutputImagePrice := decimal.NewFromFloat(pricing.OutputImagePrice)
+	dOneMillion := decimal.NewFromInt(1000000)
+
+	// 计算各部分费用
+	inputTextCost := dInputTextTokens.Mul(dInputTextPrice).Div(dOneMillion)
+	inputImageCost := dInputImageTokens.Mul(dInputImagePrice).Div(dOneMillion)
+	outputCost := dOutputTokens.Mul(dOutputImagePrice).Div(dOneMillion).Mul(dImageCount)
+
+	totalCost := inputTextCost.Add(inputImageCost).Add(outputCost)
+	totalCost = totalCost.Mul(decimal.NewFromFloat(groupRatio))
+	quota := totalCost.Mul(decimal.NewFromFloat(common.QuotaPerUnit))
+
+	// 简化日志
+	quality := ctx.GetString("image_quality")
+	size := ctx.GetString("image_size")
+	if common.DebugEnabled {
+		logger.LogDebug(ctx, fmt.Sprintf("[ImageTokenPricing计费] %s %s | 文本=%d 图片输入=%d 输出=%d | $%.6f quota=%d",
+			quality, size, inputTextTokens, inputImageTokens, outputTokens, totalCost.InexactFloat64(), int(quota.Round(0).IntPart())))
+	}
+
+	return int(quota.Round(0).IntPart())
+}
+
+// recordImageTokenPricingConsume 记录图像Token表定价的消费
+func recordImageTokenPricingConsume(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, usage *dto.Usage, quota int, tokenName string) {
+	useTimeSeconds := time.Now().Unix() - relayInfo.StartTime.Unix()
+	modelName := relayInfo.OriginModelName
+
+	// 获取图像相关信息
+	quality := ctx.GetString("image_quality")
+	if quality == "" {
+		quality = "medium"
+	}
+	size := ctx.GetString("image_size")
+	if size == "" {
+		size = "1024x1024"
+	}
+	imageCount := 1
+	if v, exists := ctx.Get("generated_images_count"); exists {
+		if n, ok := v.(int); ok && n > 0 {
+			imageCount = n
+		}
+	}
+
+	logContent := fmt.Sprintf("图像Token表计费: 质量=%s, 尺寸=%s, 数量=%d张", quality, size, imageCount)
+
+	// 更新用户和渠道配额
+	if quota > 0 {
+		model.UpdateUserUsedQuotaAndRequestCount(relayInfo.UserId, quota)
+		model.UpdateChannelUsedQuota(relayInfo.ChannelId, quota)
+	}
+
+	// 计算差额
+	quotaDelta := quota - relayInfo.FinalPreConsumedQuota
+
+	if quotaDelta > 0 {
+		logger.LogInfo(ctx, fmt.Sprintf("预扣费后补扣费：%s（实际消耗：%s，预扣费：%s）",
+			logger.FormatQuota(quotaDelta),
+			logger.FormatQuota(quota),
+			logger.FormatQuota(relayInfo.FinalPreConsumedQuota),
+		))
+	} else if quotaDelta < 0 {
+		logger.LogInfo(ctx, fmt.Sprintf("预扣费后返还扣费：%s（实际消耗：%s，预扣费：%s）",
+			logger.FormatQuota(-quotaDelta),
+			logger.FormatQuota(quota),
+			logger.FormatQuota(relayInfo.FinalPreConsumedQuota),
+		))
+	}
+
+	if quotaDelta != 0 {
+		err := service.PostConsumeQuota(relayInfo, quotaDelta, relayInfo.FinalPreConsumedQuota, true)
+		if err != nil {
+			logger.LogError(ctx, "error consuming token remain quota: "+err.Error())
+		}
+	}
+
+	// 记录消费日志
+	logModel := modelName
+	if relayInfo.UpstreamModelName != "" && relayInfo.UpstreamModelName != modelName {
+		logModel = fmt.Sprintf("%s->%s", modelName, relayInfo.UpstreamModelName)
+	}
+
+	// 从 usage 中获取真实的 tokens
+	pricing := relayInfo.PriceData.ImageTokenPricing
+	inputTextTokens := 0
+	inputImageTokens := 0
+	outputTokens := 0
+
+	if usage != nil {
+		// 输出 tokens（使用厂商返回的真实值）
+		outputTokens = usage.CompletionTokens
+
+		// 从 context 中获取 input_tokens_details
+		if inputDetails, ok := ctx.Get("input_tokens_details"); ok {
+			if details, ok := inputDetails.(map[string]interface{}); ok {
+				if imageTokens, ok := details["image_tokens"].(int); ok {
+					inputImageTokens = imageTokens
+				}
+				if textTokens, ok := details["text_tokens"].(int); ok {
+					inputTextTokens = textTokens
+				}
+			}
+		}
+
+		// 如果没有 details，尝试从 InputTokensDetails 获取（备用方案）
+		if inputImageTokens == 0 && inputTextTokens == 0 && usage.InputTokensDetails != nil {
+			inputImageTokens = usage.InputTokensDetails.ImageTokens
+			inputTextTokens = usage.InputTokensDetails.TextTokens
+		}
+
+		// 如果还是没有，用总输入减去估算的文本tokens
+		if inputImageTokens == 0 && inputTextTokens == 0 && usage.PromptTokens > 0 {
+			inputTextTokens = 80 // 估算
+			inputImageTokens = usage.PromptTokens - inputTextTokens
+		}
+	}
+
+	// 获取输入图片数量
+	inputImageCount := 0
+	if v, exists := ctx.Get("input_images_count"); exists {
+		if n, ok := v.(int); ok && n > 0 {
+			inputImageCount = n
+		}
+	}
+
+	// 计算总费用（用于 content 字段）
+	inputTextCost := float64(inputTextTokens) * pricing.InputTextPrice / 1000000
+	inputImageCost := float64(inputImageTokens) * pricing.InputImagePrice / 1000000
+	outputCost := float64(outputTokens) * pricing.OutputImagePrice / 1000000
+	totalCost := (inputTextCost + inputImageCost + outputCost) * relayInfo.PriceData.GroupRatioInfo.GroupRatio
+
+	// 更新 logContent，包含详细的计费信息
+	logContent = fmt.Sprintf("图像Token计费: 质量=%s, 尺寸=%s, 输出=%d张 | 输入文本=%dtokens 输入图片=%dtokens 输出=%dtokens | 费用=$%.6f",
+		quality, size, imageCount, inputTextTokens, inputImageTokens, outputTokens, totalCost)
+
+	// 构建详细的 other 信息
+	other := make(map[string]any)
+	other["image_token_pricing"] = true
+	other["image_quality"] = quality
+	other["image_size"] = size
+	other["input_images_count"] = inputImageCount
+	other["output_images_count"] = imageCount
+	other["input_text_tokens"] = inputTextTokens
+	other["input_image_tokens"] = inputImageTokens
+	other["output_tokens"] = outputTokens
+	other["input_text_price"] = pricing.InputTextPrice
+	other["input_image_price"] = pricing.InputImagePrice
+	other["output_image_price"] = pricing.OutputImagePrice
+	other["group_ratio"] = relayInfo.PriceData.GroupRatioInfo.GroupRatio
+
+	model.RecordConsumeLog(ctx, relayInfo.UserId, model.RecordConsumeLogParams{
+		ChannelId:        relayInfo.ChannelId,
+		PromptTokens:     usage.PromptTokens, // 总输入tokens
+		CompletionTokens: outputTokens,       // 真实输出tokens
 		ModelName:        logModel,
 		TokenName:        tokenName,
 		Quota:            quota,

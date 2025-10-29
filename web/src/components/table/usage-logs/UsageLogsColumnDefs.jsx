@@ -40,6 +40,7 @@ import {
   renderClaudeModelPrice,
   renderModelPrice,
   renderVideoPerSecondPrice,
+  renderImageTokenPricing,
 } from '../../../helpers';
 import { IconHelpCircle } from '@douyinfe/semi-icons';
 import { Route } from 'lucide-react';
@@ -561,8 +562,46 @@ export const getLogsColumns = ({
         }
         
         let content;
-        // 检查是否为视频按秒计费
-        if (other?.video_seconds && other?.video_price_per_second) {
+        // 检查是否为图像Token表计费
+        if (other?.image_token_pricing) {
+          const tooltipContent = (
+            <div style={{ padding: 8 }}>
+              <div><strong>{t('计费类型')}:</strong> {t('图像Token表计费')}</div>
+              <div><strong>{t('质量')}:</strong> {other.image_quality || 'medium'}</div>
+              <div><strong>{t('尺寸')}:</strong> {other.image_size || '1024x1024'}</div>
+              <div><strong>{t('输入文本tokens')}:</strong> {other.input_text_tokens || 0}</div>
+              <div><strong>{t('输入图片')}:</strong> {other.input_images_count || 0}{t('张')} ({other.input_image_tokens || 0} tokens)</div>
+              <div><strong>{t('输出图片')}:</strong> {other.output_images_count || 0}{t('张')} ({other.output_tokens || 0} tokens)</div>
+              <div><strong>{t('分组倍率')}:</strong> {other.group_ratio || 1.0}</div>
+            </div>
+          );
+          content = renderImageTokenPricing(
+            other.input_text_tokens || 0,
+            other.input_image_tokens || 0,
+            other.output_tokens || 0,
+            other.input_text_price || 0,
+            other.input_image_price || 0,
+            other.output_image_price || 0,
+            other.input_images_count || 0,
+            other.output_images_count || 0,
+            other.group_ratio || 1.0
+          );
+          // 将Tooltip包装在content外层
+          const wrappedContent = (
+            <Tooltip content={tooltipContent}>
+              <span style={{ color: '#1890ff', cursor: 'pointer' }}>
+                {t('图像Token计费')} 📊
+              </span>
+            </Tooltip>
+          );
+          content = (
+            <div>
+              {wrappedContent}
+              {content}
+            </div>
+          );
+        } else if (other?.video_seconds && other?.video_price_per_second) {
+          // 检查是否为视频按秒计费
           content = renderVideoPerSecondPrice(
             other.video_seconds,
             other.video_price_per_second,

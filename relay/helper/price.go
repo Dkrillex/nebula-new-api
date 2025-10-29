@@ -44,6 +44,18 @@ func HandleGroupRatio(ctx *gin.Context, relayInfo *relaycommon.RelayInfo) types.
 }
 
 func ModelPriceHelper(c *gin.Context, info *relaycommon.RelayInfo, promptTokens int, meta *types.TokenCountMeta) (types.PriceData, error) {
+	// 优先级1：检查图像Token表定价（gpt-image-1等特殊图像模型）
+	imageTokenPricing, hasImageTokenPricing := ratio_setting.GetImageTokenPricing(info.OriginModelName)
+	if hasImageTokenPricing {
+		groupRatioInfo := HandleGroupRatio(c, info)
+		return types.PriceData{
+			UseImageTokenPricing: true,
+			ImageTokenPricing:    imageTokenPricing,
+			GroupRatioInfo:       groupRatioInfo,
+		}, nil
+	}
+
+	// 优先级2：检查按次计费（ModelPrice）
 	modelPrice, usePrice := ratio_setting.GetModelPrice(info.OriginModelName, false)
 
 	groupRatioInfo := HandleGroupRatio(c, info)
@@ -73,7 +85,7 @@ func ModelPriceHelper(c *gin.Context, info *relaycommon.RelayInfo, promptTokens 
 				acceptUnsetRatio = true
 			}
 
-			// 只有当三种定价方式（ModelPrice、ModelRatio、VideoModelPricePerSecond）都没有配置时才报错
+			// 只有当四种定价方式（ImageTokenPricing、VideoModelPricePerSecond、ModelPrice、ModelRatio）都没有配置时才报错
 			if !acceptUnsetRatio && !hasVideoPrice {
 				return types.PriceData{}, fmt.Errorf("模型 %s 倍率或价格未配置，请联系管理员设置或开始自用模式；Model %s ratio or price not set, please set or start self-use mode", matchName, matchName)
 			}

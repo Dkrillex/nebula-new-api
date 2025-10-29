@@ -148,10 +148,24 @@ func GetAndValidOpenAIImageRequest(c *gin.Context, relayMode int) (*dto.ImageReq
 			imageRequest.Quality = formData.Get("quality")
 			imageRequest.Size = formData.Get("size")
 
-			if imageRequest.Model == "gpt-image-1" {
+			// 标记为图像编辑（有输入图像）
+			c.Set("has_input_image", true)
+
+			if imageRequest.Model == "gpt-image-1" || imageRequest.Model == "gpt-image-1-mini" {
 				if imageRequest.Quality == "" {
-					imageRequest.Quality = "standard"
+					if imageRequest.Model == "gpt-image-1-mini" {
+						imageRequest.Quality = "medium"
+					} else {
+						imageRequest.Quality = "high"
+					}
 				}
+				// 验证质量参数值
+				validQualities := map[string]bool{"low": true, "medium": true, "high": true}
+				if !validQualities[imageRequest.Quality] {
+					imageRequest.Quality = "medium" // 使用默认值
+				}
+				// 强制使用 b64_json 格式
+				imageRequest.ResponseFormat = "b64_json"
 			}
 			if imageRequest.N == 0 {
 				imageRequest.N = 1
@@ -197,9 +211,48 @@ func GetAndValidOpenAIImageRequest(c *gin.Context, relayMode int) (*dto.ImageReq
 			if imageRequest.Size == "" {
 				imageRequest.Size = "1024x1024"
 			}
-		} else if imageRequest.Model == "gpt-image-1" {
+		} else if imageRequest.Model == "gpt-image-1" || imageRequest.Model == "gpt-image-1-mini" {
+			// gpt-image-1 支持的尺寸: 1024x1024, 1024x1536, 1536x1024
+			if imageRequest.Size != "" && imageRequest.Size != "1024x1024" && imageRequest.Size != "1024x1536" && imageRequest.Size != "1536x1024" {
+				return nil, errors.New("size must be one of 1024x1024, 1024x1536 or 1536x1024 for gpt-image-1")
+			}
+			if imageRequest.Size == "" {
+				imageRequest.Size = "1024x1024"
+			}
+
+			// gpt-image-1 质量选项: low, medium, high (默认 high)
+			// gpt-image-1-mini 默认 medium
 			if imageRequest.Quality == "" {
-				imageRequest.Quality = "auto"
+				if imageRequest.Model == "gpt-image-1-mini" {
+					imageRequest.Quality = "medium"
+				} else {
+					imageRequest.Quality = "high"
+				}
+			}
+			// 验证质量参数值
+			validQualities := map[string]bool{"low": true, "medium": true, "high": true}
+			if !validQualities[imageRequest.Quality] {
+				return nil, errors.New("quality must be one of low, medium, or high for gpt-image-1")
+			}
+
+			// gpt-image-1 只支持 b64_json 格式输出（但 Azure OpenAI 不支持这个参数）
+			// 验证：如果用户指定了格式，必须是 b64_json
+			if imageRequest.ResponseFormat != "" && imageRequest.ResponseFormat != "b64_json" {
+				return nil, errors.New("gpt-image-1 only supports response_format: b64_json")
+			}
+			// 注意：实际发送给 Azure 时会在 adaptor 中移除这个参数
+
+			// gpt-image-1 支持 1-10 张图片
+			if imageRequest.N > 10 {
+				return nil, errors.New("n must be between 1 and 10 for gpt-image-1")
+			}
+
+			// 验证 input_fidelity 参数（如果提供）
+			if imageRequest.InputFidelity != "" {
+				validFidelities := map[string]bool{"low": true, "medium": true, "high": true}
+				if !validFidelities[imageRequest.InputFidelity] {
+					return nil, errors.New("input_fidelity must be one of low, medium, or high for gpt-image-1")
+				}
 			}
 		}
 

@@ -1472,6 +1472,47 @@ export function renderVideoPerSecondPrice(
   );
 }
 
+export function renderImageTokenPricing(
+  inputTextTokens,
+  inputImageTokens,
+  outputTokens,
+  inputTextPrice,
+  inputImagePrice,
+  outputImagePrice,
+  inputImagesCount,
+  outputImagesCount,
+  groupRatio
+) {
+  const { symbol, rate } = getCurrencyConfig();
+  
+  const inputTextCost = (inputTextTokens * inputTextPrice * rate) / 1000000;
+  const inputImageCost = (inputImageTokens * inputImagePrice * rate) / 1000000;
+  const outputCost = (outputTokens * outputImagePrice * rate) / 1000000;
+  const subtotal = inputTextCost + inputImageCost + outputCost;
+  const totalCost = subtotal * groupRatio;
+  
+  return (
+    <div style={{ fontSize: '12px', lineHeight: '1.6' }}>
+      <div><strong>{i18next.t('日志详情')}：</strong></div>
+      <div>{i18next.t('输入文本价格')}: {symbol}{inputTextPrice.toFixed(6)}/1M tokens</div>
+      <div>{i18next.t('输入图片价格')}: {symbol}{inputImagePrice.toFixed(6)}/1M tokens</div>
+      <div>{i18next.t('输出图片价格')}: {symbol}{outputImagePrice.toFixed(6)}/1M tokens</div>
+      <div>{i18next.t('分组倍率')}: {groupRatio}</div>
+      
+      <div style={{ marginTop: 8 }}><strong>{i18next.t('计费过程')}：</strong></div>
+      <div>{i18next.t('输入文本')}: {inputTextTokens} tokens × {symbol}{inputTextPrice.toFixed(6)}/1M = {symbol}{inputTextCost.toFixed(6)}</div>
+      {inputImagesCount > 0 && (
+        <div>{i18next.t('输入图片')}: {inputImagesCount}{i18next.t('张')} × {inputImageTokens} tokens × {symbol}{inputImagePrice.toFixed(6)}/1M = {symbol}{inputImageCost.toFixed(6)}</div>
+      )}
+      <div>{i18next.t('输出图片')}: {outputImagesCount}{i18next.t('张')} × {outputTokens} tokens × {symbol}{outputImagePrice.toFixed(6)}/1M = {symbol}{outputCost.toFixed(6)}</div>
+      <div style={{ fontWeight: 'bold', marginTop: 4 }}>
+        {i18next.t('总计')}: {symbol}{totalCost.toFixed(6)} ({symbol}{subtotal.toFixed(6)} × {groupRatio})
+      </div>
+      <div style={{ color: '#999', fontSize: '11px', marginTop: 4 }}>{i18next.t('仅供参考，以实际扣费为准')}</div>
+    </div>
+  );
+}
+
 export function renderModelPriceSimple(
   modelRatio,
   modelPrice = -1,

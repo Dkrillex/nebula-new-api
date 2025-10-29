@@ -2,6 +2,7 @@ package dto
 
 import (
 	"encoding/json"
+	"fmt"
 	"one-api/common"
 	"one-api/types"
 	"reflect"
@@ -25,8 +26,9 @@ type ImageRequest struct {
 	OutputFormat      json.RawMessage `json:"output_format,omitempty"`
 	OutputCompression json.RawMessage `json:"output_compression,omitempty"`
 	PartialImages     json.RawMessage `json:"partial_images,omitempty"`
-	// Stream            bool            `json:"stream,omitempty"`
-	Watermark *bool `json:"watermark,omitempty"`
+	InputFidelity     string          `json:"input_fidelity,omitempty"` // gpt-image-1 特有: low/medium/high
+	Stream            *bool           `json:"stream,omitempty"`         // gpt-image-1 支持流式响应
+	Watermark         *bool           `json:"watermark,omitempty"`
 	// 用匿名参数接收额外参数
 	Extra map[string]json.RawMessage `json:"-"`
 }
@@ -37,6 +39,13 @@ func (i *ImageRequest) UnmarshalJSON(data []byte) error {
 	if err := common.Unmarshal(data, &rawMap); err != nil {
 		return err
 	}
+
+	// 调试日志
+	allKeys := make([]string, 0, len(rawMap))
+	for k := range rawMap {
+		allKeys = append(allKeys, k)
+	}
+	common.SysLog(fmt.Sprintf("[ImageRequest] UnmarshalJSON 收到的所有字段: %v", allKeys))
 
 	// 用 struct tag 获取所有已定义字段名
 	knownFields := GetJSONFieldNames(reflect.TypeOf(*i))
@@ -56,6 +65,18 @@ func (i *ImageRequest) UnmarshalJSON(data []byte) error {
 			i.Extra[k] = v
 		}
 	}
+
+	// 调试日志
+	if len(i.Extra) > 0 {
+		extraKeys := make([]string, 0, len(i.Extra))
+		for k := range i.Extra {
+			extraKeys = append(extraKeys, k)
+		}
+		common.SysLog(fmt.Sprintf("[ImageRequest] UnmarshalJSON Extra keys: %v", extraKeys))
+	} else {
+		common.SysLog("[ImageRequest] UnmarshalJSON Extra is empty")
+	}
+
 	return nil
 }
 
@@ -74,13 +95,13 @@ func (r ImageRequest) MarshalJSON() ([]byte, error) {
 		return nil, err
 	}
 
-	// 不能合并ExtraFields！！！！！！！！
-	// 合并 ExtraFields
-	//for k, v := range r.Extra {
-	//	if _, exists := baseMap[k]; !exists {
-	//		baseMap[k] = v
-	//	}
-	//}
+	// 合并 Extra 字段到最终的 JSON 中
+	// 只添加不存在的字段，避免覆盖已定义字段
+	for k, v := range r.Extra {
+		if _, exists := baseMap[k]; !exists {
+			baseMap[k] = v
+		}
+	}
 
 	return common.Marshal(baseMap)
 }
@@ -141,9 +162,28 @@ func (i *ImageRequest) GetTokenCountMeta() *types.TokenCountMeta {
 				qualityRatio = 1.5
 			}
 		}
+	} else if strings.HasPrefix(i.Model, "gpt-image-1") {
+		// gpt-image-1 的尺寸计费比率
+		if i.Size == "1024x1024" {
+			sizeRatio = 1.0
+		} else if i.Size == "1024x1536" || i.Size == "1536x1024" {
+			sizeRatio = 1.5
+		}
+
+		// gpt-image-1 的质量计费比率
+		switch i.Quality {
+		case "low":
+			qualityRatio = 0.5
+		case "medium":
+			qualityRatio = 1.0
+		case "high":
+			qualityRatio = 2.0
+		default:
+			qualityRatio = 1.0
+		}
 	}
 
-	// not support token count for dalle
+	// not support token count for dalle and gpt-image-1
 	return &types.TokenCountMeta{
 		CombineText:     i.Prompt,
 		MaxTokens:       1584,

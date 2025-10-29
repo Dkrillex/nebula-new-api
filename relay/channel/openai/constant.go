@@ -39,7 +39,7 @@ var ModelList = []string{
 	"text-moderation-latest", "text-moderation-stable",
 	"text-davinci-edit-001",
 	"davinci-002", "babbage-002",
-	"dall-e-3", "gpt-image-1",
+	"dall-e-3", "gpt-image-1", "gpt-image-1-mini",
 	"whisper-1",
 	"tts-1", "tts-1-1106", "tts-1-hd", "tts-1-hd-1106",
 }

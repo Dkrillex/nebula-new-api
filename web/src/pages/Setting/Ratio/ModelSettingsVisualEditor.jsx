@@ -65,6 +65,8 @@ export default function ModelSettingsVisualEditor(props) {
       const originModelRatio = JSON.parse(props.options.OriginModelRatio || '{}');
       const originCompletionRatio = JSON.parse(props.options.OriginCompletionRatio || '{}');
       const videoModelPricePerSecond = JSON.parse(props.options.VideoModelPricePerSecond || '{}');
+      const imageTokenPricing = JSON.parse(props.options.ImageTokenPricing || '{}');
+      const originImageTokenPricing = JSON.parse(props.options.OriginImageTokenPricing || '{}');
 
       // 合并所有模型名称
       const modelNames = new Set([
@@ -75,6 +77,8 @@ export default function ModelSettingsVisualEditor(props) {
         ...Object.keys(originModelRatio),
         ...Object.keys(originCompletionRatio),
         ...Object.keys(videoModelPricePerSecond),
+        ...Object.keys(imageTokenPricing),
+        ...Object.keys(originImageTokenPricing),
       ]);
 
       const modelData = Array.from(modelNames).map((name) => {
@@ -85,6 +89,8 @@ export default function ModelSettingsVisualEditor(props) {
         const originRatio = originModelRatio[name] === undefined ? '' : originModelRatio[name];
         const originComp = originCompletionRatio[name] === undefined ? '' : originCompletionRatio[name];
         const videoPrice = videoModelPricePerSecond[name] === undefined ? '' : videoModelPricePerSecond[name];
+        const imageTokenPricingData = imageTokenPricing[name] || null;
+        const originImageTokenPricingData = originImageTokenPricing[name] || null;
 
         // 计算原始输入价格（从原始模型倍率转换）
         const originTokenPrice = originRatio !== '' ? (parseFloat(originRatio) * 2).toString() : '';
@@ -93,6 +99,14 @@ export default function ModelSettingsVisualEditor(props) {
         const originCompletionTokenPrice = originComp !== '' && originTokenPrice !== ''
           ? (parseFloat(originComp) * parseFloat(originTokenPrice)).toString()
           : '';
+
+        // 检测冲突：四种定价方式互斥（price、videoPrice、ratio、imageTokenPricing）
+        const pricingMethodsCount = [
+          price !== '',
+          videoPrice !== '',
+          ratio !== '' || comp !== '',
+          imageTokenPricingData !== null
+        ].filter(Boolean).length;
 
         return {
           name,
@@ -105,7 +119,9 @@ export default function ModelSettingsVisualEditor(props) {
           originTokenPrice,
           originCompletionTokenPrice,
           videoPrice,
-          hasConflict: (price !== '' || videoPrice !== '') && (ratio !== '' || comp !== ''),
+          imageTokenPricingData,
+          originImageTokenPricingData,
+          hasConflict: pricingMethodsCount > 1,
         };
       });
 
@@ -142,6 +158,8 @@ export default function ModelSettingsVisualEditor(props) {
       OriginModelRatio: {},
       OriginCompletionRatio: {},
       VideoModelPricePerSecond: {},
+      ImageTokenPricing: {},
+      OriginImageTokenPricing: {},
     };
     let currentConvertModelName = '';
 
@@ -149,8 +167,14 @@ export default function ModelSettingsVisualEditor(props) {
       // 数据转换
       models.forEach((model) => {
         currentConvertModelName = model.name;
-        // 视频每秒价格、固定价格、倍率三者互斥
-        if (model.videoPrice !== '') {
+        // 四种定价方式互斥：imageTokenPricing > videoPrice > price > ratio
+        if (model.imageTokenPricingData) {
+          // 图像Token表定价
+          output.ImageTokenPricing[model.name] = model.imageTokenPricingData;
+          if (model.originImageTokenPricingData) {
+            output.OriginImageTokenPricing[model.name] = model.originImageTokenPricingData;
+          }
+        } else if (model.videoPrice !== '') {
           // 如果视频价格不为空，则转换为浮点数，忽略其他价格和倍率参数
           output.VideoModelPricePerSecond[model.name] = parseFloat(model.videoPrice);
         } else if (model.price !== '') {
@@ -165,19 +189,21 @@ export default function ModelSettingsVisualEditor(props) {
             );
         }
 
-        // 处理原始模型配置
-        if (model.originPrice !== '')
-          output.OriginModelPrice[model.name] = parseFloat(model.originPrice);
-        if (model.originRatio !== '')
-          output.OriginModelRatio[model.name] = parseFloat(model.originRatio);
-        if (model.originCompletionRatio !== '')
-          output.OriginCompletionRatio[model.name] = parseFloat(model.originCompletionRatio);
+        // 处理原始模型配置（仅在非图像Token表计费时）
+        if (!model.imageTokenPricingData) {
+          if (model.originPrice !== '')
+            output.OriginModelPrice[model.name] = parseFloat(model.originPrice);
+          if (model.originRatio !== '')
+            output.OriginModelRatio[model.name] = parseFloat(model.originRatio);
+          if (model.originCompletionRatio !== '')
+            output.OriginCompletionRatio[model.name] = parseFloat(model.originCompletionRatio);
 
-        // 如果有原始输入价格，转换为原始模型倍率存储
-        if (model.originTokenPrice !== '') {
-          const originTokenPrice = parseFloat(model.originTokenPrice);
-          const originRatio = originTokenPrice / 2; // 使用相同的转换逻辑
-          output.OriginModelRatio[model.name] = originRatio;
+          // 如果有原始输入价格，转换为原始模型倍率存储
+          if (model.originTokenPrice !== '') {
+            const originTokenPrice = parseFloat(model.originTokenPrice);
+            const originRatio = originTokenPrice / 2; // 使用相同的转换逻辑
+            output.OriginModelRatio[model.name] = originRatio;
+          }
         }
       });
 
@@ -190,6 +216,8 @@ export default function ModelSettingsVisualEditor(props) {
         OriginModelRatio: JSON.stringify(output.OriginModelRatio, null, 2),
         OriginCompletionRatio: JSON.stringify(output.OriginCompletionRatio, null, 2),
         VideoModelPricePerSecond: JSON.stringify(output.VideoModelPricePerSecond, null, 2),
+        ImageTokenPricing: JSON.stringify(output.ImageTokenPricing, null, 2),
+        OriginImageTokenPricing: JSON.stringify(output.OriginImageTokenPricing, null, 2),
       };
 
       const requestQueue = Object.entries(finalOutput).map(([key, value]) => {
@@ -552,7 +580,9 @@ export default function ModelSettingsVisualEditor(props) {
     let initialPricingMode = 'per-token';
     let initialPricingSubMode = 'ratio';
 
-    if (record.videoPrice !== '') {
+    if (record.imageTokenPricingData) {
+      initialPricingMode = 'per-image-token';
+    } else if (record.videoPrice !== '') {
       initialPricingMode = 'per-second';
     } else if (record.price !== '') {
       initialPricingMode = 'per-request';
@@ -595,7 +625,19 @@ export default function ModelSettingsVisualEditor(props) {
           name: modelCopy.name,
         };
 
-        if (initialPricingMode === 'per-second') {
+        if (initialPricingMode === 'per-image-token') {
+          // 图像Token表定价模式
+          if (modelCopy.imageTokenPricingData) {
+            formValues.inputTextPrice = modelCopy.imageTokenPricingData.input_text_price || '';
+            formValues.inputImagePrice = modelCopy.imageTokenPricingData.input_image_price || '';
+            formValues.outputImagePrice = modelCopy.imageTokenPricingData.output_image_price || '';
+          }
+          if (modelCopy.originImageTokenPricingData) {
+            formValues.originInputTextPrice = modelCopy.originImageTokenPricingData.input_text_price || '';
+            formValues.originInputImagePrice = modelCopy.originImageTokenPricingData.input_image_price || '';
+            formValues.originOutputImagePrice = modelCopy.originImageTokenPricingData.output_image_price || '';
+          }
+        } else if (initialPricingMode === 'per-second') {
           formValues.videoPriceInput = modelCopy.videoPrice;
         } else if (initialPricingMode === 'per-request') {
           formValues.priceInput = modelCopy.price;
@@ -606,12 +648,14 @@ export default function ModelSettingsVisualEditor(props) {
           formValues.completionTokenPrice = modelCopy.completionTokenPrice;
         }
 
-        // 设置原始模型配置的初始值
-        formValues.originPrice = modelCopy.originPrice || '';
-        formValues.originRatio = modelCopy.originRatio || '';
-        formValues.originCompletionRatio = modelCopy.originCompletionRatio || '';
-        formValues.originTokenPrice = modelCopy.originTokenPrice || '';
-        formValues.originCompletionTokenPrice = modelCopy.originCompletionTokenPrice || '';
+        // 设置原始模型配置的初始值（仅非图像Token表计费时）
+        if (initialPricingMode !== 'per-image-token') {
+          formValues.originPrice = modelCopy.originPrice || '';
+          formValues.originRatio = modelCopy.originRatio || '';
+          formValues.originCompletionRatio = modelCopy.originCompletionRatio || '';
+          formValues.originTokenPrice = modelCopy.originTokenPrice || '';
+          formValues.originCompletionTokenPrice = modelCopy.originCompletionTokenPrice || '';
+        }
 
         formRef.current.setValues(formValues);
       }
@@ -733,18 +777,81 @@ export default function ModelSettingsVisualEditor(props) {
               }
             }
 
+            // 处理图像Token表定价模式
+            if (pricingMode === 'per-image-token') {
+              // 构建ImageTokenPricing数据结构（包含固定Token表）
+              if (currentModel.inputTextPrice && currentModel.inputImagePrice && currentModel.outputImagePrice) {
+                valuesToSave.imageTokenPricingData = {
+                  input_text_price: parseFloat(currentModel.inputTextPrice),
+                  input_image_price: parseFloat(currentModel.inputImagePrice),
+                  output_image_price: parseFloat(currentModel.outputImagePrice),
+                  token_table: {
+                    low: {
+                      "1024x1024": 272,
+                      "1024x1536": 408,
+                      "1536x1024": 400
+                    },
+                    medium: {
+                      "1024x1024": 1056,
+                      "1024x1536": 1584,
+                      "1536x1024": 1568
+                    },
+                    high: {
+                      "1024x1024": 4160,
+                      "1024x1536": 6240,
+                      "1536x1024": 6208
+                    }
+                  }
+                };
+              }
+              
+              // 构建原始ImageTokenPricing数据结构
+              if (currentModel.originInputTextPrice && currentModel.originInputImagePrice && currentModel.originOutputImagePrice) {
+                valuesToSave.originImageTokenPricingData = {
+                  input_text_price: parseFloat(currentModel.originInputTextPrice),
+                  input_image_price: parseFloat(currentModel.originInputImagePrice),
+                  output_image_price: parseFloat(currentModel.originOutputImagePrice),
+                  token_table: {
+                    low: {
+                      "1024x1024": 272,
+                      "1024x1536": 408,
+                      "1536x1024": 400
+                    },
+                    medium: {
+                      "1024x1024": 1056,
+                      "1024x1536": 1584,
+                      "1536x1024": 1568
+                    },
+                    high: {
+                      "1024x1024": 4160,
+                      "1024x1536": 6240,
+                      "1536x1024": 6208
+                    }
+                  }
+                };
+              }
+            }
+
             // 根据定价模式清空互斥字段
-            if (pricingMode === 'per-token') {
+            if (pricingMode === 'per-image-token') {
               valuesToSave.price = '';
               valuesToSave.videoPrice = '';
+              valuesToSave.ratio = '';
+              valuesToSave.completionRatio = '';
+            } else if (pricingMode === 'per-token') {
+              valuesToSave.price = '';
+              valuesToSave.videoPrice = '';
+              valuesToSave.imageTokenPricingData = null;
             } else if (pricingMode === 'per-request') {
               valuesToSave.ratio = '';
               valuesToSave.completionRatio = '';
               valuesToSave.videoPrice = '';
+              valuesToSave.imageTokenPricingData = null;
             } else if (pricingMode === 'per-second') {
               valuesToSave.price = '';
               valuesToSave.ratio = '';
               valuesToSave.completionRatio = '';
+              valuesToSave.imageTokenPricingData = null;
             }
 
             addOrUpdateModel(valuesToSave);
@@ -808,6 +915,7 @@ export default function ModelSettingsVisualEditor(props) {
                 <Radio value='per-token'>{t('按量计费')}</Radio>
                 <Radio value='per-request'>{t('按次计费')}</Radio>
                 <Radio value='per-second'>{t('按秒计费')}</Radio>
+                <Radio value='per-image-token'>{t('图像Token表计费')}</Radio>
               </RadioGroup>
             </div>
           </Form.Section>
@@ -1010,6 +1118,94 @@ export default function ModelSettingsVisualEditor(props) {
               initValue={currentModel?.videoPrice || ''}
               suffix={t('$/秒')}
             />
+          )}
+
+          {pricingMode === 'per-image-token' && (
+            <>
+              <Form.Section text={t('实际计费价格（渠道优惠后）')}>
+                <Form.Input
+                  field='inputTextPrice'
+                  label={t('输入文本价格')}
+                  placeholder={t('输入价格，例如：5.0')}
+                  onChange={(value) =>
+                    setCurrentModel((prev) => ({
+                      ...(prev || {}),
+                      inputTextPrice: value,
+                    }))
+                  }
+                  initValue={currentModel?.inputTextPrice || ''}
+                  suffix={t('$/1M tokens')}
+                />
+                <Form.Input
+                  field='inputImagePrice'
+                  label={t('输入图像价格')}
+                  placeholder={t('输入价格，例如：10.0')}
+                  onChange={(value) =>
+                    setCurrentModel((prev) => ({
+                      ...(prev || {}),
+                      inputImagePrice: value,
+                    }))
+                  }
+                  initValue={currentModel?.inputImagePrice || ''}
+                  suffix={t('$/1M tokens')}
+                />
+                <Form.Input
+                  field='outputImagePrice'
+                  label={t('输出图像价格')}
+                  placeholder={t('输入价格，例如：40.0')}
+                  onChange={(value) =>
+                    setCurrentModel((prev) => ({
+                      ...(prev || {}),
+                      outputImagePrice: value,
+                    }))
+                  }
+                  initValue={currentModel?.outputImagePrice || ''}
+                  suffix={t('$/1M tokens')}
+                />
+              </Form.Section>
+
+              <Form.Section text={t('微软官方原价（用于对比展示）')}>
+                <Form.Input
+                  field='originInputTextPrice'
+                  label={t('原始输入文本价格')}
+                  placeholder={t('官方价格，例如：5.0')}
+                  onChange={(value) =>
+                    setCurrentModel((prev) => ({
+                      ...(prev || {}),
+                      originInputTextPrice: value,
+                    }))
+                  }
+                  initValue={currentModel?.originInputTextPrice || ''}
+                  suffix={t('$/1M tokens')}
+                />
+                <Form.Input
+                  field='originInputImagePrice'
+                  label={t('原始输入图像价格')}
+                  placeholder={t('官方价格，例如：10.0')}
+                  onChange={(value) =>
+                    setCurrentModel((prev) => ({
+                      ...(prev || {}),
+                      originInputImagePrice: value,
+                    }))
+                  }
+                  initValue={currentModel?.originInputImagePrice || ''}
+                  suffix={t('$/1M tokens')}
+                />
+                <Form.Input
+                  field='originOutputImagePrice'
+                  label={t('原始输出图像价格')}
+                  placeholder={t('官方价格，例如：40.0')}
+                  onChange={(value) =>
+                    setCurrentModel((prev) => ({
+                      ...(prev || {}),
+                      originOutputImagePrice: value,
+                    }))
+                  }
+                  initValue={currentModel?.originOutputImagePrice || ''}
+                  suffix={t('$/1M tokens')}
+                />
+              </Form.Section>
+            </>
           )}
 
           <Form.Section text={t('原始模型配置')}>

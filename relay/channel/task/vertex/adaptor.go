@@ -416,10 +416,34 @@ func convertToBase64(input string) string {
 		}
 	}
 
-	// 如果是 HTTP/HTTPS URL，需要下载并转换（暂不实现，返回原值）
+	// 如果是 HTTP/HTTPS URL，下载并转换为 base64
 	if strings.HasPrefix(input, "http://") || strings.HasPrefix(input, "https://") {
-		common.SysLog(fmt.Sprintf("[Veo] 警告: 暂不支持 URL 自动下载，请传入 base64: %s", input[:50]))
-		return input
+		common.SysLog(fmt.Sprintf("[Veo] 检测到 URL，开始下载: %s", input))
+
+		// 下载图片
+		resp, err := http.Get(input)
+		if err != nil {
+			common.SysLog(fmt.Sprintf("[Veo] 下载图片失败: %v", err))
+			return input // 返回原始 URL（虽然会失败，但至少不会 panic）
+		}
+		defer resp.Body.Close()
+
+		if resp.StatusCode != http.StatusOK {
+			common.SysLog(fmt.Sprintf("[Veo] 下载图片失败，HTTP状态: %d", resp.StatusCode))
+			return input
+		}
+
+		// 读取图片内容
+		imageData, err := io.ReadAll(resp.Body)
+		if err != nil {
+			common.SysLog(fmt.Sprintf("[Veo] 读取图片内容失败: %v", err))
+			return input
+		}
+
+		// 转换为 base64
+		base64Str := base64.StdEncoding.EncodeToString(imageData)
+		common.SysLog(fmt.Sprintf("[Veo] ✅ URL 下载并转换成功，base64 长度: %d", len(base64Str)))
+		return base64Str
 	}
 
 	// 否则假设已经是纯 base64

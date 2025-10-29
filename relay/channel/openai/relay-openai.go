@@ -607,6 +607,12 @@ func OpenaiHandlerWithUsage(c *gin.Context, info *relaycommon.RelayInfo, resp *h
 		return nil, types.NewOpenAIError(err, types.ErrorCodeReadResponseBodyFailed, http.StatusInternalServerError)
 	}
 
+	// 打印响应体（base64 截断）
+	if common.DebugEnabled {
+		truncated := common.TruncateBase64Content(string(responseBody))
+		logger.LogDebug(c, fmt.Sprintf("[OpenaiHandlerWithUsage] 响应体: %s", truncated))
+	}
+
 	var usageResp dto.SimpleResponse
 	err = common.Unmarshal(responseBody, &usageResp)
 	if err != nil {

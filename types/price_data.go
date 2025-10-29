@@ -1,6 +1,9 @@
 package types
 
-import "fmt"
+import (
+	"fmt"
+	"one-api/setting/ratio_setting"
+)
 
 type GroupRatioInfo struct {
 	GroupRatio        float64
@@ -19,6 +22,8 @@ type PriceData struct {
 	AudioCompletionRatio   float64
 	OtherRatios            map[string]float64
 	UsePrice               bool
+	UseImageTokenPricing   bool                            // 是否使用图像Token表定价
+	ImageTokenPricing      ratio_setting.ImageTokenPricing // 图像Token表定价配置
 	ShouldPreConsumedQuota int
 	GroupRatioInfo         GroupRatioInfo
 }
@@ -30,5 +35,9 @@ type PerCallPriceData struct {
 }
 
 func (p PriceData) ToSetting() string {
+	if p.UseImageTokenPricing {
+		return fmt.Sprintf("UseImageTokenPricing: true, ImageTokenPricing: {InputTextPrice: %f, InputImagePrice: %f, OutputImagePrice: %f}, GroupRatio: %f",
+			p.ImageTokenPricing.InputTextPrice, p.ImageTokenPricing.InputImagePrice, p.ImageTokenPricing.OutputImagePrice, p.GroupRatioInfo.GroupRatio)
+	}
 	return fmt.Sprintf("ModelPrice: %f, ModelRatio: %f, CompletionRatio: %f, CacheRatio: %f, GroupRatio: %f, UsePrice: %t, CacheCreationRatio: %f, ShouldPreConsumedQuota: %d, ImageRatio: %f, AudioRatio: %f, AudioCompletionRatio: %f", p.ModelPrice, p.ModelRatio, p.CompletionRatio, p.CacheRatio, p.GroupRatioInfo.GroupRatio, p.UsePrice, p.CacheCreationRatio, p.ShouldPreConsumedQuota, p.ImageRatio, p.AudioRatio, p.AudioCompletionRatio)
 }

@@ -9,6 +9,15 @@ import (
 	"sync"
 )
 
+// ImageTokenPricing 图像Token表定价结构
+// 用于 gpt-image-1 等特殊图像模型，支持多价格和固定Token表
+type ImageTokenPricing struct {
+	InputTextPrice   float64                   `json:"input_text_price"`   // 输入文本价格（$/1M tokens）
+	InputImagePrice  float64                   `json:"input_image_price"`  // 输入图像价格（$/1M tokens）
+	OutputImagePrice float64                   `json:"output_image_price"` // 输出图像价格（$/1M tokens）
+	TokenTable       map[string]map[string]int `json:"token_table"`        // Token表：quality -> size -> tokens
+}
+
 // from songquanpeng/one-api
 const (
 	USD2RMB = 7.3 // 暂定 1 USD = 7.3 RMB
@@ -60,6 +69,7 @@ var defaultModelRatio = map[string]float64{
 	"gpt-4.1-nano":                     0.05, // $0.1 / 1M tokens
 	"gpt-4.1-nano-2025-04-14":          0.05, // $0.1 / 1M tokens
 	"gpt-image-1":                      2.5,  // $5 / 1M tokens
+	"gpt-image-1-mini":                 1.0,  // $2 / 1M tokens (更经济的版本)
 	"o1":                               7.5,  // $15 / 1M tokens
 	"o1-2024-12-17":                    7.5,  // $15 / 1M tokens
 	"o1-preview":                       7.5,  // $15 / 1M tokens
@@ -334,10 +344,11 @@ var (
 )
 
 var defaultCompletionRatio = map[string]float64{
-	"gpt-4-gizmo-*":  2,
-	"gpt-4o-gizmo-*": 3,
-	"gpt-4-all":      2,
-	"gpt-image-1":    8,
+	"gpt-4-gizmo-*":    2,
+	"gpt-4o-gizmo-*":   3,
+	"gpt-4-all":        2,
+	"gpt-image-1":      8,
+	"gpt-image-1-mini": 4,
 }
 
 // InitRatioSettings initializes all model related settings maps from database
@@ -359,6 +370,12 @@ func InitRatioSettings() {
 
 	// Load videoModelPricePerSecondMap from database
 	loadVideoModelPricePerSecondFromDatabase()
+
+	// Load imageTokenPricingMap from database
+	loadImageTokenPricingFromDatabase()
+
+	// Load originImageTokenPricingMap from database
+	loadOriginImageTokenPricingFromDatabase()
 
 	// initialize audioRatioMap
 	audioRatioMapMutex.Lock()
@@ -679,10 +696,20 @@ func ModelRatio2JSONString() string {
 }
 
 var defaultImageRatio = map[string]float64{
-	"gpt-image-1": 2,
+	"gpt-image-1":      2,
+	"gpt-image-1-mini": 1,
 }
 var imageRatioMap map[string]float64
 var imageRatioMapMutex sync.RWMutex
+
+// ImageTokenPricing 相关变量
+var (
+	imageTokenPricingMap            map[string]ImageTokenPricing = nil
+	imageTokenPricingMapMutex                                    = sync.RWMutex{}
+	originImageTokenPricingMap      map[string]ImageTokenPricing = nil
+	originImageTokenPricingMapMutex                              = sync.RWMutex{}
+)
+
 var (
 	audioRatioMap      map[string]float64 = nil
 	audioRatioMapMutex                    = sync.RWMutex{}
@@ -998,6 +1025,142 @@ func loadVideoModelPricePerSecondFromDatabase() {
 	// Fallback to default if database load fails
 	videoModelPricePerSecondMap = defaultVideoModelPricePerSecond
 	common.SysLog("Using default video model price per second configuration")
+}
+
+// loadImageTokenPricingFromDatabase loads image token pricing configuration from database
+func loadImageTokenPricingFromDatabase() {
+	imageTokenPricingMapMutex.Lock()
+	defer imageTokenPricingMapMutex.Unlock()
+
+	// Try to get from database first
+	if pricingStr, exists := common.OptionMap["ImageTokenPricing"]; exists && pricingStr != "" {
+		var pricingMap map[string]ImageTokenPricing
+		if err := common.Unmarshal([]byte(pricingStr), &pricingMap); err == nil {
+			imageTokenPricingMap = pricingMap
+			common.SysLog("Loaded image token pricing configuration from database")
+			return
+		}
+	}
+
+	// Fallback to empty map if database load fails
+	imageTokenPricingMap = make(map[string]ImageTokenPricing)
+	common.SysLog("Using empty image token pricing configuration")
+}
+
+// loadOriginImageTokenPricingFromDatabase loads origin image token pricing configuration from database
+func loadOriginImageTokenPricingFromDatabase() {
+	originImageTokenPricingMapMutex.Lock()
+	defer originImageTokenPricingMapMutex.Unlock()
+
+	// Try to get from database first
+	if pricingStr, exists := common.OptionMap["OriginImageTokenPricing"]; exists && pricingStr != "" {
+		var pricingMap map[string]ImageTokenPricing
+		if err := common.Unmarshal([]byte(pricingStr), &pricingMap); err == nil {
+			originImageTokenPricingMap = pricingMap
+			common.SysLog("Loaded origin image token pricing configuration from database")
+			return
+		}
+	}
+
+	// Fallback to empty map if database load fails
+	originImageTokenPricingMap = make(map[string]ImageTokenPricing)
+	common.SysLog("Using empty origin image token pricing configuration")
+}
+
+// GetImageTokenPricing 返回模型的图像Token表定价配置
+func GetImageTokenPricing(name string) (ImageTokenPricing, bool) {
+	imageTokenPricingMapMutex.RLock()
+	defer imageTokenPricingMapMutex.RUnlock()
+
+	name = FormatMatchingModelName(name)
+
+	pricing, ok := imageTokenPricingMap[name]
+	return pricing, ok
+}
+
+// GetOriginImageTokenPricing 返回模型的原始图像Token表定价配置（用于展示对比）
+func GetOriginImageTokenPricing(name string) (ImageTokenPricing, bool) {
+	originImageTokenPricingMapMutex.RLock()
+	defer originImageTokenPricingMapMutex.RUnlock()
+
+	name = FormatMatchingModelName(name)
+
+	pricing, ok := originImageTokenPricingMap[name]
+	return pricing, ok
+}
+
+// UpdateImageTokenPricingByJSONString 通过JSON字符串更新图像Token表定价配置
+func UpdateImageTokenPricingByJSONString(jsonStr string) error {
+	imageTokenPricingMapMutex.Lock()
+	defer imageTokenPricingMapMutex.Unlock()
+
+	imageTokenPricingMap = make(map[string]ImageTokenPricing)
+	err := common.Unmarshal([]byte(jsonStr), &imageTokenPricingMap)
+	if err == nil {
+		InvalidateExposedDataCache()
+	}
+	return err
+}
+
+// UpdateOriginImageTokenPricingByJSONString 通过JSON字符串更新原始图像Token表定价配置
+func UpdateOriginImageTokenPricingByJSONString(jsonStr string) error {
+	originImageTokenPricingMapMutex.Lock()
+	defer originImageTokenPricingMapMutex.Unlock()
+
+	originImageTokenPricingMap = make(map[string]ImageTokenPricing)
+	err := common.Unmarshal([]byte(jsonStr), &originImageTokenPricingMap)
+	if err == nil {
+		InvalidateExposedDataCache()
+	}
+	return err
+}
+
+// ImageTokenPricing2JSONString 将图像Token表定价配置转换为JSON字符串
+func ImageTokenPricing2JSONString() string {
+	imageTokenPricingMapMutex.RLock()
+	defer imageTokenPricingMapMutex.RUnlock()
+
+	jsonBytes, err := common.Marshal(imageTokenPricingMap)
+	if err != nil {
+		common.SysError("error marshalling image token pricing: " + err.Error())
+	}
+	return string(jsonBytes)
+}
+
+// OriginImageTokenPricing2JSONString 将原始图像Token表定价配置转换为JSON字符串
+func OriginImageTokenPricing2JSONString() string {
+	originImageTokenPricingMapMutex.RLock()
+	defer originImageTokenPricingMapMutex.RUnlock()
+
+	jsonBytes, err := common.Marshal(originImageTokenPricingMap)
+	if err != nil {
+		common.SysError("error marshalling origin image token pricing: " + err.Error())
+	}
+	return string(jsonBytes)
+}
+
+// GetImageTokenPricingCopy 获取图像Token表定价配置的副本
+func GetImageTokenPricingCopy() map[string]ImageTokenPricing {
+	imageTokenPricingMapMutex.RLock()
+	defer imageTokenPricingMapMutex.RUnlock()
+
+	copyMap := make(map[string]ImageTokenPricing, len(imageTokenPricingMap))
+	for k, v := range imageTokenPricingMap {
+		copyMap[k] = v
+	}
+	return copyMap
+}
+
+// GetOriginImageTokenPricingCopy 获取原始图像Token表定价配置的副本
+func GetOriginImageTokenPricingCopy() map[string]ImageTokenPricing {
+	originImageTokenPricingMapMutex.RLock()
+	defer originImageTokenPricingMapMutex.RUnlock()
+
+	copyMap := make(map[string]ImageTokenPricing, len(originImageTokenPricingMap))
+	for k, v := range originImageTokenPricingMap {
+		copyMap[k] = v
+	}
+	return copyMap
 }
 
 // printLoadedConfiguration prints the loaded configuration summary

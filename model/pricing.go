@@ -317,15 +317,26 @@ func updatePricing() {
 			pricing.Tags = meta.Tags
 			pricing.VendorID = meta.VendorID
 		}
-		modelPrice, findPrice := ratio_setting.GetModelPrice(model, false)
-		if findPrice {
-			pricing.ModelPrice = modelPrice
-			pricing.QuotaType = 1
+		// 优先级1：检查图像Token表定价
+		imageTokenPricing, hasImageTokenPricing := ratio_setting.GetImageTokenPricing(model)
+		if hasImageTokenPricing {
+			pricing.QuotaType = 2 // 图像Token表计费
+			// 计算示例价格（medium quality 1024×1024 单张成本）
+			// (80 prompt_tokens × $5 + 1056 output_tokens × $40) / 1M
+			pricing.ModelPrice = (80.0*imageTokenPricing.InputTextPrice + 1056.0*imageTokenPricing.OutputImagePrice) / 1000000.0
 		} else {
-			modelRatio, _, _ := ratio_setting.GetModelRatio(model)
-			pricing.ModelRatio = modelRatio
-			pricing.CompletionRatio = ratio_setting.GetCompletionRatio(model)
-			pricing.QuotaType = 0
+			// 优先级2：检查按次计费（ModelPrice）
+			modelPrice, findPrice := ratio_setting.GetModelPrice(model, false)
+			if findPrice {
+				pricing.ModelPrice = modelPrice
+				pricing.QuotaType = 1
+			} else {
+				// 优先级3：按量计费（ModelRatio）
+				modelRatio, _, _ := ratio_setting.GetModelRatio(model)
+				pricing.ModelRatio = modelRatio
+				pricing.CompletionRatio = ratio_setting.GetCompletionRatio(model)
+				pricing.QuotaType = 0
+			}
 		}
 		pricingMap = append(pricingMap, pricing)
 	}

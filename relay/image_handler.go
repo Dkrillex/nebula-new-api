@@ -2,6 +2,7 @@ package relay
 
 import (
 	"bytes"
+	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
@@ -20,6 +21,14 @@ import (
 
 func ImageHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *types.NewAPIError) {
 	info.InitChannelMeta(c)
+
+	// 初始化 PriceData（必须在处理请求之前）
+	meta := &types.TokenCountMeta{MaxTokens: 0}
+	priceData, err := helper.ModelPriceHelper(c, info, 1, meta)
+	if err != nil {
+		return types.NewOpenAIError(err, types.ErrorCodeModelPriceError, http.StatusInternalServerError)
+	}
+	info.PriceData = priceData
 
 	imageReq, ok := info.Request.(*dto.ImageRequest)
 	if !ok {
@@ -114,13 +123,52 @@ func ImageHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *type
 		usage.(*dto.Usage).PromptTokens = int(request.N)
 	}
 
+	// 提取并传递 input_tokens_details（用于图像Token计费）
+	if usage != nil {
+		usageData := usage.(*dto.Usage)
+		if usageData.InputTokensDetails != nil {
+			// 将 InputTokenDetails 转换为 map 存入 context
+			inputDetails := make(map[string]interface{})
+			inputDetails["image_tokens"] = usageData.InputTokensDetails.ImageTokens
+			inputDetails["text_tokens"] = usageData.InputTokensDetails.TextTokens
+			c.Set("input_tokens_details", inputDetails)
+
+			if common.DebugEnabled {
+				logger.LogDebug(c, fmt.Sprintf("[ImageHelper] InputTokensDetails: image_tokens=%d, text_tokens=%d",
+					usageData.InputTokensDetails.ImageTokens, usageData.InputTokensDetails.TextTokens))
+			}
+		}
+	}
+
 	// 设置生成图片数量到 context，用于按次计费乘数计算
 	if _, exists := c.Get("generated_images_count"); !exists {
 		c.Set("generated_images_count", int(request.N))
 	}
 
+	// 设置图像质量和尺寸到 context（用于 ImageTokenPricing 计费）
+	c.Set("image_quality", request.Quality)
+	c.Set("image_size", request.Size)
+
+	// 设置输入图片数量（用于 ImageTokenPricing 计费）
+	if request.Extra != nil {
+		if imagesData, ok := request.Extra["images"]; ok {
+			var images []string
+			if err := json.Unmarshal(imagesData, &images); err == nil {
+				c.Set("input_images_count", len(images))
+				if common.DebugEnabled {
+					logger.LogDebug(c, fmt.Sprintf("[ImageHelper] 输入图片数量: %d", len(images)))
+				}
+			}
+		} else if _, ok := request.Extra["image"]; ok {
+			c.Set("input_images_count", 1)
+			if common.DebugEnabled {
+				logger.LogDebug(c, "[ImageHelper] 输入图片数量: 1")
+			}
+		}
+	}
+
 	quality := "standard"
-	if request.Quality == "hd" {
+	if request.Quality == "hd" || request.Quality == "high" {
 		quality = "hd"
 	}
 
@@ -128,6 +176,11 @@ func ImageHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *type
 
 	if len(request.Size) > 0 {
 		logContent = fmt.Sprintf("大小 %s, 品质 %s, 张数 %d", request.Size, quality, request.N)
+	}
+
+	// 调试日志：打印计费信息
+	if common.DebugEnabled {
+		logger.LogDebug(c, fmt.Sprintf("[ImageHelper] 开始计费: %s", logContent))
 	}
 
 	postConsumeQuota(c, info, usage.(*dto.Usage), logContent)

@@ -1,6 +1,10 @@
 package dto
 
-import "encoding/json"
+import (
+	"encoding/json"
+	"fmt"
+	"one-api/common"
+)
 
 type PlayGroundRequest struct {
 	Model string `json:"model,omitempty"`
@@ -32,7 +36,8 @@ type SyncImageGenerationRequest struct {
 	Quality        string `json:"quality,omitempty"`
 	ResponseFormat string `json:"response_format,omitempty"`
 	Style          string `json:"style,omitempty"`
-	// 用匿名参数接收额外参数，支持大模型私有参数（包括contents等）
+	InputFidelity  string `json:"input_fidelity,omitempty"` // gpt-image-1 图生图特有参数
+	// 用匿名参数接收额外参数，支持大模型私有参数（包括contents、image等）
 	Extra map[string]json.RawMessage `json:"-"`
 }
 
@@ -62,6 +67,13 @@ func (r *SyncImageGenerationRequest) UnmarshalJSON(data []byte) error {
 		return err
 	}
 
+	// 调试日志：打印所有收到的字段
+	allKeys := make([]string, 0, len(rawMap))
+	for k := range rawMap {
+		allKeys = append(allKeys, k)
+	}
+	common.SysLog(fmt.Sprintf("[SyncImageGenerationRequest] UnmarshalJSON 收到的所有字段: %v", allKeys))
+
 	// 定义已知字段
 	knownFields := map[string]struct{}{
 		"user_id":         {},
@@ -73,6 +85,8 @@ func (r *SyncImageGenerationRequest) UnmarshalJSON(data []byte) error {
 		"quality":         {},
 		"response_format": {},
 		"style":           {},
+		"input_fidelity":  {}, // gpt-image-1 图生图参数
+		// 注意：image 和 images 应该放入 Extra，不在此列表中
 	}
 
 	// 正常解析已定义字段
@@ -90,6 +104,18 @@ func (r *SyncImageGenerationRequest) UnmarshalJSON(data []byte) error {
 			r.Extra[k] = v
 		}
 	}
+
+	// 调试日志
+	if len(r.Extra) > 0 {
+		extraKeys := make([]string, 0, len(r.Extra))
+		for k := range r.Extra {
+			extraKeys = append(extraKeys, k)
+		}
+		common.SysLog(fmt.Sprintf("[SyncImageGenerationRequest] UnmarshalJSON Extra keys: %v", extraKeys))
+	} else {
+		common.SysLog("[SyncImageGenerationRequest] UnmarshalJSON Extra is empty")
+	}
+
 	return nil
 }
 

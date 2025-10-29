@@ -764,7 +764,7 @@ func updateExistingConsumeLog(task *model.Task, taskResult *relaycommon.TaskInfo
 	otherMap["actual_output_tokens"] = outputTokens
 	otherMap["actual_quota"] = actualQuota
 	otherMap["quota_delta"] = quotaDelta
-	otherMap["video_url"] = taskResult.Url
+	// 不存储 video_url，避免将 base64 视频数据存储到日志中
 	otherMap["billing_type"] = "final_billing" // 标记为最终计费
 
 	// 添加视频任务特有的字段
@@ -942,7 +942,7 @@ func handleVideoTaskBillingBySeconds(c *gin.Context, task *model.Task, taskResul
 	other["task_id"] = task.TaskID
 	other["actual_seconds"] = actualSeconds
 	other["actual_quota"] = actualQuota
-	other["video_url"] = taskResult.Url
+	// 不存储 video_url，避免将 base64 视频数据存储到日志中
 	other["model_name"] = modelName
 	other["model_price"] = modelPrice
 	other["group_ratio"] = groupRatio
