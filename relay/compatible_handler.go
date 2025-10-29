@@ -551,19 +551,10 @@ func calculateImageTokenPricingQuota(ctx *gin.Context, relayInfo *relaycommon.Re
 		}
 	}
 
-	// 获取生成图片数量
-	imageCount := 1
-	if v, exists := ctx.Get("generated_images_count"); exists {
-		if n, ok := v.(int); ok && n > 0 {
-			imageCount = n
-		}
-	}
-
 	// 计算费用（使用真实tokens，价格从配置查表）
 	dInputTextTokens := decimal.NewFromInt(int64(inputTextTokens))
 	dInputImageTokens := decimal.NewFromInt(int64(inputImageTokens))
 	dOutputTokens := decimal.NewFromInt(int64(outputTokens))
-	dImageCount := decimal.NewFromInt(int64(imageCount))
 
 	dInputTextPrice := decimal.NewFromFloat(pricing.InputTextPrice)
 	dInputImagePrice := decimal.NewFromFloat(pricing.InputImagePrice)
@@ -573,7 +564,8 @@ func calculateImageTokenPricingQuota(ctx *gin.Context, relayInfo *relaycommon.Re
 	// 计算各部分费用
 	inputTextCost := dInputTextTokens.Mul(dInputTextPrice).Div(dOneMillion)
 	inputImageCost := dInputImageTokens.Mul(dInputImagePrice).Div(dOneMillion)
-	outputCost := dOutputTokens.Mul(dOutputImagePrice).Div(dOneMillion).Mul(dImageCount)
+	// outputTokens 已经是所有输出图片的总tokens，不需要再乘以图片数量
+	outputCost := dOutputTokens.Mul(dOutputImagePrice).Div(dOneMillion)
 
 	totalCost := inputTextCost.Add(inputImageCost).Add(outputCost)
 	totalCost = totalCost.Mul(decimal.NewFromFloat(groupRatio))
