@@ -115,6 +115,13 @@ func main() {
 		model.InitBatchUpdater()
 	}
 
+	// Veo 视频任务清理线程（清理超过保留期的大字段）
+	{
+		retentionHours := common.GetEnvOrDefault("VIDEO_RETENTION_HOURS", 12)
+		intervalMinutes := common.GetEnvOrDefault("VIDEO_CLEAN_INTERVAL_MINUTES", 30)
+		model.StartVeoFailReasonCleaner(retentionHours, intervalMinutes)
+	}
+
 	if os.Getenv("ENABLE_PPROF") == "true" {
 		gopool.Go(func() {
 			log.Println(http.ListenAndServe("0.0.0.0:8005", nil))
