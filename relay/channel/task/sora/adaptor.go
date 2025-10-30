@@ -440,7 +440,8 @@ func buildMultipartRequest(c *gin.Context, params map[string]interface{}, imageB
 		if err := writer.WriteField(key, valueStr); err != nil {
 			return nil, fmt.Errorf("写入字段 %s 失败: %v", key, err)
 		}
-		common.SysLog(fmt.Sprintf("[Sora] 添加表单字段: %s = %s", key, valueStr))
+		// 仅打印字段名，避免在日志中泄露表单值
+		common.SysLog(fmt.Sprintf("[Sora] 添加表单字段: %s", key))
 	}
 
 	// 2. 添加图片文件（手动设置正确的MIME类型）

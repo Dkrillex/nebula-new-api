@@ -124,9 +124,17 @@ func ValidateMultipartDirect(c *gin.Context, info *RelayInfo) *dto.TaskError {
 		}
 		defer form.RemoveAll()
 
-		// 添加调试日志
-		common.SysLog(fmt.Sprintf("[RelayUtils] 解析到的表单字段: %v", form.Value))
-		common.SysLog(fmt.Sprintf("[RelayUtils] 解析到的文件字段: %v", form.File))
+		// 添加调试日志（仅打印键名与数量，避免泄露内容/二进制）
+		fieldKeys := make([]string, 0, len(form.Value))
+		for k := range form.Value {
+			fieldKeys = append(fieldKeys, k)
+		}
+		fileKeys := make([]string, 0, len(form.File))
+		for k := range form.File {
+			fileKeys = append(fileKeys, k)
+		}
+		common.SysLog(fmt.Sprintf("[RelayUtils] 解析到的表单字段(keys): %v", fieldKeys))
+		common.SysLog(fmt.Sprintf("[RelayUtils] 解析到的文件字段(keys): %v", fileKeys))
 
 		prompts, ok := form.Value["prompt"]
 		if !ok || len(prompts) == 0 {
@@ -134,14 +142,15 @@ func ValidateMultipartDirect(c *gin.Context, info *RelayInfo) *dto.TaskError {
 			return createTaskError(fmt.Errorf("prompt field is required"), "missing_prompt", http.StatusBadRequest, true)
 		}
 		prompt = prompts[0]
-		common.SysLog(fmt.Sprintf("[RelayUtils] 找到 prompt: %s", prompt))
+		// 仅打印提示长度，避免完整内容泄露
+		common.SysLog(fmt.Sprintf("[RelayUtils] 找到 prompt，长度: %d", len(prompt)))
 
 		if _, ok := form.Value["model"]; !ok {
 			common.SysLog("[RelayUtils] 缺少 model 字段")
 			return createTaskError(fmt.Errorf("model field is required"), "missing_model", http.StatusBadRequest, true)
 		}
 		model = form.Value["model"][0]
-		common.SysLog(fmt.Sprintf("[RelayUtils] 找到 model: %s", model))
+		common.SysLog("[RelayUtils] 找到 model 字段")
 
 		if _, ok := form.File["input_reference"]; ok {
 			hasInputReference = true
