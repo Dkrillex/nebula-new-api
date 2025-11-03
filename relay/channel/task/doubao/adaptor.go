@@ -9,6 +9,7 @@ import (
 	"one-api/common"
 	"one-api/dto"
 	relaycommon "one-api/relay/common"
+	"one-api/service"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -189,9 +190,16 @@ func (a *TaskAdaptor) DoRequest(c *gin.Context, info *relaycommon.RelayInfo, req
 		common.SysLog(fmt.Sprintf("[Doubao]   Body: %s", truncatedBody))
 	}
 
-	// 发送请求
-	client := &http.Client{
-		Timeout: 30 * time.Second,
+	// 发送请求 - 对于视频生成任务，使用较长的超时时间
+	// 视频生成请求可能包含较大的图片数据，需要更长的上传时间
+	client := service.GetHttpClient()
+	// 对于视频上传场景，使用5分钟超时（上传2-3MB的base64数据可能需要较长时间）
+	if client.Timeout < 300*time.Second {
+		client = &http.Client{
+			Timeout:       300 * time.Second, // 5分钟超时，足够上传大型base64图片
+			CheckRedirect: client.CheckRedirect,
+			Transport:     client.Transport, // 复制Transport配置
+		}
 	}
 
 	resp, err := client.Do(req)
@@ -380,9 +388,15 @@ func (a *TaskAdaptor) FetchTask(baseUrl, key string, body map[string]any) (*http
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer "+key)
 
-	// 发送请求
-	client := &http.Client{
-		Timeout: 30 * time.Second,
+	// 发送请求 - 视频任务查询也使用较长的超时时间
+	client := service.GetHttpClient()
+	// 如果配置的超时时间小于60秒，则使用60秒（专门针对视频任务查询场景）
+	if client.Timeout < 60*time.Second {
+		client = &http.Client{
+			Timeout:       60 * time.Second, // 查询任务用60秒超时
+			CheckRedirect: client.CheckRedirect,
+			Transport:     client.Transport, // 复制Transport配置
+		}
 	}
 	resp, err := client.Do(req)
 	if err != nil {

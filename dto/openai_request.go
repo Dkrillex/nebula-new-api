@@ -81,6 +81,12 @@ type GeneralOpenAIRequest struct {
 	// Ali Qwen Params
 	VlHighResolutionImages json.RawMessage `json:"vl_high_resolution_images,omitempty"`
 	EnableThinking         any             `json:"enable_thinking,omitempty"`
+	// 一次性适配 Qwen 对话参数透传容器（不与标准字段冲突时将注入到上游 body.parameters）
+	QwenParameters map[string]any `json:"qwen_parameters,omitempty"`
+	// 允许将 Qwen 专有 input 扩展透传进上游 body.input（与标准 input/messages 不冲突时注入）
+	QwenInput map[string]any `json:"qwen_input,omitempty"`
+	// 仅影响下行整形：是否将 reasoning_content 转为 <think> 包裹并写入 content
+	NebulaThinkingToContent bool `json:"nebula_thinking_to_content,omitempty"`
 	// ollama Params
 	Think json.RawMessage `json:"think,omitempty"`
 	// baidu v2

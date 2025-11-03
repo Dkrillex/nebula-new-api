@@ -86,15 +86,111 @@ func (a *Adaptor) ConvertOpenAIRequest(c *gin.Context, info *relaycommon.RelayIn
 		request.Stream = true
 		info.IsStream = true
 	}
-	// fix: ali parameter.enable_thinking must be set to false for non-streaming calls
-	if !info.IsStream {
+	// 若客户端显式声明 enable_thinking，则优先采用；开启后强制流式，避免上游报错
+	// 兼容 request.EnableThinking 为任意类型（bool/字符串）
+	if request.EnableThinking != nil {
+		switch v := request.EnableThinking.(type) {
+		case bool:
+			if v {
+				request.Stream = true
+				info.IsStream = true
+			}
+		case string:
+			if strings.EqualFold(v, "true") {
+				request.EnableThinking = true
+				request.Stream = true
+				info.IsStream = true
+			}
+		}
+	}
+	// 非流式强制关闭 enable_thinking，避免上游报错
+	if !request.Stream {
 		request.EnableThinking = false
+	}
+	info.IsStream = request.Stream
+
+	// 将“推理转内容”请求开关映射到通道设置，仅影响下行整形
+	if request.NebulaThinkingToContent {
+		info.ChannelSetting.ThinkingToContent = true
+	}
+
+	// 统一构造请求体，注入 Qwen 专有参数到 parameters/input，保持 OpenAI 兼容字段不变
+	body := request.ToMap()
+	// 先准备 parameters 基础对象
+	var parameters map[string]any
+	if exist, ok := body["parameters"].(map[string]any); ok && exist != nil {
+		parameters = exist
+	} else {
+		parameters = make(map[string]any)
+	}
+	// 合并 request.QwenParameters
+	if len(request.QwenParameters) > 0 {
+		for k, v := range request.QwenParameters {
+			parameters[k] = v
+		}
+	}
+	// 合并 body.qwen_parameters，然后删除顶层 qwen_parameters，避免重复
+	if qp, ok := body["qwen_parameters"].(map[string]any); ok && qp != nil {
+		for k, v := range qp {
+			parameters[k] = v
+		}
+		delete(body, "qwen_parameters")
+	}
+	// 若用户顶层直接给了 search_options / asr_options，移动到 parameters
+	if so, ok := body["search_options"]; ok && so != nil {
+		parameters["search_options"] = so
+		delete(body, "search_options")
+	}
+	if ao, ok := body["asr_options"]; ok && ao != nil {
+		parameters["asr_options"] = ao
+		delete(body, "asr_options")
+	}
+	// 若用户顶层放了 enable_search / incremental_output，也归并到 parameters（避免歧义）
+	if es, ok := body["enable_search"]; ok {
+		parameters["enable_search"] = es
+		delete(body, "enable_search")
+	}
+	if io2, ok := body["incremental_output"]; ok {
+		parameters["incremental_output"] = io2
+		delete(body, "incremental_output")
+	}
+	if len(parameters) > 0 {
+		body["parameters"] = parameters
+	}
+	if len(request.QwenInput) > 0 {
+		// 若 body 已存在 input 且为 map，尝试浅合并；否则直接赋值
+		if exist, ok := body["input"].(map[string]any); ok && exist != nil {
+			for k, v := range request.QwenInput {
+				exist[k] = v
+			}
+			body["input"] = exist
+		} else {
+			body["input"] = request.QwenInput
+		}
+		// 删除顶层 qwen_input，避免重复
+		delete(body, "qwen_input")
+	}
+	// 删除仅内部使用的开关，避免透传
+	delete(body, "nebula_thinking_to_content")
+	// 根据 Ali 的限制再次覆盖 enable_thinking 与 stream 字段
+	// 按规则透传：流式 -> 保持 enable_thinking；非流式 -> 关闭 enable_thinking 并移除 stream
+	if info.IsStream {
+		body["enable_thinking"] = request.EnableThinking
+		body["stream"] = true
+	} else {
+		body["enable_thinking"] = false
+		delete(body, "stream")
 	}
 
 	switch info.RelayMode {
 	default:
+		// 仅对部分通用参数做范围修正（如 top_p），其余参数保持透传
 		aliReq := requestOpenAI2Ali(*request)
-		return aliReq, nil
+		// 将修正后的 top_p 等回写到 body
+		if aliReq != nil {
+			body["top_p"] = aliReq.TopP
+		}
+		return body, nil
 	}
 }
 
