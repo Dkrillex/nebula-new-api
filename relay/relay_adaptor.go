@@ -25,6 +25,7 @@ import (
 	"one-api/relay/channel/perplexity"
 	"one-api/relay/channel/siliconflow"
 	"one-api/relay/channel/submodel"
+	taskali "one-api/relay/channel/task/ali"
 	"one-api/relay/channel/task/doubao"
 	taskdoubao "one-api/relay/channel/task/doubao"
 	taskjimeng "one-api/relay/channel/task/jimeng"
@@ -132,6 +133,9 @@ func GetTaskAdaptor(platform constant.TaskPlatform) channel.TaskAdaptor {
 	}
 	if channelType, err := strconv.ParseInt(string(platform), 10, 64); err == nil {
 		switch channelType {
+		case constant.ChannelTypeAli:
+			// 阿里云通义万相视频生成
+			return &taskali.TaskAdaptor{}
 		case constant.ChannelTypeKling:
 			return &kling.TaskAdaptor{}
 		case constant.ChannelTypeJimeng:

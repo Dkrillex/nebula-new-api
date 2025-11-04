@@ -139,9 +139,10 @@ func (a *Adaptor) GetRequestURL(info *relaycommon.RelayInfo) (string, error) {
 		if info.RelayMode == relayconstant.RelayModeResponses {
 			responsesApiVersion := "preview"
 
-			subUrl := "/openai/v1/responses"
+			// 统一使用 /openai/responses（取消 /v1 前缀，兼容云策/官方 Azure）
+			subUrl := "/openai/responses"
+			// 官方 Azure 域名沿用默认 apiVersion；其他厂商若未设置，在下方用 AzureResponsesVersion 覆盖
 			if strings.Contains(info.ChannelBaseUrl, "cognitiveservices.azure.com") {
-				subUrl = "/openai/responses"
 				responsesApiVersion = apiVersion
 			}
 

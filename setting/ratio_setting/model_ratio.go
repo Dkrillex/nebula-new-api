@@ -887,6 +887,36 @@ func GetVideoModelPricePerSecondCopy() map[string]float64 {
 	return copyMap
 }
 
+// GetVideoModelPriceByResolution 根据分辨率获取视频模型价格
+// 特殊处理 wan2.5-i2v-preview 模型的分辨率定价
+func GetVideoModelPriceByResolution(modelName, resolution string) (float64, bool) {
+	if modelName != "wan2.5-i2v-preview" {
+		// 其他模型使用统一价格
+		return GetVideoModelPricePerSecond(modelName)
+	}
+
+	// 从数据库配置读取 wan2.5-i2v-preview 的分辨率价格
+	if videoStr, exists := common.OptionMap["VideoModelPricePerSecond"]; exists {
+		var rawMap map[string]interface{}
+		if err := common.Unmarshal([]byte(videoStr), &rawMap); err == nil {
+			if wan25, ok := rawMap["wan2.5-i2v-preview"].(map[string]interface{}); ok {
+				if resolutions, ok := wan25["resolutions"].(map[string]interface{}); ok {
+					if price, ok := resolutions[strings.ToLower(resolution)].(float64); ok {
+						return price, true
+					}
+				}
+				// 使用default价格作为后备
+				if def, ok := wan25["default"].(float64); ok {
+					return def, true
+				}
+			}
+		}
+	}
+
+	// 最终后备：使用默认720p价格
+	return 0.0738, true
+}
+
 // 转换模型名，减少渠道必须配置各种带参数模型
 func FormatMatchingModelName(name string) string {
 
@@ -1014,9 +1044,23 @@ func loadVideoModelPricePerSecondFromDatabase() {
 
 	// Try to get from database first
 	if videoStr, exists := common.OptionMap["VideoModelPricePerSecond"]; exists && videoStr != "" {
-		var videoMap map[string]float64
-		if err := common.Unmarshal([]byte(videoStr), &videoMap); err == nil {
-			videoModelPricePerSecondMap = videoMap
+		// 先解析为 map[string]interface{} 以处理混合类型（float64和对象）
+		var rawMap map[string]interface{}
+		if err := common.Unmarshal([]byte(videoStr), &rawMap); err == nil {
+			videoModelPricePerSecondMap = make(map[string]float64)
+			// 处理每个模型的价格配置
+			for model, value := range rawMap {
+				switch v := value.(type) {
+				case float64:
+					// 简单的float64价格
+					videoModelPricePerSecondMap[model] = v
+				case map[string]interface{}:
+					// wan2.5-i2v-preview 的特殊处理，使用default价格作为基础价格
+					if def, ok := v["default"].(float64); ok {
+						videoModelPricePerSecondMap[model] = def
+					}
+				}
+			}
 			common.SysLog("Loaded video model price per second configuration from database")
 			return
 		}

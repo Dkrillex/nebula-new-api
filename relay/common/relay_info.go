@@ -501,6 +501,12 @@ type TaskSubmitReq struct {
 	Size     string                 `json:"size,omitempty"`
 	Duration int                    `json:"duration,omitempty"`
 	Metadata map[string]interface{} `json:"metadata,omitempty"`
+	// wan2.5-i2v-preview 专用字段（Java发送的顶层参数）
+	AudioURL      string `json:"audio_url,omitempty"`      // 音频URL
+	Resolution    string `json:"resolution,omitempty"`     // 分辨率（如720p）
+	SmartRewrite  bool   `json:"smart_rewrite,omitempty"`  // 智能扩写
+	GenerateAudio bool   `json:"generate_audio,omitempty"` // 生成音频
+	Seed          int    `json:"seed,omitempty"`           // 随机种子
 }
 
 func (t TaskSubmitReq) GetPrompt() string {
@@ -512,14 +518,22 @@ func (t TaskSubmitReq) HasImage() bool {
 }
 
 type TaskInfo struct {
-	Code             int    `json:"code"`
-	TaskID           string `json:"task_id"`
-	Status           string `json:"status"`
-	Reason           string `json:"reason,omitempty"`
-	Url              string `json:"url,omitempty"`
-	Progress         string `json:"progress,omitempty"`
-	CompletionTokens int    `json:"completion_tokens,omitempty"` // 用于按倍率计费
-	TotalTokens      int    `json:"total_tokens,omitempty"`      // 用于按倍率计费
+	Code             int         `json:"code"`
+	TaskID           string      `json:"task_id"`
+	Status           string      `json:"status"`
+	Reason           string      `json:"reason,omitempty"`
+	Url              string      `json:"url,omitempty"`
+	Progress         string      `json:"progress,omitempty"`
+	CompletionTokens int         `json:"completion_tokens,omitempty"` // 用于按倍率计费
+	TotalTokens      int         `json:"total_tokens,omitempty"`      // 用于按倍率计费
+	Usage            *VideoUsage `json:"usage,omitempty"`             // 用于视频计费
+}
+
+// VideoUsage 视频使用量信息（用于按分辨率和秒数计费）
+type VideoUsage struct {
+	VideoCount int    `json:"video_count"` // 视频数量
+	Duration   int    `json:"duration"`    // 视频时长（秒）
+	Resolution string `json:"resolution"`  // 分辨率（如480p/720p/1080p）
 }
 
 // RemoveDisabledFields 从请求 JSON 数据中移除渠道设置中禁用的字段

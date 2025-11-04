@@ -214,7 +214,15 @@ func updateVideoSingleTask(ctx context.Context, adaptor channel.TaskAdaptor, cha
 			task.TaskID, task.ModelName, taskResult.TotalTokens))
 
 		// 处理任务成功后的扣费逻辑（按模型类型判断）
-		if isVeoModel(task.ModelName) {
+		if isWan25Model(task.ModelName) {
+			logger.LogInfo(ctx, fmt.Sprintf("[VideoTaskPoll] 🎯 检测到 wan2.5 模型，准备扣费 - ModelName: %s", task.ModelName))
+			// wan2.5 模型：按分辨率和秒数扣费（使用Usage信息）
+			if err := handleWan25TaskBilling(ctx, task, taskResult, channel); err != nil {
+				logger.LogError(ctx, fmt.Sprintf("[VideoTaskPoll] wan2.5 billing failed for task %s: %v", task.TaskID, err))
+			} else {
+				logger.LogInfo(ctx, fmt.Sprintf("[VideoTaskPoll] wan2.5 billing completed for task %s", task.TaskID))
+			}
+		} else if isVeoModel(task.ModelName) {
 			logger.LogInfo(ctx, fmt.Sprintf("[VideoTaskPoll] 🎯 检测到 Veo 模型，准备扣费 - ModelName: %s", task.ModelName))
 			// Veo 模型：按秒扣费
 			if err := handleVeoTaskBilling(ctx, task, channel); err != nil {
@@ -524,6 +532,18 @@ func isSora2Model(modelName string) bool {
 		strings.Contains(strings.ToLower(modelName), "sora2") ||
 		modelName == "sora-2"
 	common.SysLog(fmt.Sprintf("[isSora2Model] 🔍 判断模型: %s → 结果: %v", modelName, result))
+	return result
+}
+
+// isWan25Model 判断是否为阿里云万相 wan2.5 模型
+func isWan25Model(modelName string) bool {
+	if modelName == "" {
+		common.SysLog("[isWan25Model] ❌ modelName is empty")
+		return false
+	}
+	result := strings.Contains(strings.ToLower(modelName), "wan2.5") ||
+		strings.Contains(modelName, "wan2.5-i2v")
+	common.SysLog(fmt.Sprintf("[isWan25Model] 🔍 判断模型: %s → 结果: %v", modelName, result))
 	return result
 }
 
@@ -907,6 +927,176 @@ func handleSora2TaskBilling(ctx context.Context, task *model.Task, channel *mode
 			task.Data = updatedData
 			if err := task.Update(); err != nil {
 				logger.LogError(ctx, fmt.Sprintf("[Sora2TaskBilling] Failed to update task billing flag: %v", err))
+			}
+		}
+	}
+
+	return nil
+}
+
+// handleWan25TaskBilling 处理阿里云万相 wan2.5 任务的按分辨率和秒数扣费
+func handleWan25TaskBilling(ctx context.Context, task *model.Task, taskResult *relaycommon.TaskInfo, channel *model.Channel) error {
+	logger.LogInfo(ctx, fmt.Sprintf("[Wan25TaskBilling] ✅ 开始处理 wan2.5 扣费 - TaskID: %s, ModelName: %s", task.TaskID, task.ModelName))
+
+	// 防重复扣费：检查是否已经处理过
+	var taskData map[string]interface{}
+	if task.Data != nil {
+		if err := json.Unmarshal(task.Data, &taskData); err == nil {
+			if billingProcessed, ok := taskData["billing_processed"].(bool); ok && billingProcessed {
+				logger.LogInfo(ctx, fmt.Sprintf("[Wan25TaskBilling] Task %s already billed, skip", task.TaskID))
+				return nil
+			}
+		} else {
+			logger.LogError(ctx, fmt.Sprintf("[Wan25TaskBilling] 解析 task.Data 失败: %v", err))
+			return fmt.Errorf("unmarshal task data failed: %w", err)
+		}
+	}
+
+	// wan2.5 使用 Usage 信息（包含 duration 和 resolution）
+	if taskResult.Usage == nil {
+		logger.LogError(ctx, fmt.Sprintf("[Wan25TaskBilling] ❌ taskResult.Usage is nil for task %s", task.TaskID))
+		return fmt.Errorf("taskResult.Usage is nil")
+	}
+
+	actualDuration := taskResult.Usage.Duration
+	resolution := taskResult.Usage.Resolution
+
+	logger.LogInfo(ctx, fmt.Sprintf("[Wan25TaskBilling] Usage信息 - Duration: %d秒, Resolution: %s, VideoCount: %d",
+		actualDuration, resolution, taskResult.Usage.VideoCount))
+
+	// 获取用户信息
+	user, err := model.GetUserById(task.UserId, false)
+	if err != nil {
+		return fmt.Errorf("failed to get user %d: %w", task.UserId, err)
+	}
+
+	// 提取模型名称和token信息
+	var modelName string
+	var tokenName string
+	var tokenId int
+
+	if taskData != nil {
+		if model, ok := taskData["model"].(string); ok && model != "" {
+			modelName = model
+		}
+		if token, ok := taskData["token_name"].(string); ok && token != "" {
+			tokenName = token
+		}
+		if token, ok := taskData["token_id"].(float64); ok {
+			tokenId = int(token)
+		}
+	}
+
+	if modelName == "" {
+		modelName = task.ModelName
+	}
+	if modelName == "" {
+		modelName = "wan2.5-i2v-preview"
+	}
+	if tokenName == "" && task.ApiKey != "" {
+		tokenName = task.ApiKey
+	}
+
+	// 获取按分辨率的价格
+	videoPrice, hasVideoPrice := ratio_setting.GetVideoModelPriceByResolution(modelName, resolution)
+	if !hasVideoPrice || videoPrice <= 0 {
+		logger.LogError(ctx, fmt.Sprintf("[Wan25TaskBilling] ❌ 未找到模型价格配置: model=%s, resolution=%s", modelName, resolution))
+		return fmt.Errorf("video price not configured for model %s resolution %s", modelName, resolution)
+	}
+
+	// 获取组倍率
+	relayInfo := &relaycommon.RelayInfo{
+		OriginModelName: modelName,
+		UserId:          task.UserId,
+		UserGroup:       user.Group,
+		UsingGroup:      user.Group,
+	}
+	meta := &types.TokenCountMeta{MaxTokens: 0}
+	priceData, err := helper.ModelPriceHelper(nil, relayInfo, 1, meta)
+	if err != nil {
+		return fmt.Errorf("get model price failed: %w", err)
+	}
+
+	groupRatio := priceData.GroupRatioInfo.GroupRatio
+	if groupRatio <= 0 {
+		groupRatio = 1.0
+	}
+
+	// 计算实际扣费：价格/秒 * 秒数 * 组倍率
+	actualQuota := int(videoPrice * float64(actualDuration) * common.QuotaPerUnit * groupRatio)
+
+	logger.LogInfo(ctx, fmt.Sprintf("[Wan25TaskBilling] Billing: %d seconds × $%.4f/sec (resolution=%s) × group_ratio %.2f = quota %d",
+		actualDuration, videoPrice, resolution, groupRatio, actualQuota))
+
+	// 扣除用户余额
+	maxRetries := 3
+	for i := 0; i < maxRetries; i++ {
+		err = model.DecreaseUserQuota(task.UserId, actualQuota)
+		if err == nil {
+			break
+		}
+		if i < maxRetries-1 {
+			logger.LogWarn(ctx, fmt.Sprintf("[Wan25TaskBilling] Retry %d/%d for task %s: %v", i+1, maxRetries, task.TaskID, err))
+			time.Sleep(time.Millisecond * 100 * time.Duration(i+1))
+		}
+	}
+	if err != nil {
+		return fmt.Errorf("decrease user quota failed after %d retries: %w", maxRetries, err)
+	}
+
+	// 记录日志
+	logContent := fmt.Sprintf("wan2.5视频任务完成，实际生成 %d 秒（分辨率%s），扣费 quota: %d", actualDuration, resolution, actualQuota)
+
+	other := make(map[string]interface{})
+	other["task_id"] = task.TaskID
+	other["model_name"] = modelName
+	other["token_name"] = tokenName
+	other["token_id"] = tokenId
+	other["video_seconds"] = actualDuration
+	other["video_resolution"] = resolution
+	other["video_price_per_second"] = videoPrice
+	other["group_ratio"] = groupRatio
+	other["actual_quota"] = actualQuota
+	other["billing_type"] = "per_second_per_resolution"
+	other["platform"] = task.Platform
+	other["action"] = task.Action
+	other["video_task"] = true
+
+	otherStr := common.MapToJsonStr(other)
+	consumeLog := &model.Log{
+		UserId:           task.UserId,
+		Username:         user.Username,
+		CreatedAt:        common.GetTimestamp(),
+		Type:             model.LogTypeConsume,
+		Content:          logContent,
+		ChannelId:        task.ChannelId,
+		PromptTokens:     0,
+		CompletionTokens: actualDuration, // 用秒数作为 completion tokens
+		TokenName:        tokenName,
+		ModelName:        modelName,
+		Quota:            actualQuota,
+		UseTime:          int(task.FinishTime - task.StartTime),
+		IsStream:         false,
+		Group:            user.Group,
+		TokenId:          tokenId,
+		Ip:               "",
+		Other:            otherStr,
+	}
+
+	// 插入消费日志
+	if err := model.LOG_DB.Create(consumeLog).Error; err != nil {
+		logger.LogError(ctx, fmt.Sprintf("[Wan25TaskBilling] Failed to insert consume log for task %s: %v", task.TaskID, err))
+	}
+
+	logger.LogInfo(ctx, fmt.Sprintf("[Wan25TaskBilling] ✅ Successfully billed task %s: %d quota", task.TaskID, actualQuota))
+
+	// 扣费成功后，标记已处理
+	if taskData != nil {
+		taskData["billing_processed"] = true
+		if updatedData, err := json.Marshal(taskData); err == nil {
+			task.Data = updatedData
+			if err := task.Update(); err != nil {
+				logger.LogError(ctx, fmt.Sprintf("[Wan25TaskBilling] Failed to update task billing flag: %v", err))
 			}
 		}
 	}

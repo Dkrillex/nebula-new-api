@@ -518,6 +518,14 @@ func convertTaskStatus(status string) string {
 
 // extractVideoURL 从不同厂商的响应格式中提取视频URL
 func extractVideoURL(rawData map[string]interface{}) string {
+	// 阿里云万相格式: output.video_url
+	if output, ok := rawData["output"].(map[string]interface{}); ok {
+		if videoURL, ok := output["video_url"].(string); ok && videoURL != "" {
+			common.SysLog(fmt.Sprintf("[VideoTask] 从output.video_url提取URL（阿里云万相格式）: %s", common.TruncateBase64Content(videoURL)))
+			return videoURL
+		}
+	}
+
 	// 豆包格式: content.video_url
 	if content, ok := rawData["content"].(map[string]interface{}); ok {
 		if videoURL, ok := content["video_url"].(string); ok && videoURL != "" {
@@ -860,7 +868,18 @@ func handleVideoTaskBillingBySeconds(c *gin.Context, task *model.Task, taskResul
 	var videoPricePerSecond float64
 
 	// 1. 优先检查视频每秒价格（sora-2等按秒计费的模型）
-	videoPrice, hasVideoPrice := ratio_setting.GetVideoModelPricePerSecond(modelName)
+	var videoPrice float64
+	var hasVideoPrice bool
+
+	// 特殊处理 wan2.5-i2v-preview：根据分辨率获取价格
+	if modelName == "wan2.5-i2v-preview" && taskResult.Usage != nil && taskResult.Usage.Resolution != "" {
+		videoPrice, hasVideoPrice = ratio_setting.GetVideoModelPriceByResolution(modelName, taskResult.Usage.Resolution)
+		common.SysLog(fmt.Sprintf("[VideoTask] wan2.5-i2v-preview resolution-based pricing: %s = $%.4f/sec",
+			taskResult.Usage.Resolution, videoPrice))
+	} else {
+		videoPrice, hasVideoPrice = ratio_setting.GetVideoModelPricePerSecond(modelName)
+	}
+
 	if hasVideoPrice && videoPrice > 0 && actualSeconds > 0 {
 		// 按秒计费：价格 * 秒数
 		actualQuota = int(videoPrice * float64(actualSeconds) * common.QuotaPerUnit * groupRatio)
