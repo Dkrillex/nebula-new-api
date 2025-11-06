@@ -13,6 +13,7 @@ import (
 	"one-api/relay/helper"
 	"one-api/service"
 	"one-api/setting/model_setting"
+	"one-api/setting/ratio_setting"
 	"one-api/types"
 	"strings"
 
@@ -174,7 +175,12 @@ func ImageHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *type
 
 	var logContent string
 
-	if len(request.Size) > 0 {
+	// 检查是否为按张计费模型
+	_, hasImagePricePerImage := ratio_setting.GetImageModelPricePerImage(info.OriginModelName)
+
+	// 按张计费模型：logContent 留空，由按张计费逻辑生成完整信息
+	// 其他模型：显示大小、品质、张数信息
+	if !hasImagePricePerImage && len(request.Size) > 0 {
 		logContent = fmt.Sprintf("大小 %s, 品质 %s, 张数 %d", request.Size, quality, request.N)
 	}
 

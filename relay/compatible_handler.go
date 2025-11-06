@@ -16,6 +16,7 @@ import (
 	"one-api/service"
 	"one-api/setting/model_setting"
 	"one-api/setting/operation_setting"
+	"one-api/setting/ratio_setting"
 	"one-api/types"
 	"strings"
 	"time"
@@ -360,18 +361,45 @@ func postConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, usage 
 		// 按次计费（例如图片生成）——支持按图片数量乘以单价
 		multiplier := 1
 		if relayInfo.RelayMode == relayconstant.RelayModeImagesGenerations {
+			logger.LogDebug(ctx, "[postConsumeQuota] 进入图片生成计费分支")
+			// 获取图片数量
 			if v, exists := ctx.Get("generated_images_count"); exists {
 				if n, ok := v.(int); ok && n > 0 {
 					multiplier = n
+					logger.LogDebug(ctx, fmt.Sprintf("[postConsumeQuota] 从 generated_images_count 获取数量: %d", n))
 				}
 			} else if usage != nil && usage.TotalTokens > 0 {
 				// 兜底：没有透传图片数量时，使用 usage.TotalTokens（在 ImageHandler 中默认为请求 N）
 				multiplier = usage.TotalTokens
+				logger.LogDebug(ctx, fmt.Sprintf("[postConsumeQuota] 从 usage.TotalTokens 获取数量: %d", usage.TotalTokens))
 			}
-		}
-		quotaCalculateDecimal = dModelPrice.Mul(dQuotaPerUnit).Mul(dGroupRatio).Mul(decimal.NewFromInt(int64(multiplier)))
-		if multiplier > 1 {
-			extraContent += fmt.Sprintf("，按次计费×图片数：单价 %v，数量 %d", modelPrice, multiplier)
+
+			// 优先检查是否有按张计费配置
+			imagePrice, hasImagePrice := ratio_setting.GetImageModelPricePerImage(modelName)
+			logger.LogDebug(ctx, fmt.Sprintf("[postConsumeQuota] 检查按张计费: modelName=%s, hasImagePrice=%v, imagePrice=%.4f", modelName, hasImagePrice, imagePrice))
+
+			if hasImagePrice && imagePrice > 0 {
+				// 使用按张价格计费（单位：美元/张）
+				logger.LogDebug(ctx, fmt.Sprintf("[postConsumeQuota] 使用按张计费: %.4f USD/张 × %d张", imagePrice, multiplier))
+				quotaCalculateDecimal = decimal.NewFromFloat(imagePrice).
+					Mul(decimal.NewFromInt(int64(multiplier))).
+					Mul(dQuotaPerUnit).
+					Mul(dGroupRatio)
+
+				// 计算人民币价格用于日志显示
+				priceInCNY := imagePrice * 7.3 // USD to CNY
+				totalPriceInCNY := priceInCNY * float64(multiplier)
+				extraContent += fmt.Sprintf("图片生成：%d张 × ¥%.2f = ¥%.2f", multiplier, priceInCNY, totalPriceInCNY)
+			} else {
+				// 使用原有的按次计费逻辑（ModelPrice）
+				quotaCalculateDecimal = dModelPrice.Mul(dQuotaPerUnit).Mul(dGroupRatio).Mul(decimal.NewFromInt(int64(multiplier)))
+				if multiplier > 1 {
+					extraContent += fmt.Sprintf("，按次计费×图片数：单价 %v，数量 %d", modelPrice, multiplier)
+				}
+			}
+		} else {
+			// 非图片生成的按次计费
+			quotaCalculateDecimal = dModelPrice.Mul(dQuotaPerUnit).Mul(dGroupRatio)
 		}
 	}
 	// 添加 responses tools call 调用的配额
@@ -438,7 +466,11 @@ func postConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, usage 
 		logContent += fmt.Sprintf("，模型 %s", modelName)
 	}
 	if extraContent != "" {
-		logContent += ", " + extraContent
+		if logContent != "" {
+			logContent += ", " + extraContent
+		} else {
+			logContent = extraContent
+		}
 	}
 	other := service.GenerateTextOtherInfo(ctx, relayInfo, modelRatio, groupRatio, completionRatio, cacheTokens, cacheRatio, modelPrice, relayInfo.PriceData.GroupRatioInfo.GroupSpecialRatio)
 	if imageTokens != 0 {

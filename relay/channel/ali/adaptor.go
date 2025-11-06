@@ -44,7 +44,13 @@ func (a *Adaptor) GetRequestURL(info *relaycommon.RelayInfo) (string, error) {
 		case constant.RelayModeRerank:
 			fullRequestURL = fmt.Sprintf("%s/api/v1/services/rerank/text-rerank/text-rerank", info.ChannelBaseUrl)
 		case constant.RelayModeImagesGenerations:
-			fullRequestURL = fmt.Sprintf("%s/api/v1/services/aigc/text2image/image-synthesis", info.ChannelBaseUrl)
+			// qwen-image-plus 使用新的 multimodal-generation API
+			if info.OriginModelName == "qwen-image-plus" {
+				fullRequestURL = fmt.Sprintf("%s/api/v1/services/aigc/multimodal-generation/generation", info.ChannelBaseUrl)
+			} else {
+				// 其他模型使用旧的 text2image API
+				fullRequestURL = fmt.Sprintf("%s/api/v1/services/aigc/text2image/image-synthesis", info.ChannelBaseUrl)
+			}
 		case constant.RelayModeImagesEdits:
 			fullRequestURL = fmt.Sprintf("%s/api/v1/services/aigc/multimodal-generation/generation", info.ChannelBaseUrl)
 		case constant.RelayModeCompletions:
@@ -67,7 +73,10 @@ func (a *Adaptor) SetupRequestHeader(c *gin.Context, req *http.Header, info *rel
 		req.Set("X-DashScope-Plugin", c.GetString("plugin"))
 	}
 	if info.RelayMode == constant.RelayModeImagesGenerations {
-		req.Set("X-DashScope-Async", "enable")
+		// qwen-image-plus 使用新的 multimodal-generation API，不支持异步模式
+		if info.OriginModelName != "qwen-image-plus" {
+			req.Set("X-DashScope-Async", "enable")
+		}
 	}
 	if info.RelayMode == constant.RelayModeImagesEdits {
 		req.Set("Content-Type", "application/json")

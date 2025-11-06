@@ -496,17 +496,16 @@ func (a *Adaptor) doubaoImageHandler(c *gin.Context, resp *http.Response, info *
 	if usageData, ok := doubaoResponse["usage"].(map[string]interface{}); ok {
 		if generatedImages, exists := usageData["generated_images"]; exists {
 			count := int(generatedImages.(float64))
-			// 每张图片固定258 tokens（用于现有基于token倍率的保底计费）
-			usage.PromptTokens = count * 1
-			// 将图片数量写入总tokens，方便后续逻辑按图片数量进行按次计费
+			// 将图片数量写入总tokens，供计费逻辑使用
 			usage.TotalTokens = count
-			// 透传图片数量给后续计费流程
+			// 透传图片数量给后续计费流程（统一使用按张计费）
 			c.Set("generated_images_count", count)
 		}
 		if outputTokens, exists := usageData["output_tokens"]; exists {
 			usage.CompletionTokens = int(outputTokens.(float64))
 		}
-		if totalTokens, exists := usageData["total_tokens"]; exists {
+		if totalTokens, exists := usageData["total_tokens"]; exists && usage.TotalTokens == 0 {
+			// 如果没有 generated_images，则使用 total_tokens
 			usage.TotalTokens = int(totalTokens.(float64))
 		}
 	}

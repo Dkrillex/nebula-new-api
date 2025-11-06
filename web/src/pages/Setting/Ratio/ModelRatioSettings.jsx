@@ -55,6 +55,8 @@ export default function ModelRatioSettings(props) {
     OriginVideoModelPricePerSecond: '',
     ImageTokenPricing: '',
     OriginImageTokenPricing: '',
+    ImageModelPricePerImage: '',
+    OriginImageModelPricePerImage: '',
   });
   const refForm = useRef();
   const [inputsRow, setInputsRow] = useState(inputs);
@@ -84,6 +86,8 @@ export default function ModelRatioSettings(props) {
               'OriginVideoModelPricePerSecond',
               'ImageTokenPricing',
               'OriginImageTokenPricing',
+              'ImageModelPricePerImage',
+              'OriginImageModelPricePerImage',
             ];
             if (jsonKeys.includes(key) && str === '') return '{}';
             return str;
@@ -180,6 +184,12 @@ export default function ModelRatioSettings(props) {
     }
     if (!currentInputs.hasOwnProperty('OriginImageTokenPricing')) {
       currentInputs.OriginImageTokenPricing = '';
+    }
+    if (!currentInputs.hasOwnProperty('ImageModelPricePerImage')) {
+      currentInputs.ImageModelPricePerImage = '';
+    }
+    if (!currentInputs.hasOwnProperty('OriginImageModelPricePerImage')) {
+      currentInputs.OriginImageModelPricePerImage = '';
     }
     setInputs(currentInputs);
     setInputsRow(structuredClone(currentInputs));
@@ -509,6 +519,58 @@ export default function ModelRatioSettings(props) {
               ]}
               onChange={(value) =>
                 setInputs({ ...inputs, OriginImageTokenPricing: value })
+              }
+            />
+          </Col>
+        </Row>
+        <Row gutter={16}>
+          <Col xs={24} sm={16}>
+            <Form.TextArea
+              label={t('图片模型按张计费价格（系统价格）')}
+              extraText={t(
+                '用于实际扣费，单位：美元/张。例如 {"qwen-image-plus": 0.0247}',
+              )}
+              placeholder={t(
+                '为一个 JSON 文本，键为模型名称，值为每张图片的价格（美元）',
+              )}
+              field={'ImageModelPricePerImage'}
+              autosize={{ minRows: 3, maxRows: 8 }}
+              trigger='blur'
+              stopValidateWithError
+              rules={[
+                {
+                  validator: (rule, value) => verifyJSON(value),
+                  message: '不是合法的 JSON 字符串',
+                },
+              ]}
+              onChange={(value) =>
+                setInputs({ ...inputs, ImageModelPricePerImage: value })
+              }
+            />
+          </Col>
+        </Row>
+        <Row gutter={16}>
+          <Col xs={24} sm={16}>
+            <Form.TextArea
+              label={t('图片模型按张计费原始价格')}
+              extraText={t(
+                '厂商官方原价，用于在模型广场中展示价格对比，吸引用户，单位：美元/张',
+              )}
+              placeholder={t(
+                '为一个 JSON 文本，格式与 ImageModelPricePerImage 相同',
+              )}
+              field={'OriginImageModelPricePerImage'}
+              autosize={{ minRows: 3, maxRows: 8 }}
+              trigger='blur'
+              stopValidateWithError
+              rules={[
+                {
+                  validator: (rule, value) => verifyJSON(value),
+                  message: '不是合法的 JSON 字符串',
+                },
+              ]}
+              onChange={(value) =>
+                setInputs({ ...inputs, OriginImageModelPricePerImage: value })
               }
             />
           </Col>

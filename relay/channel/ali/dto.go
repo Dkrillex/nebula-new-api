@@ -65,6 +65,10 @@ type AliUsage struct {
 	InputTokens  int `json:"input_tokens"`
 	OutputTokens int `json:"output_tokens"`
 	TotalTokens  int `json:"total_tokens"`
+	// 图片生成相关字段
+	Width      int `json:"width,omitempty"`
+	Height     int `json:"height,omitempty"`
+	ImageCount int `json:"image_count,omitempty"`
 }
 
 type TaskResult struct {
@@ -104,6 +108,9 @@ type AliImageParameters struct {
 	Steps     string `json:"steps,omitempty"`
 	Scale     string `json:"scale,omitempty"`
 	Watermark *bool  `json:"watermark,omitempty"`
+	// qwen-image-plus 专用字段
+	NegativePrompt string `json:"negative_prompt,omitempty"`
+	PromptExtend   *bool  `json:"prompt_extend,omitempty"`
 }
 
 type AliImageInput struct {

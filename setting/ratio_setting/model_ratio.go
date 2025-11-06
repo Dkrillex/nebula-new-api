@@ -377,6 +377,12 @@ func InitRatioSettings() {
 	// Load originImageTokenPricingMap from database
 	loadOriginImageTokenPricingFromDatabase()
 
+	// Load imageModelPricePerImageMap from database
+	loadImageModelPricePerImageFromDatabase()
+
+	// Load originImageModelPricePerImageMap from database
+	loadOriginImageModelPricePerImageFromDatabase()
+
 	// initialize audioRatioMap
 	audioRatioMapMutex.Lock()
 	audioRatioMap = defaultAudioRatio
@@ -717,6 +723,18 @@ var (
 var (
 	audioCompletionRatioMap      map[string]float64 = nil
 	audioCompletionRatioMapMutex                    = sync.RWMutex{}
+)
+
+// 按张计费的图片模型价格（系统价格，用于实际扣费，单位：美元/张）
+var (
+	imageModelPricePerImageMap      map[string]float64 = nil
+	imageModelPricePerImageMapMutex                    = sync.RWMutex{}
+)
+
+// 按张计费的图片模型原始价格（厂商价格，仅用于前端展示对比，单位：美元/张）
+var (
+	originImageModelPricePerImageMap      map[string]float64 = nil
+	originImageModelPricePerImageMapMutex                    = sync.RWMutex{}
 )
 
 func ImageRatio2JSONString() string {
@@ -1202,6 +1220,130 @@ func GetOriginImageTokenPricingCopy() map[string]ImageTokenPricing {
 
 	copyMap := make(map[string]ImageTokenPricing, len(originImageTokenPricingMap))
 	for k, v := range originImageTokenPricingMap {
+		copyMap[k] = v
+	}
+	return copyMap
+}
+
+// loadImageModelPricePerImageFromDatabase 从数据库加载按张计费价格（系统价格）
+func loadImageModelPricePerImageFromDatabase() {
+	imageModelPricePerImageMapMutex.Lock()
+	defer imageModelPricePerImageMapMutex.Unlock()
+
+	if priceStr, exists := common.OptionMap["ImageModelPricePerImage"]; exists && priceStr != "" {
+		var priceMap map[string]float64
+		if err := common.Unmarshal([]byte(priceStr), &priceMap); err == nil {
+			imageModelPricePerImageMap = priceMap
+			common.SysLog("Loaded image model price per image from database")
+			return
+		}
+	}
+
+	imageModelPricePerImageMap = make(map[string]float64)
+	common.SysLog("Using empty image model price per image")
+}
+
+// loadOriginImageModelPricePerImageFromDatabase 从数据库加载原始按张计费价格（厂商价格）
+func loadOriginImageModelPricePerImageFromDatabase() {
+	originImageModelPricePerImageMapMutex.Lock()
+	defer originImageModelPricePerImageMapMutex.Unlock()
+
+	if priceStr, exists := common.OptionMap["OriginImageModelPricePerImage"]; exists && priceStr != "" {
+		var priceMap map[string]float64
+		if err := common.Unmarshal([]byte(priceStr), &priceMap); err == nil {
+			originImageModelPricePerImageMap = priceMap
+			common.SysLog("Loaded origin image model price per image from database")
+			return
+		}
+	}
+
+	originImageModelPricePerImageMap = make(map[string]float64)
+	common.SysLog("Using empty origin image model price per image")
+}
+
+// GetImageModelPricePerImage 获取按张计费价格（系统价格）
+func GetImageModelPricePerImage(name string) (float64, bool) {
+	imageModelPricePerImageMapMutex.RLock()
+	defer imageModelPricePerImageMapMutex.RUnlock()
+	price, ok := imageModelPricePerImageMap[name]
+	return price, ok
+}
+
+// GetOriginImageModelPricePerImage 获取原始按张计费价格（厂商价格）
+func GetOriginImageModelPricePerImage(name string) (float64, bool) {
+	originImageModelPricePerImageMapMutex.RLock()
+	defer originImageModelPricePerImageMapMutex.RUnlock()
+	price, ok := originImageModelPricePerImageMap[name]
+	return price, ok
+}
+
+// UpdateImageModelPricePerImageByJSONString 更新按张计费价格（系统价格）
+func UpdateImageModelPricePerImageByJSONString(jsonStr string) error {
+	imageModelPricePerImageMapMutex.Lock()
+	defer imageModelPricePerImageMapMutex.Unlock()
+	imageModelPricePerImageMap = make(map[string]float64)
+	err := common.Unmarshal([]byte(jsonStr), &imageModelPricePerImageMap)
+	if err == nil {
+		InvalidateExposedDataCache()
+	}
+	return err
+}
+
+// UpdateOriginImageModelPricePerImageByJSONString 更新原始按张计费价格（厂商价格）
+func UpdateOriginImageModelPricePerImageByJSONString(jsonStr string) error {
+	originImageModelPricePerImageMapMutex.Lock()
+	defer originImageModelPricePerImageMapMutex.Unlock()
+	originImageModelPricePerImageMap = make(map[string]float64)
+	err := common.Unmarshal([]byte(jsonStr), &originImageModelPricePerImageMap)
+	if err == nil {
+		InvalidateExposedDataCache()
+	}
+	return err
+}
+
+// ImageModelPricePerImage2JSONString 将按张计费价格（系统价格）转换为JSON字符串
+func ImageModelPricePerImage2JSONString() string {
+	imageModelPricePerImageMapMutex.RLock()
+	defer imageModelPricePerImageMapMutex.RUnlock()
+
+	jsonBytes, err := common.Marshal(imageModelPricePerImageMap)
+	if err != nil {
+		common.SysError("error marshalling image model price per image: " + err.Error())
+	}
+	return string(jsonBytes)
+}
+
+// OriginImageModelPricePerImage2JSONString 将原始按张计费价格（厂商价格）转换为JSON字符串
+func OriginImageModelPricePerImage2JSONString() string {
+	originImageModelPricePerImageMapMutex.RLock()
+	defer originImageModelPricePerImageMapMutex.RUnlock()
+
+	jsonBytes, err := common.Marshal(originImageModelPricePerImageMap)
+	if err != nil {
+		common.SysError("error marshalling origin image model price per image: " + err.Error())
+	}
+	return string(jsonBytes)
+}
+
+// GetImageModelPricePerImageCopy 获取按张计费价格（系统价格）的副本
+func GetImageModelPricePerImageCopy() map[string]float64 {
+	imageModelPricePerImageMapMutex.RLock()
+	defer imageModelPricePerImageMapMutex.RUnlock()
+
+	copyMap := make(map[string]float64, len(imageModelPricePerImageMap))
+	for k, v := range imageModelPricePerImageMap {
+		copyMap[k] = v
+	}
+	return copyMap
+}
+
+// GetOriginImageModelPricePerImageCopy 获取原始按张计费价格（厂商价格）的副本
+func GetOriginImageModelPricePerImageCopy() map[string]float64 {
+	originImageModelPricePerImageMapMutex.RLock()
+	defer originImageModelPricePerImageMapMutex.RUnlock()
+
+	copyMap := make(map[string]float64, len(originImageModelPricePerImageMap))
+	for k, v := range originImageModelPricePerImageMap {
 		copyMap[k] = v
 	}
 	return copyMap

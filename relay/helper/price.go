@@ -55,7 +55,20 @@ func ModelPriceHelper(c *gin.Context, info *relaycommon.RelayInfo, promptTokens 
 		}, nil
 	}
 
-	// 优先级2：检查按次计费（ModelPrice）
+	// 优先级2：检查按张计费（ImageModelPricePerImage）
+	imageModelPrice, hasImageModelPrice := ratio_setting.GetImageModelPricePerImage(info.OriginModelName)
+	if hasImageModelPrice && imageModelPrice > 0 {
+		groupRatioInfo := HandleGroupRatio(c, info)
+		preConsumedQuota := int(imageModelPrice * common.QuotaPerUnit * groupRatioInfo.GroupRatio)
+		return types.PriceData{
+			UsePrice:               true, // 按张计费需要设置 UsePrice = true
+			ModelPrice:             imageModelPrice,
+			GroupRatioInfo:         groupRatioInfo,
+			ShouldPreConsumedQuota: preConsumedQuota,
+		}, nil
+	}
+
+	// 优先级3：检查按次计费（ModelPrice）
 	modelPrice, usePrice := ratio_setting.GetModelPrice(info.OriginModelName, false)
 
 	groupRatioInfo := HandleGroupRatio(c, info)
@@ -80,13 +93,16 @@ func ModelPriceHelper(c *gin.Context, info *relaycommon.RelayInfo, promptTokens 
 			// 检查是否配置了视频每秒价格（第三种定价方式）
 			_, hasVideoPrice := ratio_setting.GetVideoModelPricePerSecond(info.OriginModelName)
 
+			// 检查是否配置了按张计费价格（第五种定价方式：图片生成模型）
+			_, hasImagePricePerImage := ratio_setting.GetImageModelPricePerImage(info.OriginModelName)
+
 			acceptUnsetRatio := false
 			if info.UserSetting.AcceptUnsetRatioModel {
 				acceptUnsetRatio = true
 			}
 
-			// 只有当四种定价方式（ImageTokenPricing、VideoModelPricePerSecond、ModelPrice、ModelRatio）都没有配置时才报错
-			if !acceptUnsetRatio && !hasVideoPrice {
+			// 只有当五种定价方式（ImageTokenPricing、VideoModelPricePerSecond、ImageModelPricePerImage、ModelPrice、ModelRatio）都没有配置时才报错
+			if !acceptUnsetRatio && !hasVideoPrice && !hasImagePricePerImage {
 				return types.PriceData{}, fmt.Errorf("模型 %s 倍率或价格未配置，请联系管理员设置或开始自用模式；Model %s ratio or price not set, please set or start self-use mode", matchName, matchName)
 			}
 		}

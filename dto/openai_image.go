@@ -202,9 +202,9 @@ func (i *ImageRequest) SetModelName(modelName string) {
 }
 
 type ImageResponse struct {
-	Data    []ImageData `json:"data"`
-	Created int64       `json:"created"`
-	Extra   any         `json:"extra,omitempty"`
+	Data     []ImageData `json:"data"`
+	Created  int64       `json:"created"`
+	Metadata any         `json:"metadata,omitempty"` // 厂家原始响应数据
 }
 type ImageData struct {
 	Url           string `json:"url"`

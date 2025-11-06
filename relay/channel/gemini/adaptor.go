@@ -189,6 +189,7 @@ func (a *Adaptor) ConvertImageRequest(c *gin.Context, info *relaycommon.RelayInf
 		maxOutputTokens := uint(32768)
 		responseModalities := []string{"TEXT", "IMAGE"}
 		topP := 0.95
+		aspectRatio := "1:1" // 默认宽高比
 
 		if request.Extra != nil {
 			// 获取temperature参数
@@ -258,7 +259,61 @@ func (a *Adaptor) ConvertImageRequest(c *gin.Context, info *relaycommon.RelayInf
 					}
 				}
 			}
+
+			// 获取aspect_ratio参数
+			if aspectRatioData, exists := request.Extra["aspect_ratio"]; exists {
+				var aspectRatioValue string
+				// 先尝试直接解析JSON
+				if err := json.Unmarshal(aspectRatioData, &aspectRatioValue); err == nil {
+					aspectRatio = aspectRatioValue
+				} else {
+					// 如果失败，尝试解析为字符串再转换
+					var aspectRatioStr string
+					if err := json.Unmarshal(aspectRatioData, &aspectRatioStr); err == nil {
+						aspectRatio = aspectRatioStr
+					}
+				}
+			}
 		}
+
+		// 如果Extra中没有aspect_ratio，尝试从Size字段转换
+		if aspectRatio == "1:1" && request.Size != "" {
+			size := strings.TrimSpace(request.Size)
+			if strings.Contains(size, ":") {
+				// 直接使用比例格式
+				aspectRatio = size
+			} else {
+				// 从像素尺寸转换为比例
+				switch size {
+				case "256x256", "512x512", "1024x1024":
+					aspectRatio = "1:1"
+				case "1536x1024":
+					aspectRatio = "3:2"
+				case "1024x1536":
+					aspectRatio = "2:3"
+				case "1536x2048":
+					aspectRatio = "3:4"
+				case "2048x1536":
+					aspectRatio = "4:3"
+				case "1024x1280":
+					aspectRatio = "4:5"
+				case "1280x1024":
+					aspectRatio = "5:4"
+				case "1024x1792":
+					aspectRatio = "9:16"
+				case "1792x1024":
+					aspectRatio = "16:9"
+				case "1024x2176":
+					aspectRatio = "21:9"
+				}
+			}
+		}
+
+		// 构建ImageConfig，包含aspectRatio
+		imageConfig := map[string]interface{}{
+			"aspectRatio": aspectRatio,
+		}
+		imageConfigJSON, _ := json.Marshal(imageConfig)
 
 		// 使用标准Gemini格式，支持多模态响应
 		geminiRequest := dto.GeminiChatRequest{
@@ -268,6 +323,7 @@ func (a *Adaptor) ConvertImageRequest(c *gin.Context, info *relaycommon.RelayInf
 				MaxOutputTokens:    maxOutputTokens,
 				ResponseModalities: responseModalities, // 关键：请求图像生成
 				TopP:               topP,
+				ImageConfig:        imageConfigJSON, // 设置图像配置，包含宽高比
 			},
 			SafetySettings: []dto.GeminiChatSafetySettings{
 				{Category: "HARM_CATEGORY_HATE_SPEECH", Threshold: "OFF"},
