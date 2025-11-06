@@ -180,6 +180,10 @@ func StreamScannerHandler(c *gin.Context, resp *http.Response, info *relaycommon
 			}
 		}()
 
+		// 按 SSE 规范聚合事件：多行以 data: 开头，空行表示一个事件结束
+		var eventBuilder strings.Builder
+		hasEvent := false
+
 		for scanner.Scan() {
 			// 检查是否需要停止
 			select {
@@ -193,30 +197,83 @@ func StreamScannerHandler(c *gin.Context, resp *http.Response, info *relaycommon
 			}
 
 			ticker.Reset(streamingTimeout)
-			data := scanner.Text()
+			line := scanner.Text()
+			line = strings.TrimSuffix(line, "\r")
 			if common.DebugEnabled {
-				println(data)
+				println(line)
 			}
 
-			if len(data) < 6 {
+			// 空行：一个事件结束
+			if len(strings.TrimSpace(line)) == 0 {
+				if hasEvent && eventBuilder.Len() > 0 {
+					payload := eventBuilder.String()
+					eventBuilder.Reset()
+					hasEvent = false
+
+					if strings.HasPrefix(payload, "[DONE]") {
+						if common.DebugEnabled {
+							println("received [DONE], stopping scanner")
+						}
+						return
+					}
+
+					info.SetFirstResponseTime()
+
+					done := make(chan bool, 1)
+					go func(p string) {
+						writeMutex.Lock()
+						defer writeMutex.Unlock()
+						done <- dataHandler(p)
+					}(payload)
+
+					select {
+					case success := <-done:
+						if !success {
+							return
+						}
+					case <-time.After(10 * time.Second):
+						logger.LogError(c, "data handler timeout")
+						return
+					case <-ctx.Done():
+						return
+					case <-stopChan:
+						return
+					}
+				}
 				continue
 			}
-			if data[:5] != "data:" && data[:6] != "[DONE]" {
+
+			// 只处理 data: 行，忽略 event:、id:、retry: 等
+			if strings.HasPrefix(line, "data:") {
+				content := strings.TrimLeft(strings.TrimPrefix(line, "data:"), " ")
+				if eventBuilder.Len() > 0 {
+					eventBuilder.WriteString("\n")
+				}
+				eventBuilder.WriteString(content)
+				hasEvent = true
 				continue
 			}
-			data = data[5:]
-			data = strings.TrimLeft(data, " ")
-			data = strings.TrimSuffix(data, "\r")
-			if !strings.HasPrefix(data, "[DONE]") {
+			// 直接收到 [DONE]（有些上游会不加 data: 前缀）
+			if strings.HasPrefix(line, "[DONE]") {
+				if common.DebugEnabled {
+					println("received [DONE], stopping scanner")
+				}
+				return
+			}
+			// 其他前缀忽略
+		}
+
+		// 文件尾还有未发送的事件
+		if hasEvent && eventBuilder.Len() > 0 {
+			payload := eventBuilder.String()
+			if !strings.HasPrefix(payload, "[DONE]") {
 				info.SetFirstResponseTime()
-
-				// 使用超时机制防止写操作阻塞
 				done := make(chan bool, 1)
-				go func() {
+				go func(p string) {
 					writeMutex.Lock()
 					defer writeMutex.Unlock()
-					done <- dataHandler(data)
-				}()
+					done <- dataHandler(p)
+				}(payload)
 
 				select {
 				case success := <-done:
@@ -231,12 +288,6 @@ func StreamScannerHandler(c *gin.Context, resp *http.Response, info *relaycommon
 				case <-stopChan:
 					return
 				}
-			} else {
-				// done, 处理完成标志，直接退出停止读取剩余数据防止出错
-				if common.DebugEnabled {
-					println("received [DONE], stopping scanner")
-				}
-				return
 			}
 		}
 

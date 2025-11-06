@@ -3,6 +3,7 @@ package ali
 import (
 	"context"
 	"encoding/base64"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -27,7 +28,17 @@ func oaiImage2Ali(request dto.ImageRequest) (*AliImageRequest, error) {
 	imageRequest.ResponseFormat = request.ResponseFormat
 
 	common.SysLog("=== oaiImage2Ali V2 STARTED ===")
-	logger.LogJson(ctx, "oaiImage2Ali request extra", request.Extra)
+
+	// 截断 base64 数据以避免日志过长
+	truncatedExtra := make(map[string]json.RawMessage)
+	for k, v := range request.Extra {
+		if len(v) > 200 {
+			truncatedExtra[k] = json.RawMessage(fmt.Sprintf("\"%s...[truncated, length=%d]\"", string(v[:100]), len(v)))
+		} else {
+			truncatedExtra[k] = v
+		}
+	}
+	logger.LogJson(ctx, "oaiImage2Ali request extra (truncated)", truncatedExtra)
 
 	// 用于标记是否从 extra 中成功解析了参数
 	hasExtraParams := false
@@ -44,7 +55,7 @@ func oaiImage2Ali(request dto.ImageRequest) (*AliImageRequest, error) {
 			var nestedExtra map[string]interface{}
 			if err := common.Unmarshal(nestedExtraRaw, &nestedExtra); err == nil {
 				extraData = nestedExtra
-				logger.LogJson(ctx, "oaiImage2Ali nested extra data", extraData)
+				common.SysLog("oaiImage2Ali: Successfully parsed nested extra")
 			} else {
 				common.SysLog(fmt.Sprintf("oaiImage2Ali: Failed to unmarshal nested extra: %v", err))
 			}
@@ -70,7 +81,6 @@ func oaiImage2Ali(request dto.ImageRequest) (*AliImageRequest, error) {
 					imageRequest.Input = input
 					hasExtraInput = true
 					common.SysLog("oaiImage2Ali: Found input directly in request.Extra")
-					logger.LogJson(ctx, "oaiImage2Ali parsed input", input)
 				}
 			}
 		} else {
@@ -89,13 +99,74 @@ func oaiImage2Ali(request dto.ImageRequest) (*AliImageRequest, error) {
 				imageRequest.Input = val
 				hasExtraInput = true
 				common.SysLog(fmt.Sprintf("oaiImage2Ali: Found input in nested extra, hasExtraInput=%v", hasExtraInput))
-				logger.LogJson(ctx, "oaiImage2Ali parsed input", val)
 			} else {
 				common.SysLog("oaiImage2Ali: No input key in nested extraData")
 			}
 		}
 	} else {
 		common.SysLog("oaiImage2Ali: request.Extra is nil")
+	}
+
+	// 处理 contents 字段（qwen-image-edit 使用这种格式）
+	if contentsRaw, ok := request.Extra["contents"]; ok && !hasExtraInput {
+		common.SysLog("oaiImage2Ali: Found contents field in Extra")
+
+		// 解析 contents 数组
+		var contents []struct {
+			Role  string `json:"role"`
+			Parts []struct {
+				Image string `json:"image,omitempty"`
+				Text  string `json:"text,omitempty"`
+			} `json:"parts"`
+		}
+
+		if err := common.Unmarshal(contentsRaw, &contents); err == nil && len(contents) > 0 {
+			common.SysLog(fmt.Sprintf("oaiImage2Ali: Successfully parsed contents, length=%d", len(contents)))
+
+			// 构造 messages 数组
+			var messages []map[string]interface{}
+
+			for _, content := range contents {
+				message := map[string]interface{}{
+					"role": content.Role,
+				}
+
+				// 构造 content 数组
+				var contentArray []map[string]interface{}
+
+				for _, part := range content.Parts {
+					if part.Image != "" {
+						// 截断图片数据的日志输出
+						imagePreview := part.Image
+						if len(imagePreview) > 100 {
+							imagePreview = imagePreview[:100] + "...[truncated]"
+						}
+						common.SysLog(fmt.Sprintf("oaiImage2Ali: Found image in contents: %s", imagePreview))
+						contentArray = append(contentArray, map[string]interface{}{
+							"image": part.Image,
+						})
+					}
+					if part.Text != "" {
+						common.SysLog(fmt.Sprintf("oaiImage2Ali: Found text in contents: %s", part.Text))
+						contentArray = append(contentArray, map[string]interface{}{
+							"text": part.Text,
+						})
+					}
+				}
+
+				message["content"] = contentArray
+				messages = append(messages, message)
+			}
+
+			// 设置 input
+			imageRequest.Input = map[string]interface{}{
+				"messages": messages,
+			}
+			hasExtraInput = true
+			common.SysLog(fmt.Sprintf("oaiImage2Ali: Constructed input from contents, messages count=%d", len(messages)))
+		} else {
+			common.SysLog(fmt.Sprintf("oaiImage2Ali: Failed to parse contents or empty: err=%v", err))
+		}
 	}
 
 	// 只有在 extra 中没有提供参数时才使用兜底逻辑
@@ -116,7 +187,39 @@ func oaiImage2Ali(request dto.ImageRequest) (*AliImageRequest, error) {
 	}
 
 	common.SysLog(fmt.Sprintf("=== oaiImage2Ali V2 COMPLETED: hasExtraParams=%v, hasExtraInput=%v ===", hasExtraParams, hasExtraInput))
-	logger.LogJson(ctx, "oaiImage2Ali final imageRequest", imageRequest)
+
+	// 只输出摘要信息，不输出完整的 base64 数据
+	summary := map[string]interface{}{
+		"model":          imageRequest.Model,
+		"responseFormat": imageRequest.ResponseFormat,
+		"hasParameters":  imageRequest.Parameters != nil,
+		"hasInput":       imageRequest.Input != nil,
+	}
+
+	// 统计图片数量
+	if inputMap, ok := imageRequest.Input.(map[string]interface{}); ok {
+		if messages, ok := inputMap["messages"].([]map[string]interface{}); ok {
+			imageCount := 0
+			textCount := 0
+			for _, msg := range messages {
+				if content, ok := msg["content"].([]map[string]interface{}); ok {
+					for _, item := range content {
+						if _, hasImage := item["image"]; hasImage {
+							imageCount++
+						}
+						if _, hasText := item["text"]; hasText {
+							textCount++
+						}
+					}
+				}
+			}
+			summary["imageCount"] = imageCount
+			summary["textCount"] = textCount
+			summary["messagesCount"] = len(messages)
+		}
+	}
+
+	logger.LogJson(ctx, "oaiImage2Ali final imageRequest summary", summary)
 
 	return &imageRequest, nil
 }
@@ -296,14 +399,14 @@ func responseAli2OpenAIImage(c *gin.Context, response *AliResponse, originBody [
 		Data:    make([]dto.ImageData, 0),
 	}
 
-	// qwen-image-plus 使用新 API 格式：output.choices[].message.content[].image
-	if info.OriginModelName == "qwen-image-plus" && len(response.Output.Choices) > 0 {
-		common.SysLog("responseAli2OpenAIImage: Processing qwen-image-plus choices format")
-		logger.LogDebug(c, fmt.Sprintf("qwen-image-plus: Found %d choices", len(response.Output.Choices)))
+	// qwen-image-plus 和 qwen-image-edit 系列使用新 API 格式：output.choices[].message.content[].image
+	if (info.OriginModelName == "qwen-image-plus" || strings.HasPrefix(info.OriginModelName, "qwen-image-edit")) && len(response.Output.Choices) > 0 {
+		common.SysLog(fmt.Sprintf("responseAli2OpenAIImage: Processing %s choices format", info.OriginModelName))
+		logger.LogDebug(c, fmt.Sprintf("%s: Found %d choices", info.OriginModelName, len(response.Output.Choices)))
 		for _, choice := range response.Output.Choices {
 			if message, ok := choice["message"].(map[string]interface{}); ok {
 				if content, ok := message["content"].([]interface{}); ok {
-					logger.LogDebug(c, fmt.Sprintf("qwen-image-plus: Processing message with %d content items", len(content)))
+					logger.LogDebug(c, fmt.Sprintf("%s: Processing message with %d content items", info.OriginModelName, len(content)))
 					for _, item := range content {
 						if contentItem, ok := item.(map[string]interface{}); ok {
 							if imageUrl, ok := contentItem["image"].(string); ok && imageUrl != "" {
@@ -322,14 +425,14 @@ func responseAli2OpenAIImage(c *gin.Context, response *AliResponse, originBody [
 									B64Json:       b64Json,
 									RevisedPrompt: "",
 								})
-								logger.LogDebug(c, fmt.Sprintf("qwen-image-plus: Added image from choices: %s", imageUrl))
+								logger.LogDebug(c, fmt.Sprintf("%s: Added image from choices: %s", info.OriginModelName, imageUrl))
 							}
 						}
 					}
 				}
 			}
 		}
-		common.SysLog(fmt.Sprintf("responseAli2OpenAIImage: qwen-image-plus processed %d images", len(imageResponse.Data)))
+		common.SysLog(fmt.Sprintf("responseAli2OpenAIImage: %s processed %d images", info.OriginModelName, len(imageResponse.Data)))
 	} else {
 		// 旧 API 格式：output.results[].url
 		common.SysLog("responseAli2OpenAIImage: Processing legacy results format")
@@ -395,22 +498,22 @@ func aliImageHandler(c *gin.Context, resp *http.Response, info *relaycommon.Rela
 	var aliResponse *AliResponse
 	var originRespBody []byte
 
-	// qwen-image-plus 使用新 API，同步返回结果，不需要异步轮询
-	if info.OriginModelName == "qwen-image-plus" {
-		common.SysLog("aliImageHandler: qwen-image-plus detected, using sync response")
-		logger.LogJson(c, "qwen-image-plus raw response body", string(responseBody))
+	// qwen-image-plus 和 qwen-image-edit 系列使用新 API，同步返回结果，不需要异步轮询
+	if info.OriginModelName == "qwen-image-plus" || strings.HasPrefix(info.OriginModelName, "qwen-image-edit") {
+		common.SysLog(fmt.Sprintf("aliImageHandler: %s detected, using sync response", info.OriginModelName))
+		logger.LogJson(c, fmt.Sprintf("%s raw response body", info.OriginModelName), string(responseBody))
 
 		// 检查响应是否包含错误
 		if aliTaskResponse.Code != "" || aliTaskResponse.Message != "" {
-			common.SysLog(fmt.Sprintf("qwen-image-plus error response: code=%s, message=%s", aliTaskResponse.Code, aliTaskResponse.Message))
+			common.SysLog(fmt.Sprintf("%s error response: code=%s, message=%s", info.OriginModelName, aliTaskResponse.Code, aliTaskResponse.Message))
 			return types.NewError(fmt.Errorf("%s: %s", aliTaskResponse.Code, aliTaskResponse.Message), types.ErrorCodeBadResponse), nil
 		}
 
 		// 直接使用初始响应，不进行异步轮询
 		aliResponse = &aliTaskResponse
 		originRespBody = responseBody
-		logger.LogJson(c, "qwen-image-plus sync response output", aliResponse.Output)
-		logger.LogJson(c, "qwen-image-plus sync response usage", aliResponse.Usage)
+		logger.LogJson(c, fmt.Sprintf("%s sync response output", info.OriginModelName), aliResponse.Output)
+		logger.LogJson(c, fmt.Sprintf("%s sync response usage", info.OriginModelName), aliResponse.Usage)
 	} else {
 		// 其他模型使用异步模式
 		common.SysLog("aliImageHandler: using async task wait")
