@@ -991,7 +991,10 @@ func handleWan25TaskBilling(ctx context.Context, task *model.Task, taskResult *r
 		modelName = task.ModelName
 	}
 	if modelName == "" {
+		// 如果还是空，根据任务类型推断（但应该不会到这里）
+		// 默认使用 i2v，但实际应该从 task.ModelName 获取
 		modelName = "wan2.5-i2v-preview"
+		logger.LogWarn(ctx, fmt.Sprintf("[Wan25TaskBilling] ⚠️ modelName 为空，使用默认值，实际应该从 task.ModelName 获取"))
 	}
 	if tokenName == "" && task.ApiKey != "" {
 		tokenName = task.ApiKey

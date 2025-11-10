@@ -906,25 +906,35 @@ func GetVideoModelPricePerSecondCopy() map[string]float64 {
 }
 
 // GetVideoModelPriceByResolution 根据分辨率获取视频模型价格
-// 特殊处理 wan2.5-i2v-preview 模型的分辨率定价
+// 特殊处理 wan2.5 系列模型（i2v 和 t2v）的分辨率定价
 func GetVideoModelPriceByResolution(modelName, resolution string) (float64, bool) {
-	if modelName != "wan2.5-i2v-preview" {
+	// wan2.5 系列模型（i2v 和 t2v）使用相同的分辨率定价
+	if modelName != "wan2.5-i2v-preview" && modelName != "wan2.5-t2v-preview" {
 		// 其他模型使用统一价格
 		return GetVideoModelPricePerSecond(modelName)
 	}
 
-	// 从数据库配置读取 wan2.5-i2v-preview 的分辨率价格
+	// 从数据库配置读取 wan2.5 系列模型的分辨率价格
+	// 注意：配置中可能使用 "wan2.5-i2v-preview" 作为 key，但 t2v 模型也使用相同的价格
 	if videoStr, exists := common.OptionMap["VideoModelPricePerSecond"]; exists {
 		var rawMap map[string]interface{}
 		if err := common.Unmarshal([]byte(videoStr), &rawMap); err == nil {
-			if wan25, ok := rawMap["wan2.5-i2v-preview"].(map[string]interface{}); ok {
-				if resolutions, ok := wan25["resolutions"].(map[string]interface{}); ok {
+			// 优先查找当前模型，如果没有则查找 wan2.5-i2v-preview（因为配置可能只有 i2v）
+			var wan25Config map[string]interface{}
+			if config, ok := rawMap[modelName].(map[string]interface{}); ok {
+				wan25Config = config
+			} else if config, ok := rawMap["wan2.5-i2v-preview"].(map[string]interface{}); ok {
+				wan25Config = config
+			}
+
+			if wan25Config != nil {
+				if resolutions, ok := wan25Config["resolutions"].(map[string]interface{}); ok {
 					if price, ok := resolutions[strings.ToLower(resolution)].(float64); ok {
 						return price, true
 					}
 				}
 				// 使用default价格作为后备
-				if def, ok := wan25["default"].(float64); ok {
+				if def, ok := wan25Config["default"].(float64); ok {
 					return def, true
 				}
 			}

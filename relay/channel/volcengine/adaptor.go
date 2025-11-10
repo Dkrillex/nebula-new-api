@@ -152,6 +152,15 @@ func (a *Adaptor) ConvertImageRequest(c *gin.Context, info *relaycommon.RelayInf
 					reqMap[key] = value
 				}
 
+				// 如果是 doubao-seedream-4-0-250828 模型，确保 optimize_prompt_options 有默认值
+				if info.UpstreamModelName == "doubao-seedream-4-0-250828" {
+					if _, exists := reqMap["optimize_prompt_options"]; !exists {
+						reqMap["optimize_prompt_options"] = map[string]interface{}{
+							"mode": "standard",
+						}
+					}
+				}
+
 				// 重新构建doubaoRequest
 				newBytes, _ := json.Marshal(reqMap)
 				err := json.Unmarshal(newBytes, &req)
@@ -191,11 +200,34 @@ func (a *Adaptor) ConvertImageRequest(c *gin.Context, info *relaycommon.RelayInf
 					doubaoMap[key] = value
 				}
 
+				// 如果是 doubao-seedream-4-0-250828 模型，确保 optimize_prompt_options 有默认值
+				if info.UpstreamModelName == "doubao-seedream-4-0-250828" {
+					if _, exists := doubaoMap["optimize_prompt_options"]; !exists {
+						doubaoMap["optimize_prompt_options"] = map[string]interface{}{
+							"mode": "standard",
+						}
+					}
+				}
+
 				// 重新构建doubaoRequest
 				newBytes, _ := json.Marshal(doubaoMap)
 				json.Unmarshal(newBytes, &doubaoRequest)
 
 				logger.LogInfo(c, fmt.Sprintf("传递额外参数: %+v", request.Extra))
+			} else {
+				// 如果是 doubao-seedream-4-0-250828 模型且没有 Extra，也要设置默认值
+				if info.UpstreamModelName == "doubao-seedream-4-0-250828" {
+					extraBytes, _ := json.Marshal(doubaoRequest)
+					var doubaoMap map[string]interface{}
+					json.Unmarshal(extraBytes, &doubaoMap)
+
+					doubaoMap["optimize_prompt_options"] = map[string]interface{}{
+						"mode": "standard",
+					}
+
+					newBytes, _ := json.Marshal(doubaoMap)
+					json.Unmarshal(newBytes, &doubaoRequest)
+				}
 			}
 
 			logger.LogInfo(c, fmt.Sprintf("文生图请求 - Model: %s, Prompt: %s", doubaoRequest.Model, doubaoRequest.Prompt))

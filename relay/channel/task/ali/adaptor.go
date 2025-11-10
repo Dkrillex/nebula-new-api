@@ -225,17 +225,40 @@ func (a *TaskAdaptor) ParseTaskResult(respBody []byte) (*relaycommon.TaskInfo, e
 			common.TruncateBase64Content(taskResp.Output.VideoURL)))
 
 		// ⚠️ 关键：设置使用量信息用于计费
-		if taskResp.Usage.Duration > 0 && taskResp.Usage.SR > 0 {
+		// i2v 和 t2v 模型的返回格式不同：
+		// i2v: { "SR": 720, "duration": 5, "video_count": 1 }
+		// t2v: { "video_duration": 10, "video_ratio": "832*480", "video_count": 1 }
+		// 通过检查 Usage 字段来判断模型类型
+		var duration int
+		var resolution string
+
+		// 优先检查 t2v 格式（video_duration 和 video_ratio）
+		if taskResp.Usage.VideoDuration > 0 && taskResp.Usage.VideoRatio != "" {
+			// t2v 模型格式
+			duration = taskResp.Usage.VideoDuration
+			// 将 "832*480" 转换为 "480p" 格式用于计费
+			resolution = parseVideoRatioToResolution(taskResp.Usage.VideoRatio)
 			taskInfo.Usage = &relaycommon.VideoUsage{
 				VideoCount: taskResp.Usage.VideoCount,
-				Duration:   taskResp.Usage.Duration,
-				Resolution: fmt.Sprintf("%dp", taskResp.Usage.SR),
+				Duration:   duration,
+				Resolution: resolution,
 			}
-			common.SysLog(fmt.Sprintf("[Ali Video] 使用量信息: duration=%d秒, resolution=%dp, video_count=%d",
-				taskResp.Usage.Duration, taskResp.Usage.SR, taskResp.Usage.VideoCount))
+			common.SysLog(fmt.Sprintf("[Ali Video] t2v 使用量信息: duration=%d秒, video_ratio=%s -> resolution=%s, video_count=%d",
+				duration, taskResp.Usage.VideoRatio, resolution, taskResp.Usage.VideoCount))
+		} else if taskResp.Usage.Duration > 0 && taskResp.Usage.SR > 0 {
+			// i2v 模型格式
+			duration = taskResp.Usage.Duration
+			resolution = fmt.Sprintf("%dp", taskResp.Usage.SR)
+			taskInfo.Usage = &relaycommon.VideoUsage{
+				VideoCount: taskResp.Usage.VideoCount,
+				Duration:   duration,
+				Resolution: resolution,
+			}
+			common.SysLog(fmt.Sprintf("[Ali Video] i2v 使用量信息: duration=%d秒, resolution=%dp, video_count=%d",
+				duration, taskResp.Usage.SR, taskResp.Usage.VideoCount))
 		} else {
-			common.SysError(fmt.Sprintf("[Ali Video] 警告：Usage信息不完整: duration=%d, SR=%d",
-				taskResp.Usage.Duration, taskResp.Usage.SR))
+			common.SysError(fmt.Sprintf("[Ali Video] 警告：Usage信息不完整: duration=%d, SR=%d, video_duration=%d, video_ratio=%s",
+				taskResp.Usage.Duration, taskResp.Usage.SR, taskResp.Usage.VideoDuration, taskResp.Usage.VideoRatio))
 		}
 	case "FAILED":
 		taskInfo.Status = string(model.TaskStatusFailure)
@@ -265,7 +288,7 @@ func (a *TaskAdaptor) ParseTaskResult(respBody []byte) (*relaycommon.TaskInfo, e
 
 // GetModelList 获取支持的模型列表
 func (a *TaskAdaptor) GetModelList() []string {
-	return []string{"wan2.5-i2v-preview"}
+	return []string{"wan2.5-i2v-preview", "wan2.5-t2v-preview"}
 }
 
 // GetChannelName 获取渠道名称
@@ -285,12 +308,12 @@ func (a *TaskAdaptor) convertToRequestPayload(req *relaycommon.TaskSubmitReq) (*
 			Prompt: req.Prompt,
 		},
 		Parameters: Parameters{
-			Duration:   defaultInt(req.Duration, 5),
-			Resolution: defaultString(req.Size, "720P"), // 阿里云官方使用大写P
+			Duration: defaultInt(req.Duration, 5),
+			// Resolution 和 Size 会根据模型类型在后面设置
 		},
 	}
 
-	// 处理图片输入（必需）
+	// 处理图片输入（i2v 模型必需，t2v 模型不需要）
 	if len(req.Images) > 0 {
 		imageData := req.Images[0]
 
@@ -338,15 +361,52 @@ func (a *TaskAdaptor) convertToRequestPayload(req *relaycommon.TaskSubmitReq) (*
 			imgPreview = imgPreview[:100] + "...[已截断]"
 		}
 		common.SysLog(fmt.Sprintf("[Ali Video] 最终图片URL: %s", imgPreview))
+	} else {
+		// t2v 模型不需要图片，这是正常的
+		if strings.Contains(strings.ToLower(req.Model), "t2v") {
+			common.SysLog("[Ali Video] t2v 模型，无需图片输入")
+		} else {
+			// i2v 模型如果没有图片，记录警告但不报错（让API自己处理）
+			common.SysLog("[Ali Video] 警告：i2v 模型未提供图片，API可能会返回错误")
+		}
 	}
 
 	// 处理wan2.5额外参数（Java直接发送顶层字段，已映射到TaskSubmitReq结构体）
+	isT2V := strings.Contains(strings.ToLower(req.Model), "t2v")
 
-	// 1. 分辨率：优先使用Resolution字段，转换为大写P格式（如720p -> 720P）
-	if req.Resolution != "" {
-		payload.Parameters.Resolution = strings.ToUpper(req.Resolution)
-		common.SysLog(fmt.Sprintf("[Ali Video] 读取分辨率: %s -> %s",
-			req.Resolution, payload.Parameters.Resolution))
+	// 1. 分辨率/尺寸参数：i2v 使用 resolution，t2v 使用 size
+	if isT2V {
+		// t2v 模型：使用 size 参数（如 "1280*720"）
+		if req.Size != "" {
+			payload.Parameters.Size = req.Size
+			common.SysLog(fmt.Sprintf("[Ali Video] t2v 读取尺寸: %s", req.Size))
+		} else if req.Resolution != "" {
+			// 如果传了 resolution，尝试转换为 size 格式
+			size := convertResolutionToSize(req.Resolution)
+			if size != "" {
+				payload.Parameters.Size = size
+				common.SysLog(fmt.Sprintf("[Ali Video] t2v 转换分辨率: %s -> size: %s", req.Resolution, size))
+			} else {
+				// 默认值：720p -> 1280*720
+				payload.Parameters.Size = "1280*720"
+				common.SysLog("[Ali Video] t2v 使用默认尺寸: 1280*720")
+			}
+		} else {
+			// 默认值：720p -> 1280*720
+			payload.Parameters.Size = "1280*720"
+			common.SysLog("[Ali Video] t2v 使用默认尺寸: 1280*720")
+		}
+	} else {
+		// i2v 模型：使用 resolution 参数（如 "720P"）
+		if req.Resolution != "" {
+			payload.Parameters.Resolution = strings.ToUpper(req.Resolution)
+			common.SysLog(fmt.Sprintf("[Ali Video] i2v 读取分辨率: %s -> %s",
+				req.Resolution, payload.Parameters.Resolution))
+		} else {
+			// 默认值：720P
+			payload.Parameters.Resolution = "720P"
+			common.SysLog("[Ali Video] i2v 使用默认分辨率: 720P")
+		}
 	}
 
 	// 2. 音频URL（支持OSS HTTPS URL）
@@ -374,11 +434,72 @@ func (a *TaskAdaptor) convertToRequestPayload(req *relaycommon.TaskSubmitReq) (*
 	if payload.Input.AudioURL != "" {
 		audioURLInfo = common.TruncateBase64Content(payload.Input.AudioURL)
 	}
-	common.SysLog(fmt.Sprintf("[Ali Video] 最终参数: duration=%d, resolution=%s, prompt_extend=%v, audio=%v, audio_url=%s",
-		payload.Parameters.Duration, payload.Parameters.Resolution,
-		payload.Parameters.PromptExtend, payload.Parameters.Audio, audioURLInfo))
+	if isT2V {
+		common.SysLog(fmt.Sprintf("[Ali Video] t2v 最终参数: duration=%d, size=%s, prompt_extend=%v, audio=%v, audio_url=%s",
+			payload.Parameters.Duration, payload.Parameters.Size,
+			payload.Parameters.PromptExtend, payload.Parameters.Audio, audioURLInfo))
+	} else {
+		common.SysLog(fmt.Sprintf("[Ali Video] i2v 最终参数: duration=%d, resolution=%s, prompt_extend=%v, audio=%v, audio_url=%s",
+			payload.Parameters.Duration, payload.Parameters.Resolution,
+			payload.Parameters.PromptExtend, payload.Parameters.Audio, audioURLInfo))
+	}
 
 	return payload, nil
+}
+
+// parseVideoRatioToResolution 将 t2v 模型的 video_ratio (如 "832*480") 转换为计费用的分辨率格式 (如 "480p")
+func parseVideoRatioToResolution(videoRatio string) string {
+	// 完整的 video_ratio → resolution 映射表（根据官方文档）
+	// 480P档位
+	switch videoRatio {
+	case "832*480", "480*832", "624*624":
+		return "480p"
+	// 720P档位
+	case "1280*720", "720*1280", "960*960", "1088*832", "832*1088":
+		return "720p"
+	// 1080P档位
+	case "1920*1080", "1080*1920", "1440*1440", "1632*1248", "1248*1632":
+		return "1080p"
+	}
+
+	// 如果不在映射表中，尝试通过高度/宽度判断（兼容未知格式）
+	parts := strings.Split(videoRatio, "*")
+	if len(parts) == 2 {
+		widthStr := strings.TrimSpace(parts[0])
+		heightStr := strings.TrimSpace(parts[1])
+
+		// 优先检查高度，如果高度不匹配则检查宽度（处理正方形等情况）
+		if strings.Contains(heightStr, "480") || strings.Contains(widthStr, "480") {
+			return "480p"
+		} else if strings.Contains(heightStr, "720") || strings.Contains(widthStr, "720") {
+			return "720p"
+		} else if strings.Contains(heightStr, "1080") || strings.Contains(widthStr, "1080") {
+			return "1080p"
+		}
+	}
+
+	common.SysError(fmt.Sprintf("[Ali Video] 无法识别 video_ratio 分辨率: %s", videoRatio))
+	return "720p" // 默认值
+}
+
+// convertResolutionToSize 将 resolution (如 "720p") 转换为 t2v 模型的 size 格式 (如 "1280*720")
+func convertResolutionToSize(resolution string) string {
+	resolution = strings.ToLower(strings.TrimSpace(resolution))
+
+	// 移除 "p" 后缀
+	resolution = strings.TrimSuffix(resolution, "p")
+
+	// 根据分辨率档位返回对应的 size
+	switch resolution {
+	case "480":
+		return "832*480" // 16:9 格式
+	case "720":
+		return "1280*720" // 16:9 格式
+	case "1080":
+		return "1920*1080" // 16:9 格式
+	default:
+		return "" // 无法转换
+	}
 }
 
 func defaultString(value, defaultValue string) string {
