@@ -3,6 +3,7 @@ package controller
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"one-api/common"
@@ -158,6 +159,10 @@ func updateVideoSingleTask(ctx context.Context, adaptor channel.TaskAdaptor, cha
 				"user_group_ratio",
 				"billing_pending",
 				"billing_processed",
+				"generate_audio",
+				"generateAudio",
+				"sampleCount",
+				"sample_count",
 			}
 
 			for _, field := range preservedFields {
@@ -165,6 +170,9 @@ func updateVideoSingleTask(ctx context.Context, adaptor channel.TaskAdaptor, cha
 					newData[field] = value
 					logger.LogInfo(ctx, fmt.Sprintf("[VideoTaskPoll] 保留字段 %s: %v", field, value))
 				}
+			}
+			if _, exists := newData["generateAudio"]; exists {
+				delete(newData, "generate_audio")
 			}
 
 			// 合并数据并更新
@@ -207,7 +215,10 @@ func updateVideoSingleTask(ctx context.Context, adaptor channel.TaskAdaptor, cha
 		if task.FinishTime == 0 {
 			task.FinishTime = now
 		}
-		task.FailReason = taskResult.Url
+		if err := handleVeoTaskMedia(ctx, task, taskResult); err != nil {
+			logger.LogError(ctx, fmt.Sprintf("[VideoTaskPoll] Veo 媒体处理失败，回退为原始 fail_reason，TaskID: %s, Error: %v", task.TaskID, err))
+			task.FailReason = taskResult.Url
+		}
 
 		// 添加详细调试日志
 		logger.LogInfo(ctx, fmt.Sprintf("[VideoTaskPoll] ✅ 任务成功 - TaskID: %s, ModelName: %s, TotalTokens: %d",
@@ -278,6 +289,169 @@ func updateVideoSingleTask(ctx context.Context, adaptor channel.TaskAdaptor, cha
 	}
 
 	return nil
+}
+
+func handleVeoTaskMedia(ctx context.Context, task *model.Task, taskResult *relaycommon.TaskInfo) error {
+	if !isVeoModel(task.ModelName) {
+		task.FailReason = taskResult.Url
+		return nil
+	}
+	if taskResult == nil {
+		return errors.New("taskResult 为空")
+	}
+
+	dataURIs := make([]string, 0)
+	seen := make(map[string]struct{})
+	for _, u := range taskResult.Urls {
+		if u == "" {
+			continue
+		}
+		if _, exists := seen[u]; exists {
+			continue
+		}
+		dataURIs = append(dataURIs, u)
+		seen[u] = struct{}{}
+	}
+	if taskResult.Url != "" {
+		if _, exists := seen[taskResult.Url]; !exists {
+			dataURIs = append(dataURIs, taskResult.Url)
+			seen[taskResult.Url] = struct{}{}
+		}
+	}
+
+	if len(dataURIs) == 0 {
+		if taskResult.Url == "" {
+			return errors.New("taskResult.Url 为空")
+		}
+		if !strings.HasPrefix(taskResult.Url, "data:") {
+			task.FailReason = taskResult.Url
+			return nil
+		}
+		dataURIs = append(dataURIs, taskResult.Url)
+	}
+
+	endpoint := service.GetOSSBase64Endpoint()
+	if endpoint == "" {
+		return fmt.Errorf("OSS_BASE64_ENDPOINT 未配置")
+	}
+
+	mediaList := make([]model.TaskMediaInfo, 0, len(dataURIs))
+	for idx, dataURI := range dataURIs {
+		if !strings.HasPrefix(dataURI, "data:") {
+			logger.LogWarn(ctx, fmt.Sprintf("[VideoTaskPoll] Veo 返回非 data URI，第 %d 个，直接保留原链接", idx))
+			mediaList = append(mediaList, model.TaskMediaInfo{OssURL: dataURI})
+			continue
+		}
+
+		mediaInfo, err := uploadVeoMediaToOSS(ctx, endpoint, task, dataURI, idx)
+		if err != nil {
+			return fmt.Errorf("上传第 %d 个 Veo 视频失败: %w", idx, err)
+		}
+		mediaList = append(mediaList, *mediaInfo)
+	}
+
+	if len(mediaList) == 0 {
+		task.FailReason = taskResult.Url
+		return nil
+	}
+
+	if task.Data != nil {
+		var taskData map[string]interface{}
+		if err := json.Unmarshal(task.Data, &taskData); err == nil {
+			taskData["sampleCount"] = len(mediaList)
+			if updated, err := json.Marshal(taskData); err == nil {
+				task.Data = updated
+			}
+		}
+	}
+
+	serialized, err := model.SerializeTaskMediaInfo(mediaList)
+	if err != nil {
+		return fmt.Errorf("序列化 Veo 媒体信息失败: %w", err)
+	}
+	task.FailReason = serialized
+	return nil
+}
+
+func uploadVeoMediaToOSS(ctx context.Context, endpoint string, task *model.Task, dataURI string, index int) (*model.TaskMediaInfo, error) {
+	fileExt := inferExtensionFromDataURI(dataURI)
+	if fileExt == "" {
+		fileExt = "mp4"
+	}
+	baseName := sanitizeFileName(task.TaskID)
+	fileName := baseName + "." + fileExt
+	if index > 0 {
+		fileName = fmt.Sprintf("%s-%d.%s", baseName, index+1, fileExt)
+	}
+
+	payload := &service.OSSUploadRequest{
+		Base64Content: dataURI,
+		FileName:      fileName,
+		ExtensionType: fileExt,
+	}
+
+	resp, err := service.UploadBase64ToOSS(ctx, endpoint, payload)
+	if err != nil {
+		return nil, err
+	}
+
+	info := &model.TaskMediaInfo{
+		OssID:    resp.OssID,
+		OssURL:   resp.OssURL,
+		FileName: resp.FileName,
+	}
+	if info.FileName == "" {
+		info.FileName = fileName
+	}
+
+	return info, nil
+}
+
+func inferExtensionFromDataURI(dataURI string) string {
+	const prefix = "data:"
+	if !strings.HasPrefix(dataURI, prefix) {
+		return ""
+	}
+	semicolonIdx := strings.Index(dataURI, ";")
+	if semicolonIdx <= len(prefix) {
+		return ""
+	}
+	mime := dataURI[len(prefix):semicolonIdx]
+	slashIdx := strings.Index(mime, "/")
+	if slashIdx < 0 || slashIdx == len(mime)-1 {
+		return ""
+	}
+	subType := mime[slashIdx+1:]
+	if subType == "" {
+		return ""
+	}
+	if plusIdx := strings.Index(subType, "+"); plusIdx > 0 {
+		subType = subType[:plusIdx]
+	}
+	return strings.ToLower(subType)
+}
+
+func sanitizeFileName(taskID string) string {
+	if taskID == "" {
+		return fmt.Sprintf("veo-%d", time.Now().Unix())
+	}
+	builder := strings.Builder{}
+	builder.Grow(len(taskID))
+	for _, r := range taskID {
+		if (r >= 'a' && r <= 'z') ||
+			(r >= 'A' && r <= 'Z') ||
+			(r >= '0' && r <= '9') ||
+			r == '-' || r == '_' {
+			builder.WriteRune(r)
+		} else {
+			builder.WriteRune('-')
+		}
+	}
+	result := builder.String()
+	if result == "" {
+		return fmt.Sprintf("veo-%d", time.Now().Unix())
+	}
+	return result
 }
 
 // handleVideoTaskBilling 处理视频任务完成后的实际token消耗补扣费
@@ -573,7 +747,7 @@ func handleVeoTaskBilling(ctx context.Context, task *model.Task, channel *model.
 	var requestedSeconds int
 
 	if taskData != nil {
-		logger.LogInfo(ctx, fmt.Sprintf("[VeoTaskBilling] 🔍 查找 requested_seconds 字段..."))
+		logger.LogInfo(ctx, "[VeoTaskBilling] 🔍 查找 requested_seconds 字段...")
 		// 提取 requested_seconds
 		if rs, ok := taskData["requested_seconds"].(float64); ok {
 			requestedSeconds = int(rs)
@@ -585,10 +759,45 @@ func handleVeoTaskBilling(ctx context.Context, task *model.Task, channel *model.
 			logger.LogWarn(ctx, fmt.Sprintf("[VeoTaskBilling] ⚠️ 未找到 requested_seconds，taskData 内容: %+v", taskData))
 		}
 	}
+	requestedSeconds = sanitizeVideoSeconds(requestedSeconds)
+	if taskData != nil {
+		taskData["requested_seconds"] = requestedSeconds
+	}
 
 	if requestedSeconds <= 0 {
 		logger.LogError(ctx, fmt.Sprintf("[VeoTaskBilling] ❌ Invalid requested_seconds: %d for task %s", requestedSeconds, task.TaskID))
 		return fmt.Errorf("invalid requested_seconds: %d", requestedSeconds)
+	}
+
+	generateAudio := false
+	if taskData != nil {
+		if val, ok := taskData["generate_audio"]; ok {
+			if parsed, ok2 := boolFromInterface(val); ok2 {
+				generateAudio = parsed
+			}
+		} else if val, ok := taskData["generateAudio"]; ok {
+			if parsed, ok2 := boolFromInterface(val); ok2 {
+				generateAudio = parsed
+			}
+		}
+	}
+	sampleCount := 1
+	if taskData != nil {
+		if sc, ok := taskData["sampleCount"]; ok {
+			if parsed, ok2 := toInt(sc); ok2 && parsed > 0 {
+				sampleCount = parsed
+			}
+		} else if sc, ok := taskData["sample_count"]; ok {
+			if parsed, ok2 := toInt(sc); ok2 && parsed > 0 {
+				sampleCount = parsed
+			}
+		}
+	}
+	if sampleCount <= 0 {
+		sampleCount = 1
+	}
+	if taskData != nil {
+		taskData["sampleCount"] = sampleCount
 	}
 
 	logger.LogInfo(ctx, fmt.Sprintf("[VeoTaskBilling] ✅ Task %s 扣费时长: %d 秒", task.TaskID, requestedSeconds))
@@ -622,6 +831,9 @@ func handleVeoTaskBilling(ctx context.Context, task *model.Task, channel *model.
 	if modelName == "" {
 		modelName = fmt.Sprintf("%s-%s", task.Platform, task.Action)
 	}
+	if isFastVeoModel(modelName) {
+		generateAudio = true
+	}
 
 	// 如果没有找到 token_name，使用 task.ApiKey 作为备选（新增的表字段）
 	if tokenName == "" && task.ApiKey != "" {
@@ -649,7 +861,7 @@ func handleVeoTaskBilling(ctx context.Context, task *model.Task, channel *model.
 	}
 
 	// 5. 计算实际扣费（按秒价格 * 秒数 * 组倍率）
-	videoPrice, hasVideoPrice := ratio_setting.GetVideoModelPricePerSecond(modelName)
+	videoPrice, hasVideoPrice := ratio_setting.GetVideoModelPricePerSecondWithAudio(modelName, generateAudio)
 	if !hasVideoPrice || videoPrice <= 0 {
 		return fmt.Errorf("video price per second not configured for model: %s", modelName)
 	}
@@ -659,10 +871,10 @@ func handleVeoTaskBilling(ctx context.Context, task *model.Task, channel *model.
 		groupRatio = 1.0
 	}
 
-	actualQuota := int(videoPrice * float64(requestedSeconds) * common.QuotaPerUnit * groupRatio)
+	actualQuota := int(videoPrice * float64(requestedSeconds) * float64(sampleCount) * common.QuotaPerUnit * groupRatio)
 
-	logger.LogInfo(ctx, fmt.Sprintf("[VeoTaskBilling] Billing: %d seconds × $%.4f/sec × group_ratio %.2f = quota %d",
-		requestedSeconds, videoPrice, groupRatio, actualQuota))
+	logger.LogInfo(ctx, fmt.Sprintf("[VeoTaskBilling] Billing: %d seconds × $%.4f/sec × sampleCount %d × group_ratio %.2f = quota %d",
+		requestedSeconds, videoPrice, sampleCount, groupRatio, actualQuota))
 
 	// 6. 扣除用户余额（带重试机制）
 	maxRetries := 3
@@ -691,9 +903,11 @@ func handleVeoTaskBilling(ctx context.Context, task *model.Task, channel *model.
 	other["video_seconds"] = requestedSeconds
 	other["video_price_per_second"] = videoPrice
 	other["group_ratio"] = groupRatio
+	other["sample_count"] = sampleCount
 	other["actual_quota"] = actualQuota
 	// 不存储 video_url，避免将 base64 视频数据存储到日志中（Veo 使用 FailReason 存储视频数据）
 	other["billing_type"] = "per_second"
+	other["generate_audio"] = generateAudio
 	other["platform"] = task.Platform
 	other["action"] = task.Action
 	other["video_task"] = true
@@ -738,6 +952,63 @@ func handleVeoTaskBilling(ctx context.Context, task *model.Task, channel *model.
 	}
 
 	return nil
+}
+
+func boolFromInterface(value interface{}) (bool, bool) {
+	switch v := value.(type) {
+	case bool:
+		return v, true
+	case string:
+		normalized := strings.TrimSpace(strings.ToLower(v))
+		if normalized == "true" || normalized == "1" || normalized == "yes" {
+			return true, true
+		}
+		if normalized == "false" || normalized == "0" || normalized == "no" {
+			return false, true
+		}
+	case float64:
+		return v != 0, true
+	case float32:
+		return v != 0, true
+	case int:
+		return v != 0, true
+	case int64:
+		return v != 0, true
+	case uint:
+		return v != 0, true
+	}
+	return false, false
+}
+
+func toInt(value interface{}) (int, bool) {
+	switch v := value.(type) {
+	case int:
+		return v, true
+	case int64:
+		return int(v), true
+	case float64:
+		return int(v), true
+	case float32:
+		return int(v), true
+	case string:
+		if i, err := strconv.Atoi(v); err == nil {
+			return i, true
+		}
+	}
+	return 0, false
+}
+
+func isFastVeoModel(modelName string) bool {
+	return strings.Contains(strings.ToLower(modelName), "-fast-")
+}
+
+func sanitizeVideoSeconds(seconds int) int {
+	switch seconds {
+	case 4, 6, 8, 12:
+		return seconds
+	default:
+		return 4
+	}
 }
 
 // handleSora2TaskBilling 处理 Sora-2 任务的按秒扣费
@@ -994,7 +1265,7 @@ func handleWan25TaskBilling(ctx context.Context, task *model.Task, taskResult *r
 		// 如果还是空，根据任务类型推断（但应该不会到这里）
 		// 默认使用 i2v，但实际应该从 task.ModelName 获取
 		modelName = "wan2.5-i2v-preview"
-		logger.LogWarn(ctx, fmt.Sprintf("[Wan25TaskBilling] ⚠️ modelName 为空，使用默认值，实际应该从 task.ModelName 获取"))
+		logger.LogWarn(ctx, "[Wan25TaskBilling] ⚠️ modelName 为空，使用默认值，实际应该从 task.ModelName 获取")
 	}
 	if tokenName == "" && task.ApiKey != "" {
 		tokenName = task.ApiKey

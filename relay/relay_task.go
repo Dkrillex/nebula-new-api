@@ -74,6 +74,29 @@ func RelayTaskSubmit(c *gin.Context, info *relaycommon.RelayInfo) (taskErr *dto.
 			videoSeconds = seconds
 		}
 	}
+	videoSeconds = sanitizeVideoSeconds(videoSeconds)
+	c.Set("video_seconds", videoSeconds)
+
+	generateAudio := false
+	if reqVal, exists := c.Get("task_request"); exists {
+		if req, ok := reqVal.(relaycommon.TaskSubmitReq); ok {
+			generateAudio = req.GenerateAudio
+			if req.Metadata != nil {
+				if val, ok := req.Metadata["generateAudio"]; ok {
+					if parsed, ok2 := parseBool(val); ok2 {
+						generateAudio = parsed
+					}
+				} else if val, ok := req.Metadata["generate_audio"]; ok {
+					if parsed, ok2 := parseBool(val); ok2 {
+						generateAudio = parsed
+					}
+				}
+			}
+		}
+	}
+	if isFastVeoModel(modelName) {
+		generateAudio = true
+	}
 
 	// 打印请求参数用于调试
 	common.SysLog(fmt.Sprintf("[RelayTaskSubmit] 接收到的参数: model=%s, videoSeconds=%d, platform=%s, action=%s",
@@ -81,12 +104,12 @@ func RelayTaskSubmit(c *gin.Context, info *relaycommon.RelayInfo) (taskErr *dto.
 
 	// 视频模型计费优先级：VideoModelPricePerSecond > ModelPrice > ModelRatio
 	// 1. 优先检查视频每秒价格
-	videoPrice, hasVideoPrice := ratio_setting.GetVideoModelPricePerSecond(modelName)
+	videoPrice, hasVideoPrice := ratio_setting.GetVideoModelPricePerSecondWithAudio(modelName, generateAudio)
 	if hasVideoPrice && videoPrice > 0 {
 		// 按秒计费：价格 * 秒数
 		quota = int(videoPrice * float64(videoSeconds) * common.QuotaPerUnit * priceData.GroupRatioInfo.GroupRatio)
-		common.SysLog(fmt.Sprintf("[RelayTaskSubmit] Video task per-second billing: %d seconds × $%.4f/sec × group_ratio %.2f = quota %d",
-			videoSeconds, videoPrice, priceData.GroupRatioInfo.GroupRatio, quota))
+		common.SysLog(fmt.Sprintf("[RelayTaskSubmit] Video task per-second billing: %d seconds × $%.4f/sec × group_ratio %.2f = quota %d (generateAudio=%v)",
+			videoSeconds, videoPrice, priceData.GroupRatioInfo.GroupRatio, quota, generateAudio))
 	} else if priceData.ModelPrice > 0 {
 		// 2. 固定价格（按次计费）
 		quota = int(priceData.ModelPrice * common.QuotaPerUnit * priceData.GroupRatioInfo.GroupRatio)
@@ -229,7 +252,13 @@ func RelayTaskSubmit(c *gin.Context, info *relaycommon.RelayInfo) (taskErr *dto.
 		taskDataMap["user_group_ratio"] = userGroupRatio
 	}
 	taskDataMap["requested_seconds"] = videoSeconds // 保存请求的秒数
-	taskDataMap["billing_pending"] = true           // 标记待扣费
+	taskDataMap["durationSeconds"] = videoSeconds
+	taskDataMap["generate_audio"] = generateAudio
+	taskDataMap["generateAudio"] = generateAudio
+	if hasVideoPrice && videoPrice > 0 {
+		taskDataMap["video_price_per_second"] = videoPrice
+	}
+	taskDataMap["billing_pending"] = true // 标记待扣费
 
 	// 记录调试信息
 	common.SysLog(fmt.Sprintf("[RelayTaskSubmit] 保存任务信息: token_name=%s, token_id=%d, model=%s, requested_seconds=%d, model_price=%.2f, group_ratio=%.2f",
@@ -257,6 +286,45 @@ func RelayTaskSubmit(c *gin.Context, info *relaycommon.RelayInfo) (taskErr *dto.
 	common.SysLog(fmt.Sprintf("[RelayTaskSubmit] 任务提交完成: TaskID=%s, 不记录日志，等待轮询成功后扣费", taskID))
 
 	return nil
+}
+
+func isFastVeoModel(modelName string) bool {
+	return strings.Contains(strings.ToLower(modelName), "-fast-")
+}
+
+func sanitizeVideoSeconds(seconds int) int {
+	switch seconds {
+	case 6, 8:
+		return seconds
+	default:
+		return 4
+	}
+}
+
+func parseBool(value interface{}) (bool, bool) {
+	switch v := value.(type) {
+	case bool:
+		return v, true
+	case string:
+		normalized := strings.TrimSpace(strings.ToLower(v))
+		if normalized == "true" || normalized == "1" || normalized == "yes" {
+			return true, true
+		}
+		if normalized == "false" || normalized == "0" || normalized == "no" {
+			return false, true
+		}
+	case float64:
+		return v != 0, true
+	case float32:
+		return v != 0, true
+	case int:
+		return v != 0, true
+	case int64:
+		return v != 0, true
+	case uint:
+		return v != 0, true
+	}
+	return false, false
 }
 
 var fetchRespBuilders = map[int]func(c *gin.Context) (respBody []byte, taskResp *dto.TaskError){
@@ -405,7 +473,7 @@ func videoFetchByIDRespBodyBuilder(c *gin.Context) (respBody []byte, taskResp *d
 	// 转换为统一视频生成接口文档格式
 	response := convertToUnifiedVideoResponse(originTask)
 	common.SysLog(fmt.Sprintf("[VideoTask] 转换后的响应格式: TaskId=%s, Status=%s, Url=%s",
-		response.TaskId, response.Status, common.TruncateBase64Content(response.Url)))
+		response.TaskId, response.Status, common.TruncateBase64Content(fmt.Sprintf("%v", response.Url))))
 
 	respBody, err = json.Marshal(response)
 	if err != nil {
@@ -439,6 +507,8 @@ func convertToUnifiedVideoResponse(task *model.Task) *dto.VideoTaskResponse {
 		Format: "mp4", // 默认格式
 	}
 
+	ossFiles, hasOSSFiles := model.ParseTaskMediaInfo(task.FailReason)
+
 	// 解析并返回原厂响应数据作为metadata（所有状态都返回）
 	if task.Data != nil {
 		var rawData map[string]interface{}
@@ -450,23 +520,23 @@ func convertToUnifiedVideoResponse(task *model.Task) *dto.VideoTaskResponse {
 			// 如果任务成功，尝试提取视频URL
 			if task.Status == model.TaskStatusSuccess {
 				if isVeo {
-					// Veo 模型：从 fail_reason 获取视频数据（已经是完整的 data URI）
-					common.SysLog(fmt.Sprintf("[VideoTask] Veo model detected, using data URI from fail_reason for task %s", task.TaskID))
-
-					if task.FailReason != "" {
-						// fail_reason 已经存储了完整的 data URI（由 ParseTaskResult 构造）
-						response.Url = task.FailReason
-						common.SysLog(fmt.Sprintf("[VideoTask] Veo data URI loaded, length: %d chars", len(response.Url)))
-
-						// 在 metadata 中添加截断的 base64 预览（可选）
+					urls := extractOSSUrls(ossFiles)
+					if len(urls) > 0 {
+						setVideoTaskResponseURLs(response, urls)
+						rawData = injectVideoUrls(rawData, urls)
+						common.SysLog(fmt.Sprintf("[VideoTask] Veo media stored in OSS, first url: %s", common.TruncateBase64Content(urls[0])))
+					} else if task.FailReason != "" {
+						// 兼容历史数据：fail_reason 中保存 data URI
+						common.SysLog(fmt.Sprintf("[VideoTask] Veo model detected, fallback to data URI from fail_reason for task %s", task.TaskID))
+						setVideoTaskResponseURLs(response, []string{task.FailReason})
 						if responseObj, ok := rawData["response"].(map[string]interface{}); ok {
 							if videos, ok := responseObj["videos"].([]interface{}); ok && len(videos) > 0 {
 								if video, ok := videos[0].(map[string]interface{}); ok {
-									// 提取纯 base64 部分用于预览
-									if strings.Contains(response.Url, ";base64,") {
-										base64Part := strings.Split(response.Url, ";base64,")[1]
+									if strings.Contains(task.FailReason, ";base64,") {
+										base64Part := strings.Split(task.FailReason, ";base64,")[1]
 										video["bytesBase64Encoded"] = common.TruncateBase64Content(base64Part)
 									}
+									video["url"] = task.FailReason
 								}
 							}
 						}
@@ -476,15 +546,21 @@ func convertToUnifiedVideoResponse(task *model.Task) *dto.VideoTaskResponse {
 				} else {
 					// 其他模型：从数据库提取视频URL
 					if videoURL := extractVideoURL(rawData); videoURL != "" {
-						response.Url = videoURL
+						setVideoTaskResponseURLs(response, []string{videoURL})
 					}
 				}
 			}
 
+			sanitizeVideoMetadata(rawData)
 			// 将处理后的数据作为metadata返回
 			// 对于Veo，此时metadata中的base64已经被截断
 			response.Metadata = rawData
 		}
+	}
+
+	if response.Url == nil && hasOSSFiles && len(ossFiles) > 0 {
+		urls := extractOSSUrls(ossFiles)
+		setVideoTaskResponseURLs(response, urls)
 	}
 
 	// 如果任务失败，添加错误信息
@@ -496,6 +572,92 @@ func convertToUnifiedVideoResponse(task *model.Task) *dto.VideoTaskResponse {
 	}
 
 	return response
+}
+
+func sanitizeVideoMetadata(data map[string]interface{}) {
+	if data == nil {
+		return
+	}
+	blockedKeys := []string{
+		"billing_pending",
+		"billing_processed",
+		"group_ratio",
+		"model_price",
+		"ossFiles",
+		"user_group_ratio",
+		"token_id",
+		"name",
+	}
+	for _, key := range blockedKeys {
+		delete(data, key)
+	}
+}
+
+func extractOSSUrls(media []model.TaskMediaInfo) []string {
+	urls := make([]string, 0, len(media))
+	for _, item := range media {
+		if item.OssURL != "" {
+			urls = append(urls, item.OssURL)
+		}
+	}
+	return urls
+}
+
+func setVideoTaskResponseURLs(response *dto.VideoTaskResponse, urls []string) {
+	if len(urls) == 0 {
+		return
+	}
+	if len(urls) == 1 {
+		response.Url = urls[0]
+	} else {
+		response.Url = urls
+	}
+}
+
+func injectVideoUrls(rawData map[string]interface{}, urls []string) map[string]interface{} {
+	if rawData == nil {
+		rawData = make(map[string]interface{})
+	}
+	rawData["sampleCount"] = len(urls)
+	responseObj, _ := rawData["response"].(map[string]interface{})
+	if responseObj == nil {
+		responseObj = make(map[string]interface{})
+		rawData["response"] = responseObj
+	}
+	videos, _ := responseObj["videos"].([]interface{})
+	if len(videos) < len(urls) {
+		expanded := make([]interface{}, len(urls))
+		copy(expanded, videos)
+		for i := len(videos); i < len(urls); i++ {
+			expanded[i] = map[string]interface{}{}
+		}
+		videos = expanded
+	}
+	for idx, url := range urls {
+		var video map[string]interface{}
+		if idx < len(videos) {
+			if existing, ok := videos[idx].(map[string]interface{}); ok {
+				video = existing
+			}
+		}
+		if video == nil {
+			video = make(map[string]interface{})
+			if idx < len(videos) {
+				videos[idx] = video
+			} else {
+				videos = append(videos, video)
+			}
+		}
+		video["url"] = url
+		if _, ok := video["mimeType"]; !ok {
+			video["mimeType"] = "video/mp4"
+		}
+		if _, ok := video["encoding"]; !ok {
+			video["encoding"] = "mp4"
+		}
+	}
+	responseObj["videos"] = videos
+	return rawData
 }
 
 // convertTaskStatus 将系统任务状态转换为接口文档规范的状态

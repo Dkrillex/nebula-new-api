@@ -25,7 +25,7 @@ type VideoResponse struct {
 type VideoTaskResponse struct {
 	TaskId   string          `json:"task_id" example:"abcd1234efgh"` // 任务ID
 	Status   string          `json:"status" example:"succeeded"`     // 任务状态
-	Url      string          `json:"url,omitempty"`                  // 视频资源URL（成功时）
+	Url      interface{}     `json:"url,omitempty"`                  // 视频资源URL（成功时），可能为字符串或字符串数组
 	Format   string          `json:"format,omitempty" example:"mp4"` // 视频格式
 	Metadata interface{}     `json:"metadata,omitempty"`             // 各厂商原始元数据，支持任意结构
 	Error    *VideoTaskError `json:"error,omitempty"`                // 错误信息（失败时）

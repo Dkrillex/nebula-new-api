@@ -134,6 +134,7 @@ New API提供了丰富的功能，详细特性请参考[特性说明](https://do
 - `GET_MEDIA_TOKEN`：是否统计图片token，默认 `true`
 - `GET_MEDIA_TOKEN_NOT_STREAM`：非流情况下是否统计图片token，默认 `true`
 - `UPDATE_TASK`：是否更新异步任务（Midjourney、Suno），默认 `true`
+- `OSS_BASE64_ENDPOINT`：Veo 视频生成结果上传 OSS 时调用的 Base64 上传接口地址
 - `GEMINI_VISION_MAX_IMAGE_NUM`：Gemini模型最大图片数量，默认 `16`
 - `MAX_FILE_DOWNLOAD_MB`: 最大文件下载大小，单位MB，默认 `20`
 - `CRYPTO_SECRET`：加密密钥，用于加密Redis数据库内容

@@ -10,6 +10,7 @@ import (
 	"one-api/common"
 	"one-api/model"
 	"regexp"
+	"strconv"
 	"strings"
 
 	"github.com/gin-gonic/gin"
@@ -130,6 +131,22 @@ func (a *TaskAdaptor) ValidateRequestAndSetAction(c *gin.Context, info *relaycom
 				common.SysLog(fmt.Sprintf("[Veo] 提取帧率: %v", fps))
 			}
 
+			// 提取 sampleCount
+			var sampleCount int
+			if sc, ok := requestMap["sampleCount"].(float64); ok && sc > 0 {
+				sampleCount = int(sc)
+			} else if sc, ok := requestMap["sampleCount"].(int); ok && sc > 0 {
+				sampleCount = sc
+			} else if sc, ok := requestMap["sample_count"].(float64); ok && sc > 0 {
+				sampleCount = int(sc)
+			} else if sc, ok := requestMap["sample_count"].(int); ok && sc > 0 {
+				sampleCount = sc
+			}
+			if sampleCount > 0 {
+				metadata["sampleCount"] = sampleCount
+				common.SysLog(fmt.Sprintf("[Veo] 提取 sampleCount: %d", sampleCount))
+			}
+
 			// 提取首帧图片
 			if image, ok := requestMap["image"].(string); ok && image != "" {
 				metadata["image"] = image
@@ -244,9 +261,42 @@ func (a *TaskAdaptor) ValidateRequestAndSetAction(c *gin.Context, info *relaycom
 		metaData["image"] = val
 		common.SysLog("[Veo] 从根层级提取 image")
 	}
+	if val, ok := requestMap["sampleCount"]; ok {
+		metaData["sampleCount"] = val
+		common.SysLog(fmt.Sprintf("[Veo] 从根层级提取 sampleCount: %v", val))
+	}
+	if val, ok := requestMap["sample_count"]; ok {
+		metaData["sampleCount"] = val
+		common.SysLog(fmt.Sprintf("[Veo] 从根层级提取 sample_count: %v", val))
+	}
 	if val, ok := requestMap["lastFrame"]; ok {
 		metaData["lastFrame"] = val
 		common.SysLog("[Veo] 从根层级提取 lastFrame")
+	}
+	if val, ok := requestMap["generateAudio"]; ok {
+		metaData["generateAudio"] = val
+		common.SysLog(fmt.Sprintf("[Veo] 从根层级提取 generateAudio: %v", val))
+	} else if val, ok := requestMap["generate_audio"]; ok {
+		metaData["generateAudio"] = val
+		common.SysLog(fmt.Sprintf("[Veo] 从根层级提取 generate_audio: %v", val))
+	}
+	if val, ok := requestMap["personGeneration"]; ok {
+		metaData["personGeneration"] = val
+		common.SysLog(fmt.Sprintf("[Veo] 从根层级提取 personGeneration: %v", val))
+	} else if val, ok := requestMap["person_generation"]; ok {
+		metaData["personGeneration"] = val
+		common.SysLog(fmt.Sprintf("[Veo] 从根层级提取 person_generation: %v", val))
+	}
+	if val, ok := requestMap["addWatermark"]; ok {
+		metaData["addWatermark"] = val
+		common.SysLog(fmt.Sprintf("[Veo] 从根层级提取 addWatermark: %v", val))
+	} else if val, ok := requestMap["add_watermark"]; ok {
+		metaData["addWatermark"] = val
+		common.SysLog(fmt.Sprintf("[Veo] 从根层级提取 add_watermark: %v", val))
+	}
+	if val, ok := requestMap["seed"]; ok {
+		metaData["seed"] = val
+		common.SysLog(fmt.Sprintf("[Veo] 从根层级提取 seed: %v", val))
 	}
 
 	if len(metaData) == 0 {
@@ -263,7 +313,8 @@ func (a *TaskAdaptor) ValidateRequestAndSetAction(c *gin.Context, info *relaycom
 
 	// 调试：打印 metadata 内容
 	if metadataJSON, err := json.Marshal(metaData); err == nil {
-		common.SysLog(fmt.Sprintf("[Veo] 最终 Metadata 内容: %s", string(metadataJSON)))
+		truncated := common.TruncateBase64Content(string(metadataJSON))
+		common.SysLog(fmt.Sprintf("[Veo] 最终 Metadata 内容: %s", truncated))
 	}
 
 	return nil
@@ -335,63 +386,100 @@ func (a *TaskAdaptor) BuildRequestBody(c *gin.Context, info *relaycommon.RelayIn
 		Parameters: map[string]any{},
 	}
 
-	// 调试：打印 metadata 内容
-	if req.Metadata != nil {
-		metadataJSON, _ := json.Marshal(req.Metadata)
-		common.SysLog(fmt.Sprintf("[Veo] req.Metadata 内容: %s", string(metadataJSON)))
+	metadata := req.Metadata
+	if metadata == nil {
+		metadata = make(map[string]interface{})
+	}
+
+	modelName := deriveModelName(info, req)
+	supportsAudioParam := supportsGenerateAudioParameter(modelName)
+
+	if metadataJSON, err := json.Marshal(metadata); err == nil {
+		truncated := common.TruncateBase64Content(string(metadataJSON))
+		common.SysLog(fmt.Sprintf("[Veo] req.Metadata 内容: %s", truncated))
 	} else {
-		common.SysLog("[Veo] req.Metadata 为空！")
+		common.SysLog("[Veo] req.Metadata 解析失败，使用空对象")
 	}
 
-	if req.Metadata != nil {
-		// 视频时长（秒）- 使用驼峰格式读取
-		if v, ok := req.Metadata["durationSeconds"]; ok {
-			body.Parameters["durationSeconds"] = v
-			common.SysLog(fmt.Sprintf("[Veo] 设置时长参数: %v秒", v))
-		}
-		// 宽高比 - 使用驼峰格式读取
-		if v, ok := req.Metadata["aspectRatio"]; ok {
-			body.Parameters["aspectRatio"] = v
-			common.SysLog(fmt.Sprintf("[Veo] 设置宽高比: %v", v))
-		}
-		// 分辨率
-		if v, ok := req.Metadata["resolution"]; ok {
-			body.Parameters["resolution"] = v
-			common.SysLog(fmt.Sprintf("[Veo] 设置分辨率: %v", v))
-		}
-		// 帧率（如果有）
-		if v, ok := req.Metadata["fps"]; ok {
-			body.Parameters["fps"] = v
-			common.SysLog(fmt.Sprintf("[Veo] 设置帧率: %v", v))
-		}
+	durationSeconds := sanitizeDurationSecondsFromMetadata(metadata)
+	metadata["durationSeconds"] = durationSeconds
+	body.Parameters["durationSeconds"] = durationSeconds
+	common.SysLog(fmt.Sprintf("[Veo] 设置时长参数: %d秒", durationSeconds))
 
-		// 首帧图片 - 按照 Google API 格式构造
-		if v, ok := req.Metadata["image"]; ok {
-			if imageStr, ok := v.(string); ok && imageStr != "" {
-				base64Data := convertToBase64(imageStr)
-				instance["image"] = map[string]any{
-					"bytesBase64Encoded": base64Data,
-					"mimeType":           detectImageMimeType(imageStr),
-				}
-				common.SysLog(fmt.Sprintf("[Veo] 添加首帧图片 (base64 长度: %d)", len(base64Data)))
-			}
-		}
+	aspectRatio := sanitizeAspectRatioFromMetadata(metadata)
+	metadata["aspectRatio"] = aspectRatio
+	body.Parameters["aspectRatio"] = aspectRatio
+	common.SysLog(fmt.Sprintf("[Veo] 设置宽高比: %s", aspectRatio))
 
-		// 尾帧图片 - 按照 Google API 格式构造（使用驼峰格式读取）
-		if v, ok := req.Metadata["lastFrame"]; ok {
-			if lastFrameStr, ok := v.(string); ok && lastFrameStr != "" {
-				base64Data := convertToBase64(lastFrameStr)
-				instance["lastFrame"] = map[string]any{
-					"bytesBase64Encoded": base64Data,
-					"mimeType":           detectImageMimeType(lastFrameStr),
-				}
-				common.SysLog(fmt.Sprintf("[Veo] 添加尾帧图片 (base64 长度: %d)", len(base64Data)))
+	resolutionOption := sanitizeResolutionOptionFromMetadata(metadata)
+	metadata["resolution"] = resolutionOption
+	body.Parameters["resolution"] = resolutionOption
+	common.SysLog(fmt.Sprintf("[Veo] 设置分辨率: %s", resolutionOption))
+
+	fps := sanitizeFpsFromMetadata(metadata)
+	metadata["fps"] = fps
+	body.Parameters["fps"] = fps
+
+	sampleCount := sanitizeSampleCountFromMetadata(metadata)
+	metadata["sampleCount"] = sampleCount
+	body.Parameters["sampleCount"] = sampleCount
+	common.SysLog(fmt.Sprintf("[Veo] 设置 sampleCount: %d", sampleCount))
+
+	if imageVal, ok := metadata["image"]; ok {
+		if imageStr, ok := imageVal.(string); ok && imageStr != "" {
+			base64Data := convertToBase64(imageStr)
+			instance["image"] = map[string]any{
+				"bytesBase64Encoded": base64Data,
+				"mimeType":           detectImageMimeType(imageStr),
 			}
+			common.SysLog(fmt.Sprintf("[Veo] 添加首帧图片 (base64 长度: %d)", len(base64Data)))
 		}
 	}
 
-	// 固定 sampleCount 为 1（不使用 storageUri）
-	body.Parameters["sampleCount"] = 1
+	if lastFrameVal, ok := metadata["lastFrame"]; ok {
+		if lastFrameStr, ok := lastFrameVal.(string); ok && lastFrameStr != "" {
+			base64Data := convertToBase64(lastFrameStr)
+			instance["lastFrame"] = map[string]any{
+				"bytesBase64Encoded": base64Data,
+				"mimeType":           detectImageMimeType(lastFrameStr),
+			}
+			common.SysLog(fmt.Sprintf("[Veo] 添加尾帧图片 (base64 长度: %d)", len(base64Data)))
+		}
+	}
+
+	generateAudio := sanitizeGenerateAudio(metadata, req.GenerateAudio)
+	if !supportsAudioParam {
+		generateAudio = true
+	}
+	metadata["generateAudio"] = generateAudio
+	metadata["generate_audio"] = generateAudio
+	if supportsAudioParam {
+		body.Parameters["generateAudio"] = generateAudio
+		common.SysLog(fmt.Sprintf("[Veo] 设置 generateAudio: %v", generateAudio))
+	} else {
+		common.SysLog(fmt.Sprintf("[Veo] 模型 %s 默认包含音频，忽略 generateAudio 参数", modelName))
+	}
+
+	personGeneration := sanitizePersonGenerationFromMetadata(metadata)
+	metadata["personGeneration"] = personGeneration
+	metadata["person_generation"] = personGeneration
+	body.Parameters["personGeneration"] = personGeneration
+	common.SysLog(fmt.Sprintf("[Veo] 设置 personGeneration: %s", personGeneration))
+
+	addWatermark := sanitizeBoolMetadata(metadata, []string{"addWatermark", "add_watermark"}, false)
+	metadata["addWatermark"] = addWatermark
+	metadata["add_watermark"] = addWatermark
+	body.Parameters["addWatermark"] = addWatermark
+	common.SysLog(fmt.Sprintf("[Veo] 设置 addWatermark: %v", addWatermark))
+
+	if seed := extractIntFromMetadata(metadata, "seed"); seed > 0 {
+		metadata["seed"] = seed
+		body.Parameters["seed"] = seed
+		common.SysLog(fmt.Sprintf("[Veo] 设置 seed: %d", seed))
+	}
+
+	req.Metadata = metadata
+	c.Set("task_request", req)
 
 	data, err := json.Marshal(body)
 	if err != nil {
@@ -403,6 +491,74 @@ func (a *TaskAdaptor) BuildRequestBody(c *gin.Context, info *relaycommon.RelayIn
 	common.SysLog(fmt.Sprintf("[Veo] 构建的请求体: %s", truncatedBody))
 
 	return bytes.NewReader(data), nil
+}
+
+func toBool(value interface{}) (bool, bool) {
+	switch v := value.(type) {
+	case bool:
+		return v, true
+	case string:
+		normalized := strings.TrimSpace(strings.ToLower(v))
+		if normalized == "true" || normalized == "1" || normalized == "yes" {
+			return true, true
+		}
+		if normalized == "false" || normalized == "0" || normalized == "no" {
+			return false, true
+		}
+	case float64:
+		return v != 0, true
+	case float32:
+		return v != 0, true
+	case int:
+		return v != 0, true
+	case int64:
+		return v != 0, true
+	case uint:
+		return v != 0, true
+	case json.Number:
+		if f, err := v.Float64(); err == nil {
+			return f != 0, true
+		}
+	}
+	return false, false
+}
+
+func toString(value interface{}) string {
+	switch v := value.(type) {
+	case string:
+		return v
+	case json.Number:
+		return v.String()
+	default:
+		return fmt.Sprintf("%v", v)
+	}
+}
+
+func toInt(value interface{}) (int, bool) {
+	switch v := value.(type) {
+	case int:
+		return v, true
+	case int64:
+		return int(v), true
+	case uint:
+		return int(v), true
+	case float64:
+		return int(v), true
+	case float32:
+		return int(v), true
+	case string:
+		if v == "" {
+			return 0, false
+		}
+		if num, err := strconv.Atoi(strings.TrimSpace(v)); err == nil {
+			return num, true
+		}
+	case json.Number:
+		if i, err := v.Int64(); err == nil {
+			return int(i), true
+		}
+	}
+	return 0, false
 }
 
 // convertToBase64 将 URL 或 data URI 转换为纯 base64 字符串
@@ -580,25 +736,27 @@ func (a *TaskAdaptor) ParseTaskResult(respBody []byte) (*relaycommon.TaskInfo, e
 	}
 	ti.Status = string(model.TaskStatusSuccess)
 	ti.Progress = "100%"
-	if len(op.Response.Videos) > 0 {
-		v0 := op.Response.Videos[0]
-		if v0.BytesBase64Encoded != "" {
-			mime := strings.TrimSpace(v0.MimeType)
-			if mime == "" {
-				enc := strings.TrimSpace(v0.Encoding)
-				if enc == "" {
-					enc = "mp4"
-				}
-				if strings.Contains(enc, "/") {
-					mime = enc
-				} else {
-					mime = "video/" + enc
-				}
-			}
-			ti.Url = "data:" + mime + ";base64," + v0.BytesBase64Encoded
-			return ti, nil
+
+	dataURIs := make([]string, 0)
+	for _, video := range op.Response.Videos {
+		if video.BytesBase64Encoded == "" {
+			continue
 		}
+		mime := strings.TrimSpace(video.MimeType)
+		if mime == "" {
+			enc := strings.TrimSpace(video.Encoding)
+			if enc == "" {
+				enc = "mp4"
+			}
+			if strings.Contains(enc, "/") {
+				mime = enc
+			} else {
+				mime = "video/" + enc
+			}
+		}
+		dataURIs = append(dataURIs, "data:"+mime+";base64,"+video.BytesBase64Encoded)
 	}
+
 	if op.Response.BytesBase64Encoded != "" {
 		enc := strings.TrimSpace(op.Response.Encoding)
 		if enc == "" {
@@ -608,10 +766,9 @@ func (a *TaskAdaptor) ParseTaskResult(respBody []byte) (*relaycommon.TaskInfo, e
 		if !strings.Contains(enc, "/") {
 			mime = "video/" + enc
 		}
-		ti.Url = "data:" + mime + ";base64," + op.Response.BytesBase64Encoded
-		return ti, nil
+		dataURIs = append(dataURIs, "data:"+mime+";base64,"+op.Response.BytesBase64Encoded)
 	}
-	if op.Response.Video != "" { // some variants use `video` as base64
+	if op.Response.Video != "" {
 		enc := strings.TrimSpace(op.Response.Encoding)
 		if enc == "" {
 			enc = "mp4"
@@ -620,9 +777,17 @@ func (a *TaskAdaptor) ParseTaskResult(respBody []byte) (*relaycommon.TaskInfo, e
 		if !strings.Contains(enc, "/") {
 			mime = "video/" + enc
 		}
-		ti.Url = "data:" + mime + ";base64," + op.Response.Video
-		return ti, nil
+		dataURIs = append(dataURIs, "data:"+mime+";base64,"+op.Response.Video)
 	}
+
+	if len(dataURIs) > 0 {
+		ti.Url = dataURIs[0]
+		ti.Urls = dataURIs
+		ti.Usage = &relaycommon.VideoUsage{
+			VideoCount: len(dataURIs),
+		}
+	}
+
 	return ti, nil
 }
 
@@ -677,4 +842,165 @@ func extractProjectFromOperationName(name string) string {
 		return m[1]
 	}
 	return ""
+}
+
+func deriveModelName(info *relaycommon.RelayInfo, req relaycommon.TaskSubmitReq) string {
+	if info != nil && strings.TrimSpace(info.OriginModelName) != "" {
+		return info.OriginModelName
+	}
+	if strings.TrimSpace(req.Model) != "" {
+		return req.Model
+	}
+	return ""
+}
+
+func sanitizeFpsFromMetadata(metadata map[string]interface{}) int {
+	fps := extractIntFromMetadata(metadata, "fps")
+	if fps <= 0 {
+		return 24
+	}
+	return fps
+}
+
+func supportsGenerateAudioParameter(modelName string) bool {
+	if modelName == "" {
+		return true
+	}
+	lower := strings.ToLower(modelName)
+	return !(strings.Contains(lower, "-fast-") || strings.Contains(lower, "fast-"))
+}
+
+func sanitizeDurationSecondsFromMetadata(metadata map[string]interface{}) int {
+	if seconds := extractIntFromMetadata(metadata, "durationSeconds", "duration_seconds"); seconds != 0 {
+		switch seconds {
+		case 4, 6, 8, 12:
+			return seconds
+		}
+	}
+	return 4
+}
+
+func sanitizeSampleCountFromMetadata(metadata map[string]interface{}) int {
+	if count := extractIntFromMetadata(metadata, "sampleCount", "sample_count"); count > 0 {
+		if count > 4 {
+			return 4
+		}
+		return count
+	}
+	return 1
+}
+
+func sanitizeAspectRatioFromMetadata(metadata map[string]interface{}) string {
+	ratio := strings.ReplaceAll(extractStringFromMetadata(metadata, "aspectRatio", "aspect_ratio"), " ", "")
+	ratio = strings.ToLower(ratio)
+	switch ratio {
+	case "9:16", "9/16", "9-16":
+		return "9:16"
+	case "16:9", "16/9", "16-9":
+		return "16:9"
+	default:
+		return "16:9"
+	}
+}
+
+func sanitizeResolutionOptionFromMetadata(metadata map[string]interface{}) string {
+	res := strings.ToLower(strings.TrimSpace(extractStringFromMetadata(metadata, "resolution")))
+	switch {
+	case strings.Contains(res, "720"):
+		return "720p"
+	case strings.Contains(res, "1080"):
+		return "1080p"
+	default:
+		return "1080p"
+	}
+}
+
+func resolveVertexResolution(option, aspectRatio string) string {
+	switch option {
+	case "720p":
+		if aspectRatio == "9:16" {
+			return "720x1280"
+		}
+		return "1280x720"
+	case "1080p":
+		if aspectRatio == "9:16" {
+			return "1080x1920"
+		}
+		return "1920x1080"
+	default:
+		if aspectRatio == "9:16" {
+			return "1080x1920"
+		}
+		return "1920x1080"
+	}
+}
+
+func sanitizeGenerateAudio(metadata map[string]interface{}, fallback bool) bool {
+	if val, ok := metadata["generateAudio"]; ok {
+		if parsed, ok2 := toBool(val); ok2 {
+			fallback = parsed
+		}
+	}
+	if val, ok := metadata["generate_audio"]; ok {
+		if parsed, ok2 := toBool(val); ok2 {
+			fallback = parsed
+		}
+	}
+	return fallback
+}
+
+func sanitizePersonGenerationFromMetadata(metadata map[string]interface{}) string {
+	value := strings.ToLower(strings.TrimSpace(extractStringFromMetadata(metadata, "personGeneration", "person_generation")))
+	switch value {
+	case "allow_adult", "dont_allow":
+		return value
+	default:
+		return "allow_all"
+	}
+}
+
+func sanitizeBoolMetadata(metadata map[string]interface{}, keys []string, defaultValue bool) bool {
+	result := defaultValue
+	for _, key := range keys {
+		if val, ok := metadata[key]; ok {
+			if parsed, ok2 := toBool(val); ok2 {
+				result = parsed
+				break
+			}
+		}
+	}
+	return result
+}
+
+func extractIntFromMetadata(metadata map[string]interface{}, keys ...string) int {
+	for _, key := range keys {
+		if val, ok := metadata[key]; ok {
+			if parsed, ok2 := toInt(val); ok2 {
+				return parsed
+			}
+		}
+	}
+	return 0
+}
+
+func extractStringFromMetadata(metadata map[string]interface{}, keys ...string) string {
+	for _, key := range keys {
+		if val, ok := metadata[key]; ok {
+			if str := toString(val); str != "" {
+				return str
+			}
+		}
+	}
+	return ""
+}
+
+func extractPositiveInt(m map[string]interface{}, keys ...string) int {
+	for _, key := range keys {
+		if val, ok := m[key]; ok {
+			if parsed, ok2 := toInt(val); ok2 && parsed > 0 {
+				return parsed
+			}
+		}
+	}
+	return 0
 }

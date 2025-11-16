@@ -116,11 +116,11 @@ func main() {
 	}
 
 	// Veo 视频任务清理线程（清理超过保留期的大字段）
-	{
-		retentionHours := common.GetEnvOrDefault("VIDEO_RETENTION_HOURS", 12)
-		intervalMinutes := common.GetEnvOrDefault("VIDEO_CLEAN_INTERVAL_MINUTES", 30)
-		model.StartVeoFailReasonCleaner(retentionHours, intervalMinutes)
-	}
+	//{
+	//	retentionHours := common.GetEnvOrDefault("VIDEO_RETENTION_HOURS", 1)
+	//	intervalMinutes := common.GetEnvOrDefault("VIDEO_CLEAN_INTERVAL_MINUTES", 10)
+	//	model.StartVeoFailReasonCleaner(retentionHours, intervalMinutes)
+	//}
 
 	if os.Getenv("ENABLE_PPROF") == "true" {
 		gopool.Go(func() {
