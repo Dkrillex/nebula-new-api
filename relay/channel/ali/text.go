@@ -90,6 +90,7 @@ func responseAli2OpenAI(response *AliResponse) *dto.OpenAITextResponse {
 		},
 		FinishReason: response.Output.FinishReason,
 	}
+
 	fullTextResponse := dto.OpenAITextResponse{
 		Id:      response.RequestId,
 		Object:  "chat.completion",
@@ -195,6 +196,19 @@ func aliHandler(c *gin.Context, resp *http.Response) (*types.NewAPIError, *dto.U
 			Code:    aliResponse.Code,
 		}, resp.StatusCode), nil
 	}
+
+	// 存储缓存使用信息到gin上下文
+	if aliResponse.Usage.PromptTokensDetails != nil &&
+		(aliResponse.Usage.PromptTokensDetails.CacheCreationInputTokens > 0 ||
+			aliResponse.Usage.PromptTokensDetails.CachedTokens > 0) {
+		cacheUsage := &dto.QwenCacheUsage{
+			CacheCreationTokens: aliResponse.Usage.PromptTokensDetails.CacheCreationInputTokens,
+			CacheHitTokens:      aliResponse.Usage.PromptTokensDetails.CachedTokens,
+			CachePolicy:         "implicit", // 默认隐式缓存
+		}
+		c.Set("qwen_cache_usage", cacheUsage)
+	}
+
 	fullTextResponse := responseAli2OpenAI(&aliResponse)
 	jsonResponse, err := common.Marshal(fullTextResponse)
 	if err != nil {

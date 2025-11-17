@@ -661,6 +661,28 @@ func applyUsagePostProcessing(info *relaycommon.RelayInfo, usage *dto.Usage, res
 			}
 		}
 	}
+	// 处理阿里云通义千问缓存
+	if info.ChannelType == constant.ChannelTypeAli {
+		// 从响应体中提取缓存使用情况
+		var aliResponse struct {
+			Usage struct {
+				PromptTokensDetails *struct {
+					CacheCreationInputTokens int `json:"cache_creation_input_tokens"`
+					CachedTokens             int `json:"cached_tokens"`
+				} `json:"prompt_tokens_details"`
+			} `json:"usage"`
+		}
+
+		if err := common.Unmarshal(responseBody, &aliResponse); err == nil && aliResponse.Usage.PromptTokensDetails != nil {
+			// 设置缓存token详情
+			if aliResponse.Usage.PromptTokensDetails.CacheCreationInputTokens > 0 {
+				usage.PromptTokensDetails.CachedCreationTokens = aliResponse.Usage.PromptTokensDetails.CacheCreationInputTokens
+			}
+			if aliResponse.Usage.PromptTokensDetails.CachedTokens > 0 {
+				usage.PromptTokensDetails.CachedTokens = aliResponse.Usage.PromptTokensDetails.CachedTokens
+			}
+		}
+	}
 }
 
 func extractCachedTokensFromBody(body []byte) (int, bool) {

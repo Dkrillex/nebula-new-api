@@ -69,6 +69,14 @@ type AliUsage struct {
 	Width      int `json:"width,omitempty"`
 	Height     int `json:"height,omitempty"`
 	ImageCount int `json:"image_count,omitempty"`
+	// 缓存相关字段（根据阿里云官方文档）
+	PromptTokensDetails *AliPromptTokensDetails `json:"prompt_tokens_details,omitempty"`
+}
+
+// AliPromptTokensDetails 阿里云prompt token详情
+type AliPromptTokensDetails struct {
+	CacheCreationInputTokens int `json:"cache_creation_input_tokens,omitempty"` // 显式缓存创建消耗的token
+	CachedTokens             int `json:"cached_tokens,omitempty"`               // 缓存命中节省的token
 }
 
 type TaskResult struct {

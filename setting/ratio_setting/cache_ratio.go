@@ -54,6 +54,22 @@ var defaultCacheRatio = map[string]float64{
 	"claude-opus-4-1-20250805-thinking":   0.1,
 	"claude-haiku-4-5-20251001":           0.1,
 	"claude-haiku-4-5-20251001-thinking":  0.1,
+	// 阿里云通义千问模型缓存比例（隐式缓存命中20%，显式缓存命中10%）
+	"qwen-turbo":           0.2,
+	"qwen-plus":            0.2,
+	"qwen-max":             0.2,
+	"qwen-max-1201":        0.2,
+	"qwen-max-0403":        0.2,
+	"qwen-max-0107":        0.2,
+	"qwen-max-longcontext": 0.2,
+	"qwen-vl-max":          0.2,
+	"qwen-vl-plus":         0.2,
+	"qwen-audio-turbo":     0.2,
+	"qwen-7b":              0.2,
+	"qwen-14b":             0.2,
+	"qwen-72b":             0.2,
+	"qwen-1.8b":            0.2,
+	"qwen-2.5b":            0.2,
 }
 
 var defaultCreateCacheRatio = map[string]float64{
@@ -75,6 +91,22 @@ var defaultCreateCacheRatio = map[string]float64{
 	"claude-sonnet-4-5-20250929-thinking": 1.25,
 	"claude-haiku-4-5-20251001":           1.25,
 	"claude-haiku-4-5-20251001-thinking":  1.25,
+	// 阿里云通义千问显式缓存创建比例（125%），隐式缓存创建使用默认值1.0
+	"qwen-turbo":           1.25,
+	"qwen-plus":            1.25,
+	"qwen-max":             1.25,
+	"qwen-max-1201":        1.25,
+	"qwen-max-0403":        1.25,
+	"qwen-max-0107":        1.25,
+	"qwen-max-longcontext": 1.25,
+	"qwen-vl-max":          1.25,
+	"qwen-vl-plus":         1.25,
+	"qwen-audio-turbo":     1.25,
+	"qwen-7b":              1.25,
+	"qwen-14b":             1.25,
+	"qwen-72b":             1.25,
+	"qwen-1.8b":            1.25,
+	"qwen-2.5b":            1.25,
 }
 
 //var defaultCreateCacheRatio = map[string]float64{}

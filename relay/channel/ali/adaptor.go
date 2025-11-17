@@ -163,6 +163,7 @@ func (a *Adaptor) ConvertOpenAIRequest(c *gin.Context, info *relaycommon.RelayIn
 		parameters["incremental_output"] = io2
 		delete(body, "incremental_output")
 	}
+	// 注：通义千问缓存通过messages中的cache_control字段实现，无需额外处理
 	if len(parameters) > 0 {
 		body["parameters"] = parameters
 	}

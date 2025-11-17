@@ -90,7 +90,9 @@ type GeneralOpenAIRequest struct {
 	// ollama Params
 	Think json.RawMessage `json:"think,omitempty"`
 	// baidu v2
-	WebSearch json.RawMessage `json:"web_search,omitempty"`
+	BaiduV2Params map[string]any `json:"baidu_v2_params,omitempty"`
+	// 通义千问缓存使用情况（仅用于响应）
+	CacheUsage *QwenCacheUsage `json:"cache_usage,omitempty"`
 	// doubao,zhipu_v4
 	THINKING json.RawMessage `json:"thinking,omitempty"`
 	// pplx Params
@@ -981,4 +983,19 @@ func (r *OpenAIResponsesRequest) ParseInput() []MediaInput {
 	}
 
 	return inputs
+}
+
+// QwenCacheUsage 通义千问缓存使用情况
+// 用于记录缓存创建和命中的token消耗
+// 隐式缓存：创建100%，命中20%
+// 显式缓存：创建125%，命中10%
+type QwenCacheUsage struct {
+	// 缓存创建消耗的token数量
+	CacheCreationTokens int `json:"cache_creation_tokens,omitempty"`
+	// 缓存命中节省的token数量
+	CacheHitTokens int `json:"cache_hit_tokens,omitempty"`
+	// 缓存策略：implicit/explicit
+	CachePolicy string `json:"cache_policy,omitempty"`
+	// 缓存ID（显式缓存时使用）
+	CacheId string `json:"cache_id,omitempty"`
 }
