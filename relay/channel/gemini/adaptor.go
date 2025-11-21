@@ -118,7 +118,7 @@ func (a *Adaptor) convertImageDataToGeminiPart(c *gin.Context, imageData string)
 
 func (a *Adaptor) ConvertImageRequest(c *gin.Context, info *relaycommon.RelayInfo, request dto.ImageRequest) (any, error) {
 	// 支持gemini-2.5-flash-image系列模型
-	if strings.Contains(info.UpstreamModelName, "gemini-2.5-flash-image") {
+	if strings.Contains(info.UpstreamModelName, "gemini-2.5-flash-image") || strings.Contains(info.UpstreamModelName, "-image") {
 		var contents []dto.GeminiChatContent
 
 		// 检查是否有完整的对话上下文（contents格式）

@@ -88,7 +88,8 @@ type GeneralOpenAIRequest struct {
 	// 仅影响下行整形：是否将 reasoning_content 转为 <think> 包裹并写入 content
 	NebulaThinkingToContent bool `json:"nebula_thinking_to_content,omitempty"`
 	// ollama Params
-	Think json.RawMessage `json:"think,omitempty"`
+	Think     json.RawMessage `json:"think,omitempty"`
+	WebSearch json.RawMessage `json:"web_search,omitempty"`
 	// baidu v2
 	BaiduV2Params map[string]any `json:"baidu_v2_params,omitempty"`
 	// 通义千问缓存使用情况（仅用于响应）

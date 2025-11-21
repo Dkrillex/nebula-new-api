@@ -313,6 +313,26 @@ var defaultVideoModelPricePerSecond = map[string]float64{
 	"veo-3.1-generate-preview":      0.2,  // $0.2/秒,如果有音频是$0.4/秒
 }
 
+// defaultVideoModelPricePerSecondWithResolutions 包含带分辨率配置的默认视频模型价格
+var defaultVideoModelPricePerSecondWithResolutions = map[string]interface{}{
+	"wan2.5-i2v-preview": map[string]interface{}{
+		"default": 0.0738,
+		"resolutions": map[string]interface{}{
+			"480p":  0.0369,
+			"720p":  0.0738,
+			"1080p": 0.1233,
+		},
+	},
+	"wan2.5-t2v-preview": map[string]interface{}{
+		"default": 0.0738,
+		"resolutions": map[string]interface{}{
+			"480p":  0.0369,
+			"720p":  0.0738,
+			"1080p": 0.1233,
+		},
+	},
+}
+
 type VideoAudioPricing struct {
 	NoAudio float64 `json:"noAudio,omitempty"`
 	Audio   float64 `json:"audio,omitempty"`
@@ -339,6 +359,34 @@ var defaultAudioRatio = map[string]float64{
 var defaultAudioCompletionRatio = map[string]float64{
 	"gpt-4o-realtime":      2,
 	"gpt-4o-mini-realtime": 2,
+}
+
+// MultiModalPricing 多模态模型定价结构
+type MultiModalPricing struct {
+	TextInputPrice            float64 `json:"text_input_price"`
+	AudioInputPrice           float64 `json:"audio_input_price"`
+	ImageVideoInputPrice      float64 `json:"image_video_input_price"`
+	TextOutputPriceTextOnly   float64 `json:"text_output_price_text_only"`
+	TextOutputPriceMultimodal float64 `json:"text_output_price_multimodal"`
+	TextAudioOutputPrice      float64 `json:"text_audio_output_price"`
+}
+
+var defaultImageModelPricePerImage = map[string]float64{
+	"qwen-image-plus":                 0.0246575,
+	"doubao-seedream-4-0-250828":      0.0247,
+	"qwen-image-edit-plus":            0.0246575,
+	"qwen-image-edit-plus-2025-10-30": 0.0246575,
+}
+
+var defaultMultiModalPricing = map[string]MultiModalPricing{
+	"qwen3-omni-flash": {
+		TextInputPrice:            0.27,
+		AudioInputPrice:           2.33,
+		ImageVideoInputPrice:      0.48,
+		TextOutputPriceTextOnly:   1.02,
+		TextOutputPriceMultimodal: 1.87,
+		TextAudioOutputPrice:      9.25,
+	},
 }
 
 var (
@@ -409,6 +457,9 @@ func InitRatioSettings() {
 
 	// Load originImageModelPricePerImageMap from database
 	loadOriginImageModelPricePerImageFromDatabase()
+
+	// Load multiModalPricingMap from database
+	loadMultiModalPricingFromDatabase()
 
 	// initialize audioRatioMap
 	audioRatioMapMutex.Lock()
@@ -764,6 +815,12 @@ var (
 	originImageModelPricePerImageMapMutex                    = sync.RWMutex{}
 )
 
+// 多模态模型定价
+var (
+	multiModalPricingMap      map[string]MultiModalPricing = nil
+	multiModalPricingMapMutex                              = sync.RWMutex{}
+)
+
 func ImageRatio2JSONString() string {
 	imageRatioMapMutex.RLock()
 	defer imageRatioMapMutex.RUnlock()
@@ -900,6 +957,29 @@ func GetVideoModelPricePerSecond(name string) (float64, bool) {
 		}
 		if audioPricing.Audio > 0 {
 			return audioPricing.Audio, true
+		}
+	}
+
+	// 对于 wan2.5 系列模型（i2v 和 t2v），如果缓存中没有，尝试从原始配置读取 default 值
+	if name == "wan2.5-i2v-preview" || name == "wan2.5-t2v-preview" {
+		if videoStr, exists := common.OptionMap["VideoModelPricePerSecond"]; exists {
+			var rawMap map[string]interface{}
+			if err := common.Unmarshal([]byte(videoStr), &rawMap); err == nil {
+				// 优先查找当前模型，如果没有则查找 wan2.5-i2v-preview（因为配置可能只有 i2v）
+				var wan25Config map[string]interface{}
+				if config, ok := rawMap[name].(map[string]interface{}); ok {
+					wan25Config = config
+				} else if config, ok := rawMap["wan2.5-i2v-preview"].(map[string]interface{}); ok {
+					wan25Config = config
+				}
+
+				if wan25Config != nil {
+					// 尝试读取 default 值
+					if def, ok := extractFloatFromMap(wan25Config, "default"); ok && def > 0 {
+						return def, true
+					}
+				}
+			}
 		}
 	}
 
@@ -1300,6 +1380,16 @@ func loadVideoModelPricePerSecondFromDatabase() {
 			videoModelPricePerSecondRawMap[k] = v
 		}
 	}
+	// 添加 wan2.5 系列模型的默认配置（带分辨率）
+	for k, v := range defaultVideoModelPricePerSecondWithResolutions {
+		videoModelPricePerSecondRawMap[k] = v
+		// 构建缓存，将 default 值放入 priceMap
+		if config, ok := v.(map[string]interface{}); ok {
+			if def, ok := extractFloatFromMap(config, "default"); ok {
+				videoModelPricePerSecondMap[k] = def
+			}
+		}
+	}
 	common.SysLog("Using default video model price per second configuration")
 }
 
@@ -1453,8 +1543,12 @@ func loadImageModelPricePerImageFromDatabase() {
 		}
 	}
 
-	imageModelPricePerImageMap = make(map[string]float64)
-	common.SysLog("Using empty image model price per image")
+	// Fallback to default if database load fails
+	imageModelPricePerImageMap = make(map[string]float64, len(defaultImageModelPricePerImage))
+	for k, v := range defaultImageModelPricePerImage {
+		imageModelPricePerImageMap[k] = v
+	}
+	common.SysLog("Using default image model price per image configuration")
 }
 
 // loadOriginImageModelPricePerImageFromDatabase 从数据库加载原始按张计费价格（厂商价格）
@@ -1561,6 +1655,76 @@ func GetOriginImageModelPricePerImageCopy() map[string]float64 {
 		copyMap[k] = v
 	}
 	return copyMap
+}
+
+// loadMultiModalPricingFromDatabase 从数据库加载多模态模型定价配置
+func loadMultiModalPricingFromDatabase() {
+	multiModalPricingMapMutex.Lock()
+	defer multiModalPricingMapMutex.Unlock()
+
+	// Try to get from database first
+	if pricingStr, exists := common.OptionMap["MultiModalPricing"]; exists && pricingStr != "" {
+		var pricingMap map[string]MultiModalPricing
+		if err := common.Unmarshal([]byte(pricingStr), &pricingMap); err == nil {
+			multiModalPricingMap = pricingMap
+			common.SysLog("Loaded multi-modal pricing configuration from database")
+			return
+		}
+	}
+
+	// Fallback to default if database load fails
+	multiModalPricingMap = make(map[string]MultiModalPricing, len(defaultMultiModalPricing))
+	for k, v := range defaultMultiModalPricing {
+		multiModalPricingMap[k] = v
+	}
+	common.SysLog("Using default multi-modal pricing configuration")
+}
+
+// GetMultiModalPricing 获取多模态模型定价配置
+func GetMultiModalPricing(name string) (MultiModalPricing, bool) {
+	multiModalPricingMapMutex.RLock()
+	defer multiModalPricingMapMutex.RUnlock()
+
+	name = FormatMatchingModelName(name)
+	pricing, ok := multiModalPricingMap[name]
+	return pricing, ok
+}
+
+// GetMultiModalPricingCopy 获取多模态模型定价配置的副本
+func GetMultiModalPricingCopy() map[string]MultiModalPricing {
+	multiModalPricingMapMutex.RLock()
+	defer multiModalPricingMapMutex.RUnlock()
+
+	copyMap := make(map[string]MultiModalPricing, len(multiModalPricingMap))
+	for k, v := range multiModalPricingMap {
+		copyMap[k] = v
+	}
+	return copyMap
+}
+
+// UpdateMultiModalPricingByJSONString 通过JSON字符串更新多模态模型定价配置
+func UpdateMultiModalPricingByJSONString(jsonStr string) error {
+	multiModalPricingMapMutex.Lock()
+	defer multiModalPricingMapMutex.Unlock()
+
+	multiModalPricingMap = make(map[string]MultiModalPricing)
+	err := common.Unmarshal([]byte(jsonStr), &multiModalPricingMap)
+	if err == nil {
+		InvalidateExposedDataCache()
+	}
+	return err
+}
+
+// MultiModalPricing2JSONString 将多模态模型定价配置转换为JSON字符串
+func MultiModalPricing2JSONString() string {
+	multiModalPricingMapMutex.RLock()
+	defer multiModalPricingMapMutex.RUnlock()
+
+	jsonBytes, err := common.Marshal(multiModalPricingMap)
+	if err != nil {
+		common.SysError("error marshalling multi-modal pricing: " + err.Error())
+	}
+	return string(jsonBytes)
 }
 
 // printLoadedConfiguration prints the loaded configuration summary

@@ -93,6 +93,12 @@ func ModelPriceHelper(c *gin.Context, info *relaycommon.RelayInfo, promptTokens 
 			// 检查是否配置了视频每秒价格（第三种定价方式）
 			_, hasVideoPrice := ratio_setting.GetVideoModelPricePerSecond(info.OriginModelName)
 
+			// 对于 wan2.5 系列模型（i2v 和 t2v），还需要检查按分辨率定价
+			if !hasVideoPrice && (info.OriginModelName == "wan2.5-i2v-preview" || info.OriginModelName == "wan2.5-t2v-preview") {
+				// 使用默认分辨率 720p 检查是否有价格配置
+				_, hasVideoPrice = ratio_setting.GetVideoModelPriceByResolution(info.OriginModelName, "720p")
+			}
+
 			// 检查是否配置了按张计费价格（第五种定价方式：图片生成模型）
 			_, hasImagePricePerImage := ratio_setting.GetImageModelPricePerImage(info.OriginModelName)
 
@@ -180,6 +186,13 @@ func ContainPriceOrRatio(modelName string) bool {
 	_, ok = ratio_setting.GetVideoModelPricePerSecond(modelName)
 	if ok {
 		return true
+	}
+	// 对于 wan2.5 系列模型（i2v 和 t2v），检查按分辨率定价
+	if modelName == "wan2.5-i2v-preview" || modelName == "wan2.5-t2v-preview" {
+		_, ok = ratio_setting.GetVideoModelPriceByResolution(modelName, "720p")
+		if ok {
+			return true
+		}
 	}
 	return false
 }

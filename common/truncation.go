@@ -11,7 +11,7 @@ import (
 // 2. 传统的 data:image/ 格式
 // 3. 纯 base64 数据
 func TruncateBase64Content(content string) string {
-	const maxBase64Length = 1000
+	const maxBase64Length = 800
 
 	// 处理 Gemini 的 inlineData 格式
 	content = truncateInlineDataBase64(content, maxBase64Length)

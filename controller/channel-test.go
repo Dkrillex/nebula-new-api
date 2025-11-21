@@ -389,7 +389,7 @@ func testChannel(channel *model.Channel, testModel string, endpointType string) 
 		Group:            info.UsingGroup,
 		Other:            other,
 	})
-	common.SysLog(fmt.Sprintf("testing channel #%d, response: \n%s", channel.Id, string(respBody)))
+	common.SysLog(fmt.Sprintf("testing channel #%d, response: \n%s", channel.Id, common.TruncateBase64Content(string(respBody))))
 	return testResult{
 		context:     c,
 		localErr:    nil,

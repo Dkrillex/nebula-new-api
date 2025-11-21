@@ -1,6 +1,6 @@
 ## 概述
 
-本文档介绍如何通过 Nebula 的 OpenAI 兼容接口调用 DeepSeek 对话模型。
+本文档介绍如何通过 Nebula Api的 OpenAI 兼容接口调用 DeepSeek 对话模型。
 
 ## 基础信息
 
@@ -58,9 +58,90 @@ curl -N -X POST "https://llm.ai-nebula.com/v1/chat/completions" \
 
 > 注：DeepSeek 在不同渠道可能支持更多特性或差异化字段，Nebula 会尽量在兼容层透传与规整，建议仅使用通用字段，或咨询渠道支持列表。
 
-### 4. 思考能力（Thinking）
+### 4. 工具调用（Functions / Tools）
 
-DeepSeek（经火山引擎 Ark 渠道）支持以 `thinking` 字段开启/关闭思考能力。默认关闭：
+```bash
+curl -X POST "https://llm.ai-nebula.com/v1/chat/completions" \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer sk-xxxx" \
+  -d '{
+    "model": "deepseek-v3-1",
+    "messages": [
+      {"role":"user","content":"上海的天气怎么样？"}
+    ],
+    "tools": [
+      {
+        "type": "function",
+        "function": {
+          "name": "get_weather",
+          "description": "根据城市获取天气信息",
+          "parameters": {
+            "type": "object",
+            "properties": {"city": {"type": "string"}},
+            "required": ["city"]
+          }
+        }
+      }
+    ],
+    "tool_choice": "auto"
+  }'
+```
+
+#### 工具调用完整流程（两阶段）
+
+1) 第一阶段：模型返回 `tool_calls`（content 通常为 null，finish_reason=tool_calls）。你需要根据 `tool_calls[*].function.name/arguments` 在你的服务端执行对应函数。
+
+2) 第二阶段：把工具执行结果作为一条 `role:"tool"` 消息回传给模型，并继续补全（可流式）。
+
+非流式续写示例（第二阶段）：
+
+```bash
+curl -X POST "https://llm.ai-nebula.com/v1/chat/completions" \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer sk-xxxx" \
+  -d '{
+    "model": "deepseek-v3-1",
+    "messages": [
+      {"role":"user","content":"上海的天气怎么样？"},
+      {"role":"assistant","tool_calls":[
+        {"id":"call_8uPhimaucX5cODepJKS5EVRK","type":"function",
+         "function":{"name":"get_weather","arguments":"{\"city\":\"上海\"}"}}
+      ]},
+      {"role":"tool","tool_call_id":"call_8uPhimaucX5cODepJKS5EVRK",
+       "content":"{\"temp\":\"22°C\",\"condition\":\"多云\",\"aqi\":53}"}
+    ]
+  }'
+```
+
+流式续写示例（第二阶段也支持流式）：
+
+```bash
+curl -N -X POST "https://llm.ai-nebula.com/v1/chat/completions" \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer sk-xxxx" \
+  -d '{
+    "model": "deepseek-v3-1",
+    "stream": true,
+    "messages": [
+      {"role":"user","content":"上海的天气怎么样？"},
+      {"role":"assistant","tool_calls":[
+        {"id":"call_8uPhimaucX5cODepJKS5EVRK","type":"function",
+         "function":{"name":"get_weather","arguments":"{\"city\":\"上海\"}"}}
+      ]},
+      {"role":"tool","tool_call_id":"call_8uPhimaucX5cODepJKS5EVRK",
+       "content":"{\"temp\":\"22°C\",\"condition\":\"多云\",\"aqi\":53}"}
+    ]
+  }'
+```
+
+注意：
+- `tool_call_id` 必须与第一阶段返回一致。
+- 工具执行失败时应返回可读的错误信息或降级结果，避免阻塞后续补全。
+- DeepSeek 对工具调用的支持程度可能因模型版本而异，建议在使用前确认渠道支持情况。
+
+### 5. 思考能力（Thinking）
+
+DeepSeek支持以 `thinking` 字段开启/关闭思考能力。默认关闭：
 
 ```json
 thinking={
@@ -69,7 +150,7 @@ thinking={
 }
 ```
 
-在 OpenAI 兼容请求中，可直接在顶层传入 `thinking` 字段（Nebula 将按渠道要求透传）：
+在 OpenAI 兼容请求中，可直接在顶层传入 `thinking` 字段：
 
 ```bash
 curl -X POST "https://llm.ai-nebula.com/v1/chat/completions" \
@@ -101,13 +182,16 @@ curl -X POST "https://llm.ai-nebula.com/v1/chat/completions" \
 ## 常见问题（FAQ）
 
 1) 与 OpenAI 兼容程度？
-- 使用 OpenAI Chat Completions 格式；少数扩展字段可能不生效，以渠道支持为准
+- 使用 OpenAI Chat Completions 格式；少数扩展字段可能不生效，以渠道支持为准.
 
 2) 是否支持结构化输出？
 - 支持 `response_format: json_schema`；复杂 Schema 时建议降低 `temperature` 提升一致性
 
 3) 是否支持思维链/搜索类开关？
 - 视渠道与模型版本而定；如需专属能力可联系管理员开通或在 `parameters` 透传（若通道支持）
+
+4) 是否支持工具调用？
+- 支持 OpenAI 兼容的工具调用格式，具体支持程度可能因模型版本和渠道而异
 
 ---
 
