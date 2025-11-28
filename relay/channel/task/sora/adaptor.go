@@ -335,12 +335,29 @@ func (a *TaskAdaptor) BuildRequestBody(c *gin.Context, info *relaycommon.RelayIn
 		common.SysLog("[Sora2] Remix模式：仅保留 prompt 参数，删除所有其他参数")
 	}
 
-	// 4. 如果不是 Remix 模式，移除普通 API 不支持的参数
+	// 4. 如果不是 Remix 模式，使用白名单方式只保留 Sora2 API 支持的参数
 	if !isRemixMode {
-		// 普通模式（文生/图生）仅支持: prompt, model, size, seconds, input_reference
-		delete(requestMap, "user_id")        // user_id 不应传给 Sora 2 API
-		delete(requestMap, "user")           // user 参数也删除
-		delete(requestMap, "remix_video_id") // 删除该参数
+		// Sora2 API 支持的参数白名单（根据官方文档）
+		// 支持: model, prompt, seconds, size, input_reference, user
+		// width 和 height 已转换为 size，不再需要
+		allowedParams := map[string]bool{
+			"model":           true,
+			"prompt":          true,
+			"seconds":         true,
+			"size":            true,
+			"input_reference": true,
+			"user":            true,
+		}
+
+		// 创建新的请求体，只包含白名单中的参数
+		filteredMap := make(map[string]interface{})
+		for key, value := range requestMap {
+			if allowedParams[key] {
+				filteredMap[key] = value
+			}
+		}
+		requestMap = filteredMap
+		common.SysLog("[Sora2] 已使用白名单过滤，只保留 Sora2 API 支持的参数")
 	}
 
 	// 打印最终请求参数（用于调试）
