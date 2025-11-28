@@ -35,7 +35,7 @@ Content-Type: application/json
 | `model` | string | 是 | 模型名称 | `"sora-2"` |
 | `prompt` | string | 是 | 视频生成提示词 | `"一只可爱的小猫在花园里玩耍"` |
 | `seconds` | string/int | 否 | 视频时长（秒），支持：4、8、12，默认：4 | `"4"` 或 `8` |
-| `size` | string | 否 | 视频分辨率，支持：`"720x1280"`（竖屏）或 `"1280x720"`（横屏），默认：`"720x1280"` | `"720x1280"` |
+| `size` | string | 否 | 视频分辨率，支持：`"720x1280"`（竖屏）或 `"1280x720"`（横屏），注意:只能传尺寸刚好的图片 | `"720x1280"` |
 | `width` | int | 否 | 视频宽度（与 `height` 一起使用，会自动转换为 `size`） | `720` |
 | `height` | int | 否 | 视频高度（与 `width` 一起使用，会自动转换为 `size`） | `1280` |
 | `input_reference` | string | 否 | 参考图片（支持 URL 或 base64 格式） | `"https://example.com/image.jpg"` 或 `"data:image/jpeg;base64,..."` |
