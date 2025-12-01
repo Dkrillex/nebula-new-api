@@ -328,13 +328,17 @@ type IncompleteDetails struct {
 }
 
 type ResponsesOutput struct {
-	Type    string                   `json:"type"`
-	ID      string                   `json:"id"`
-	Status  string                   `json:"status"`
-	Role    string                   `json:"role"`
-	Content []ResponsesOutputContent `json:"content"`
-	Quality string                   `json:"quality"`
-	Size    string                   `json:"size"`
+	Type      string                   `json:"type"`
+	ID        string                   `json:"id"`
+	Status    string                   `json:"status"`
+	Role      string                   `json:"role"`
+	Content   []ResponsesOutputContent `json:"content"`
+	Quality   string                   `json:"quality"`
+	Size      string                   `json:"size"`
+	Name      string                   `json:"name,omitempty"`      // 用于 function_call 和 custom_tool_call 类型
+	CallID    string                   `json:"call_id,omitempty"`   // 用于 function_call 和 custom_tool_call 类型
+	Arguments string                   `json:"arguments,omitempty"` // 用于 function_call 类型
+	Input     string                   `json:"input,omitempty"`     // 用于 custom_tool_call 类型
 }
 
 type ResponsesOutputContent struct {
@@ -359,10 +363,12 @@ const (
 
 // ResponsesStreamResponse 用于处理 /v1/responses 流式响应
 type ResponsesStreamResponse struct {
-	Type     string                   `json:"type"`
-	Response *OpenAIResponsesResponse `json:"response,omitempty"`
-	Delta    string                   `json:"delta,omitempty"`
-	Item     *ResponsesOutput         `json:"item,omitempty"`
+	Type        string                   `json:"type"`
+	Response    *OpenAIResponsesResponse `json:"response,omitempty"`
+	Delta       string                   `json:"delta,omitempty"`
+	Item        *ResponsesOutput         `json:"item,omitempty"`
+	ItemID      string                   `json:"item_id,omitempty"`      // 用于 function_call_arguments.delta 事件
+	OutputIndex int                      `json:"output_index,omitempty"` // 用于 function_call_arguments.delta 事件
 }
 
 // GetOpenAIError 从动态错误类型中提取OpenAIError结构

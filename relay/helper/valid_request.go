@@ -1,6 +1,7 @@
 package helper
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"math"
@@ -14,11 +15,98 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
+// detectCursorRequest 检测是否为 Cursor 请求（避免导入循环，内联实现）
+func detectCursorRequest(body []byte) bool {
+	if len(body) == 0 {
+		return false
+	}
+
+	var m map[string]any
+	if err := json.Unmarshal(body, &m); err != nil {
+		return false
+	}
+
+	// Cursor 强特征字段，任一出现即可判断
+	cursorKeys := []string{
+		"input",
+		"max_output_tokens",
+		"instructions",
+		"parallel_tool_calls",
+		"previous_response_id",
+		"truncate",
+		"truncation",
+		"metadata",
+		"response",
+		"response_format",
+	}
+
+	for _, key := range cursorKeys {
+		if _, ok := m[key]; ok {
+			return true
+		}
+	}
+
+	// Cursor tool 格式（和 openai 完全不同）
+	if v, ok := m["tools"]; ok {
+		switch v.(type) {
+		case []any:
+			return true
+		}
+	}
+
+	// OpenAI 不会发送 input 字段，Cursor 一定会
+	if v, ok := m["input"]; ok && v != nil {
+		return true
+	}
+
+	return false
+}
+
 func GetAndValidateRequest(c *gin.Context, format types.RelayFormat) (request dto.Request, err error) {
 	relayMode := relayconstant.Path2RelayMode(c.Request.URL.Path)
 
 	switch format {
 	case types.RelayFormatOpenAI:
+		// 如果是 /v1/chat/completions，检测是否为 Cursor 请求
+		if relayMode == relayconstant.RelayModeChatCompletions {
+			// 先读取请求体
+			requestBody, err := common.GetRequestBody(c)
+			if err == nil {
+				var modelCheck struct {
+					Model string `json:"model"`
+				}
+				if err := common.Unmarshal(requestBody, &modelCheck); err == nil {
+					modelName := modelCheck.Model
+
+					// 只检测 openai/ 前缀的模型
+					isCursorRequest := false
+					if strings.HasPrefix(modelName, "openai/") {
+						isCursorRequest = true
+					}
+
+					if isCursorRequest {
+						// 尝试按 Responses 格式解析（openai/ 前缀的模型可能使用 Responses 格式）
+						responsesReq, err := GetAndValidateResponsesRequest(c)
+						if err == nil {
+							// 去掉模型名的 openai/ 前缀（如果存在）
+							actualModel := strings.TrimPrefix(responsesReq.Model, "openai/")
+							responsesReq.Model = actualModel
+							// 更新 context 中的原始模型名
+							c.Set("original_model", actualModel)
+							// 设置标志：这是 openai/ 前缀的模型，需要响应转换
+							c.Set("is_cursor", true)
+							c.Set("convert_cursor_to_chat", true)
+							// 保持流式输出
+							return responsesReq, nil
+						}
+						// 如果解析失败，可能是标准的 Chat Completions 格式，继续使用标准解析
+						// 但仍然标记为需要响应转换
+						c.Set("is_cursor", true)
+						c.Set("convert_chat_to_cursor", true)
+					}
+				}
+			}
+		}
 		request, err = GetAndValidateTextRequest(c, relayMode)
 	case types.RelayFormatGemini:
 		if strings.Contains(c.Request.URL.Path, ":embedContent") || strings.Contains(c.Request.URL.Path, ":batchEmbedContents") {
@@ -125,9 +213,11 @@ func GetAndValidateResponsesRequest(c *gin.Context) (*dto.OpenAIResponsesRequest
 	if request.Model == "" {
 		return nil, errors.New("model is required")
 	}
-	if request.Input == nil {
-		return nil, errors.New("input is required")
-	}
+	// 根据文档，input 字段可以忽略（Cursor 可能使用 messages 或其他字段）
+	// 如果 input 为空，后续转换时会从 messages 中提取
+	// if request.Input == nil {
+	// 	return nil, errors.New("input is required")
+	// }
 	return request, nil
 }
 
@@ -274,7 +364,7 @@ func GetAndValidateClaudeRequest(c *gin.Context) (textRequest *dto.ClaudeRequest
 	if err != nil {
 		return nil, err
 	}
-	if textRequest.Messages == nil || len(textRequest.Messages) == 0 {
+	if len(textRequest.Messages) == 0 {
 		return nil, errors.New("field messages is required")
 	}
 	if textRequest.Model == "" {
@@ -370,4 +460,114 @@ func GetAndValidateGeminiEmbeddingRequest(c *gin.Context) (*dto.GeminiEmbeddingR
 		return nil, err
 	}
 	return request, nil
+}
+
+// convertResponsesToChatCompletionsRequest 将 Responses 格式的请求转换为 Chat Completions 格式
+func convertResponsesToChatCompletionsRequest(responsesReq *dto.OpenAIResponsesRequest) (*dto.GeneralOpenAIRequest, error) {
+	chatReq := &dto.GeneralOpenAIRequest{
+		Model:       responsesReq.Model,
+		Stream:      responsesReq.Stream,
+		Temperature: nil,
+		TopP:        responsesReq.TopP,
+		User:        responsesReq.User,
+	}
+
+	// 设置 Temperature
+	if responsesReq.Temperature != 0 {
+		temp := responsesReq.Temperature
+		chatReq.Temperature = &temp
+	}
+
+	// 转换 MaxOutputTokens 到 MaxTokens
+	if responsesReq.MaxOutputTokens > 0 {
+		chatReq.MaxTokens = responsesReq.MaxOutputTokens
+	}
+
+	// 转换 Input 到 Messages
+	if len(responsesReq.Input) > 0 {
+		var messages []dto.Message
+		if err := common.Unmarshal(responsesReq.Input, &messages); err != nil {
+			return nil, fmt.Errorf("failed to unmarshal input to messages: %w", err)
+		}
+		chatReq.Messages = messages
+	}
+
+	// 转换 Tools
+	if len(responsesReq.Tools) > 0 {
+		var tools []dto.ToolCallRequest
+		if err := common.Unmarshal(responsesReq.Tools, &tools); err != nil {
+			return nil, fmt.Errorf("failed to unmarshal tools: %w", err)
+		}
+		chatReq.Tools = tools
+	}
+
+	// 转换 ToolChoice
+	if len(responsesReq.ToolChoice) > 0 {
+		var toolChoice any
+		if err := common.Unmarshal(responsesReq.ToolChoice, &toolChoice); err != nil {
+			return nil, fmt.Errorf("failed to unmarshal tool_choice: %w", err)
+		}
+		chatReq.ToolChoice = toolChoice
+	}
+
+	// 转换 Metadata
+	if len(responsesReq.Metadata) > 0 {
+		chatReq.Metadata = responsesReq.Metadata
+	}
+
+	// 转换 Store
+	if len(responsesReq.Store) > 0 {
+		chatReq.Store = responsesReq.Store
+	}
+
+	// 转换 PromptCacheKey
+	if len(responsesReq.PromptCacheKey) > 0 {
+		var promptCacheKey string
+		if err := common.Unmarshal(responsesReq.PromptCacheKey, &promptCacheKey); err == nil {
+			chatReq.PromptCacheKey = promptCacheKey
+		}
+	}
+
+	// 转换 PromptCacheRetention（保留该字段，因为 /v1/chat/completions 支持）
+	if responsesReq.PromptCacheRetention != "" {
+		chatReq.PromptCacheRetention = responsesReq.PromptCacheRetention
+	}
+
+	// 转换 Reasoning 到 ReasoningEffort（Chat Completions 不支持 reasoning 字段，只支持 reasoning_effort）
+	// 注释掉：Chat Completions 接口不支持 reasoning 字段
+	// if responsesReq.Reasoning != nil {
+	// 	reasoningJSON, err := common.Marshal(responsesReq.Reasoning)
+	// 	if err != nil {
+	// 		return nil, fmt.Errorf("failed to marshal reasoning: %w", err)
+	// 	}
+	// 	chatReq.Reasoning = reasoningJSON
+	// }
+	// 如果 Reasoning 有 effort 字段，转换为 ReasoningEffort
+	if responsesReq.Reasoning != nil && responsesReq.Reasoning.Effort != "" {
+		chatReq.ReasoningEffort = responsesReq.Reasoning.Effort
+	}
+
+	// 转换 Instructions（如果有，可以放到 system message 中）
+	if len(responsesReq.Instructions) > 0 {
+		var instructions string
+		if err := common.Unmarshal(responsesReq.Instructions, &instructions); err == nil && instructions != "" {
+			// 如果 messages 为空或第一个不是 system message，则添加 system message
+			if len(chatReq.Messages) == 0 || chatReq.Messages[0].Role != "system" {
+				systemMsg := dto.Message{
+					Role:    "system",
+					Content: instructions,
+				}
+				chatReq.Messages = append([]dto.Message{systemMsg}, chatReq.Messages...)
+			} else {
+				// 如果第一个是 system message，合并内容
+				if existingContent, ok := chatReq.Messages[0].Content.(string); ok {
+					chatReq.Messages[0].Content = existingContent + "\n" + instructions
+				} else {
+					chatReq.Messages[0].Content = instructions
+				}
+			}
+		}
+	}
+
+	return chatReq, nil
 }

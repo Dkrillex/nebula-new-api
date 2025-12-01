@@ -315,6 +315,10 @@ func GenRelayInfoResponses(c *gin.Context, request *dto.OpenAIResponsesRequest) 
 	info.RelayMode = relayconstant.RelayModeResponses
 	info.RelayFormat = types.RelayFormatOpenAIResponses
 
+	// 设置正确的请求路径为 /v1/responses（对于非 Azure 渠道，GetRequestURL 会使用 RequestURLPath）
+	// 对于 Azure 渠道，GetRequestURL 会特殊处理，使用 /openai/responses
+	info.RequestURLPath = "/v1/responses"
+
 	info.ResponsesUsageInfo = &ResponsesUsageInfo{
 		BuiltInTools: make(map[string]*BuildInToolInfo),
 	}
@@ -550,24 +554,22 @@ func RemoveDisabledFields(jsonData []byte, channelOtherSettings dto.ChannelOther
 
 	// 默认移除 service_tier，除非明确允许（避免额外计费风险）
 	if !channelOtherSettings.AllowServiceTier {
-		if _, exists := data["service_tier"]; exists {
-			delete(data, "service_tier")
-		}
+		delete(data, "service_tier")
 	}
 
 	// 默认允许 store 透传，除非明确禁用（禁用可能影响 Codex 使用）
 	if channelOtherSettings.DisableStore {
-		if _, exists := data["store"]; exists {
-			delete(data, "store")
-		}
+		delete(data, "store")
 	}
 
 	// 默认移除 safety_identifier，除非明确允许（保护用户隐私，避免向 OpenAI 报告用户信息）
 	if !channelOtherSettings.AllowSafetyIdentifier {
-		if _, exists := data["safety_identifier"]; exists {
-			delete(data, "safety_identifier")
-		}
+		delete(data, "safety_identifier")
 	}
+
+	// 始终移除 prompt_cache_retention 参数，因为上游 API 不支持此参数
+	// 这会导致 "Unknown parameter: 'prompt_cache_retention'" 错误
+	delete(data, "prompt_cache_retention")
 
 	jsonDataAfter, err := common.Marshal(data)
 	if err != nil {

@@ -208,6 +208,8 @@ func OpenaiHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http.Respo
 		return nil, types.WithOpenAIError(*oaiError, resp.StatusCode)
 	}
 
+	// openai/ 前缀的模型响应转换在 relay_responses.go 的 OaiResponsesHandler 中处理
+
 	forceFormat := false
 	if info.ChannelSetting.ForceFormat {
 		forceFormat = true
@@ -266,6 +268,10 @@ func OpenaiHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http.Respo
 		}
 		responseBody = geminiRespStr
 	}
+
+	// 注意：Cursor 调用 /v1/chat/completions 时，期望标准的 OpenAI Chat Completions 响应格式
+	// 不需要转换为 Cursor 格式，直接使用标准格式即可
+	// Cursor 格式转换仅用于 Cursor 自己的 /v1/responses 接口
 
 	service.IOCopyBytesGracefully(c, resp, responseBody)
 

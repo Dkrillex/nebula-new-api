@@ -331,6 +331,17 @@ func (a *Adaptor) ConvertOpenAIRequest(c *gin.Context, info *relaycommon.RelayIn
 		}
 	}
 
+	// 过滤掉 prompt_cache_retention 参数，因为上游不支持
+	// 注意：设置为空字符串，但由于 JSON 的 omitempty 标签，空字符串可能仍会被序列化
+	// 更好的方法是在序列化后从 JSON 中删除，但这需要在 responses_handler.go 中处理
+	request.PromptCacheRetention = ""
+
+	// 过滤掉 reasoning 参数（OpenRouter 除外，因为它需要这个字段）
+	// 对于标准的 OpenAI Chat Completions API，不支持 reasoning 字段，只支持 reasoning_effort
+	if info.ChannelType != constant.ChannelTypeOpenRouter {
+		request.Reasoning = nil
+	}
+
 	return request, nil
 }
 
@@ -684,7 +695,23 @@ func (a *Adaptor) ConvertOpenAIResponsesRequest(c *gin.Context, info *relaycommo
 		}
 		request.Model = originModel
 	}
-	return request, nil
+
+	// 过滤掉 prompt_cache_retention 参数，因为上游不支持
+	// 使用 map 方式确保字段被完全移除，而不是设置为空字符串
+	requestJSON, err := common.Marshal(request)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal request: %w", err)
+	}
+
+	var requestMap map[string]interface{}
+	if err := common.Unmarshal(requestJSON, &requestMap); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal request: %w", err)
+	}
+
+	// 删除 prompt_cache_retention 字段
+	delete(requestMap, "prompt_cache_retention")
+
+	return requestMap, nil
 }
 
 func (a *Adaptor) DoRequest(c *gin.Context, info *relaycommon.RelayInfo, requestBody io.Reader) (any, error) {

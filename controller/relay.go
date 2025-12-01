@@ -2,6 +2,7 @@ package controller
 
 import (
 	"bytes"
+	"encoding/json"
 	"fmt"
 	"io"
 	"log"
@@ -66,6 +67,14 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 	group := common.GetContextKeyString(c, constant.ContextKeyUsingGroup)
 	originalModel := common.GetContextKeyString(c, constant.ContextKeyOriginalModel)
 
+	// 在函数开始就打印请求头和请求体，确保无论在哪里出错都能看到
+	requestBody, _ := common.GetRequestBody(c)
+	common.SysLog(fmt.Sprintf("[Relay] requestHeaders: %s", formatRequestHeadersForLog(c.Request.Header)))
+	structure, data := formatRequestBodyForLog(requestBody)
+	common.SysLog(fmt.Sprintf("[Relay] requestBody结构: %s", structure))
+	common.SysLog(fmt.Sprintf("[Relay] requestBody数据: %s", data))
+	c.Request.Body = io.NopCloser(bytes.NewBuffer(requestBody))
+
 	var (
 		newAPIError *types.NewAPIError
 		ws          *websocket.Conn
@@ -104,6 +113,51 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 	if err != nil {
 		newAPIError = types.NewError(err, types.ErrorCodeInvalidRequest)
 		return
+	}
+
+	// STEP 4: 检查如果是 openai/ 前缀的模型，需要特殊处理
+	if _, ok := request.(*dto.OpenAIResponsesRequest); ok {
+		// 检查是否是 openai/ 前缀的模型（需要响应转换）
+		if c.GetBool("is_cursor") && c.GetBool("convert_cursor_to_chat") {
+			// openai/ 前缀的模型：请求直接使用 Responses 格式发送到上游的 /v1/responses 接口
+			// 切换到 Responses 格式，调用上游的 /v1/responses 接口
+			relayFormat = types.RelayFormatOpenAIResponses
+			c.Set("is_cursor", true)
+			c.Set("convert_responses_to_chat", true) // 标记需要将响应从 Responses 转换为 Chat Completions
+		} else {
+			// 非 openai/ 前缀的模型，但请求被解析为 Responses 格式
+			// 检查请求体是否包含 messages 字段（标准的 Chat Completions 格式）
+			requestBody, _ := common.GetRequestBody(c)
+			var bodyCheck struct {
+				Messages []interface{} `json:"messages"`
+			}
+			if err := common.Unmarshal(requestBody, &bodyCheck); err == nil && len(bodyCheck.Messages) > 0 {
+				// 请求包含 messages 字段，说明是标准的 Chat Completions 格式
+				// 应该使用 Chat Completions 格式，而不是 Responses 格式
+				// 重新解析为标准的 Chat Completions 格式
+				textRequest, err := helper.GetAndValidateTextRequest(c, relayconstant.RelayModeChatCompletions)
+				if err == nil {
+					request = textRequest
+					// 保持 Chat Completions 格式
+					relayFormat = types.RelayFormatOpenAI
+				} else {
+					// 解析失败，使用 Responses 格式（保持原有逻辑）
+					relayFormat = types.RelayFormatOpenAIResponses
+				}
+			} else {
+				// 请求不包含 messages 字段，使用 Responses 格式（保持原有逻辑）
+				relayFormat = types.RelayFormatOpenAIResponses
+			}
+		}
+		// 更新 originalModel 变量（如果 context 中已更新）
+		if updatedModel := c.GetString("original_model"); updatedModel != "" {
+			originalModel = updatedModel
+		}
+	} else {
+		// 更新 originalModel 变量（如果 context 中已更新）
+		if updatedModel := c.GetString("original_model"); updatedModel != "" {
+			originalModel = updatedModel
+		}
 	}
 
 	relayInfo, err := relaycommon.GenRelayInfo(c, relayFormat, request, ws)
@@ -160,6 +214,7 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 		}
 
 		addUsedChannel(c, channel.Id)
+		// 请求体已在函数开始处打印，这里只需要重新设置 body
 		requestBody, _ := common.GetRequestBody(c)
 		c.Request.Body = io.NopCloser(bytes.NewBuffer(requestBody))
 
@@ -359,7 +414,7 @@ func RelayMidjourney(c *gin.Context) {
 func RelayNotImplemented(c *gin.Context) {
 	err := dto.OpenAIError{
 		Message: "API not implemented",
-		Type:    "new_api_error",
+		Type:    "nebula_api_error",
 		Param:   "",
 		Code:    "api_not_implemented",
 	}
@@ -487,4 +542,116 @@ func shouldRetryTaskRelay(c *gin.Context, channelId int, taskErr *dto.TaskError,
 		return false
 	}
 	return true
+}
+
+// formatRequestHeadersForLog 格式化请求头用于日志打印
+// 对敏感信息（如Authorization）进行脱敏处理
+func formatRequestHeadersForLog(headers http.Header) string {
+	if len(headers) == 0 {
+		return "(empty)"
+	}
+
+	headerStrs := make([]string, 0, len(headers))
+	for key, values := range headers {
+		// 对敏感信息进行脱敏
+		if strings.EqualFold(key, "Authorization") || strings.EqualFold(key, "Api-Key") || strings.EqualFold(key, "X-Api-Key") {
+			if len(values) > 0 && len(values[0]) > 10 {
+				masked := values[0][:5] + "***" + values[0][len(values[0])-5:]
+				headerStrs = append(headerStrs, fmt.Sprintf("%s: %s", key, masked))
+			} else {
+				headerStrs = append(headerStrs, fmt.Sprintf("%s: ***", key))
+			}
+		} else {
+			headerStrs = append(headerStrs, fmt.Sprintf("%s: %v", key, values))
+		}
+	}
+	return strings.Join(headerStrs, ", ")
+}
+
+// formatRequestBodyForLog 格式化请求体用于日志打印
+// 如果是JSON，既显示结构（字段名和类型），也显示实际数据内容
+// 返回结构信息和数据内容，分别打印在不同行
+func formatRequestBodyForLog(requestBody []byte) (string, string) {
+	bodyStr := string(requestBody)
+
+	// 如果内容为空，直接返回
+	if len(bodyStr) == 0 {
+		return "(empty)", "(empty)"
+	}
+
+	// 尝试解析为JSON对象
+	var jsonObj map[string]interface{}
+	if err := json.Unmarshal(requestBody, &jsonObj); err == nil {
+		// 成功解析为JSON，提取字段结构
+		fields := make([]string, 0, len(jsonObj))
+		for key, value := range jsonObj {
+			fieldType := getValueType(value)
+			fields = append(fields, fmt.Sprintf("%s:%s", key, fieldType))
+		}
+		structure := fmt.Sprintf("JSON结构: {%s}", strings.Join(fields, ", "))
+
+		// 处理实际数据，对base64内容进行截断处理，但保留其他信息
+		truncatedBody := common.TruncateBase64Content(bodyStr)
+		// 不截断总长度，完整打印所有数据
+
+		return structure, truncatedBody
+	}
+
+	// 尝试解析为JSON数组
+	var jsonArray []interface{}
+	if err := json.Unmarshal(requestBody, &jsonArray); err == nil {
+		arrayType := "array"
+		if len(jsonArray) > 0 {
+			arrayType = fmt.Sprintf("array[%s]", getValueType(jsonArray[0]))
+		}
+		structure := fmt.Sprintf("JSON结构: %s[长度:%d]", arrayType, len(jsonArray))
+
+		// 处理实际数据，对base64内容进行截断处理，但保留其他信息
+		truncatedBody := common.TruncateBase64Content(bodyStr)
+		// 不截断总长度，完整打印所有数据
+
+		return structure, truncatedBody
+	}
+
+	// 不是JSON或解析失败，直接返回字符串（如果太长可以截断）
+	const maxLength = 500
+	if len(bodyStr) > maxLength {
+		return bodyStr[:maxLength] + "...", bodyStr[:maxLength] + "..."
+	}
+	return bodyStr, bodyStr
+}
+
+// getValueType 获取值的类型描述
+func getValueType(v interface{}) string {
+	switch v := v.(type) {
+	case map[string]interface{}:
+		keys := make([]string, 0, len(v))
+		for key := range v {
+			keys = append(keys, key)
+		}
+		// 完整显示所有字段，不截断
+		return fmt.Sprintf("object{%s}", strings.Join(keys, ","))
+	case []interface{}:
+		if len(v) > 0 {
+			return fmt.Sprintf("array[%s]", getValueType(v[0]))
+		}
+		return "array"
+	case string:
+		if len(v) > 20 {
+			return "string(长文本)"
+		}
+		return "string"
+	case float64:
+		// JSON数字默认解析为float64
+		if v == float64(int64(v)) {
+			return "number(int)"
+		}
+		return "number(float)"
+	case bool:
+		return "bool"
+	case nil:
+		return "null"
+	default:
+		return fmt.Sprintf("%T", v)
+	}
 }
