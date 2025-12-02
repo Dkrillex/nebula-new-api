@@ -296,26 +296,26 @@ func (a *Adaptor) ConvertOpenAIRequest(c *gin.Context, info *relaycommon.RelayIn
 		}
 
 	}
-	if strings.HasPrefix(info.UpstreamModelName, "o") || strings.HasPrefix(info.UpstreamModelName, "gpt-5") {
+	// 处理模型名，去掉 openai/ 前缀（如果存在）
+	modelName := info.UpstreamModelName
+	if strings.HasPrefix(modelName, "openai/") {
+		modelName = strings.TrimPrefix(modelName, "openai/")
+		// 更新 UpstreamModelName 和 request.Model，确保发送到上游的模型名不包含 openai/ 前缀
+		info.UpstreamModelName = modelName
+		request.Model = modelName
+	}
+
+	if strings.HasPrefix(modelName, "o") || strings.HasPrefix(modelName, "gpt-5") {
 		if request.MaxCompletionTokens == 0 && request.MaxTokens != 0 {
 			request.MaxCompletionTokens = request.MaxTokens
 			request.MaxTokens = 0
 		}
 
-		if strings.HasPrefix(info.UpstreamModelName, "o") {
-			request.Temperature = nil
-		}
-
-		if strings.HasPrefix(info.UpstreamModelName, "gpt-5") {
-			if info.UpstreamModelName != "gpt-5-chat-latest" {
-				request.Temperature = nil
-			}
-		}
-
 		// 转换模型推理力度后缀
-		effort, originModel := parseReasoningEffortFromModelSuffix(info.UpstreamModelName)
+		effort, originModel := parseReasoningEffortFromModelSuffix(modelName)
 		if effort != "" {
 			request.ReasoningEffort = effort
+			modelName = originModel
 			info.UpstreamModelName = originModel
 			request.Model = originModel
 		}
@@ -323,7 +323,7 @@ func (a *Adaptor) ConvertOpenAIRequest(c *gin.Context, info *relaycommon.RelayIn
 		info.ReasoningEffort = request.ReasoningEffort
 
 		// o系列模型developer适配（o1-mini除外）
-		if !strings.HasPrefix(info.UpstreamModelName, "o1-mini") && !strings.HasPrefix(info.UpstreamModelName, "o1-preview") {
+		if !strings.HasPrefix(modelName, "o1-mini") && !strings.HasPrefix(modelName, "o1-preview") {
 			//修改第一个Message的内容，将system改为developer
 			if len(request.Messages) > 0 && request.Messages[0].Role == "system" {
 				request.Messages[0].Role = "developer"

@@ -33,13 +33,124 @@ func sendStreamData(c *gin.Context, info *relaycommon.RelayInfo, data string, fo
 		return nil
 	}
 
-	if !forceFormat && !thinkToContent {
-		return helper.StringData(c, data)
-	}
-
 	var lastStreamResponse dto.ChatCompletionsStreamResponse
 	if err := common.UnmarshalJsonStr(data, &lastStreamResponse); err != nil {
+		// 如果解析失败，直接透传（可能是非 JSON 格式的数据）
+		if !forceFormat && !thinkToContent {
+			return helper.StringData(c, data)
+		}
 		return err
+	}
+
+	// 检查是否包含工具调用的增量参数（有 tool_calls 但没有 finish_reason: "tool_calls"）
+	hasIncrementalToolCalls := false
+	for _, choice := range lastStreamResponse.Choices {
+		if choice.Delta.ToolCalls != nil && len(choice.Delta.ToolCalls) > 0 {
+			// 检查是否有 finish_reason，如果没有或者是空，说明是增量参数
+			if choice.FinishReason == nil || *choice.FinishReason == "" {
+				hasIncrementalToolCalls = true
+				break
+			}
+		}
+	}
+
+	// 如果有增量工具调用参数，累积但不发送
+	if hasIncrementalToolCalls {
+		// 从 gin.Context 获取工具调用累积状态
+		toolCallsKey := "tool_calls_accumulator"
+		toolCallsVal, exists := c.Get(toolCallsKey)
+		var toolCallsAccumulator map[string]map[string]string // map[toolCallID]map["name"|"arguments"]string
+
+		if !exists {
+			toolCallsAccumulator = make(map[string]map[string]string)
+		} else {
+			toolCallsAccumulator, _ = toolCallsVal.(map[string]map[string]string)
+			if toolCallsAccumulator == nil {
+				toolCallsAccumulator = make(map[string]map[string]string)
+			}
+		}
+
+		// 累积工具调用参数
+		for _, choice := range lastStreamResponse.Choices {
+			if choice.Delta.ToolCalls != nil {
+				for _, toolCall := range choice.Delta.ToolCalls {
+					if toolCall.ID != "" {
+						toolCallID := toolCall.ID
+						if toolCallsAccumulator[toolCallID] == nil {
+							toolCallsAccumulator[toolCallID] = make(map[string]string)
+						}
+						if toolCall.Function.Name != "" {
+							toolCallsAccumulator[toolCallID]["name"] = toolCall.Function.Name
+						}
+						if toolCall.Function.Arguments != "" {
+							// 累积参数
+							currentArgs := toolCallsAccumulator[toolCallID]["arguments"]
+							currentArgs += toolCall.Function.Arguments
+							toolCallsAccumulator[toolCallID]["arguments"] = currentArgs
+						}
+					}
+				}
+			}
+		}
+
+		// 保存累积状态
+		c.Set(toolCallsKey, toolCallsAccumulator)
+
+		// 不发送增量更新，返回空（等待完成事件）
+		return nil
+	}
+
+	// 检查是否工具调用完成（finish_reason: "tool_calls"）
+	hasCompletedToolCalls := false
+	for _, choice := range lastStreamResponse.Choices {
+		if choice.FinishReason != nil && *choice.FinishReason == "tool_calls" {
+			hasCompletedToolCalls = true
+			break
+		}
+	}
+
+	// 如果工具调用完成，合并累积的参数
+	if hasCompletedToolCalls {
+		toolCallsKey := "tool_calls_accumulator"
+		toolCallsVal, exists := c.Get(toolCallsKey)
+		if exists {
+			toolCallsAccumulator, ok := toolCallsVal.(map[string]map[string]string)
+			if ok && toolCallsAccumulator != nil {
+				// 合并累积的参数到响应中
+				for i, choice := range lastStreamResponse.Choices {
+					if choice.Delta.ToolCalls != nil {
+						for j, toolCall := range choice.Delta.ToolCalls {
+							if toolCall.ID != "" {
+								toolCallID := toolCall.ID
+								if acc, ok := toolCallsAccumulator[toolCallID]; ok {
+									// 使用累积的参数
+									if accArgs, ok := acc["arguments"]; ok && accArgs != "" {
+										lastStreamResponse.Choices[i].Delta.ToolCalls[j].Function.Arguments = accArgs
+									}
+									// 确保 name 也设置（如果之前没有）
+									if toolCall.Function.Name == "" {
+										if accName, ok := acc["name"]; ok && accName != "" {
+											lastStreamResponse.Choices[i].Delta.ToolCalls[j].Function.Name = accName
+										}
+									}
+								}
+							}
+						}
+					}
+				}
+				// 清理累积状态
+				c.Set(toolCallsKey, nil)
+			}
+		}
+	}
+
+	if !forceFormat && !thinkToContent {
+		// 序列化响应并发送
+		responseBytes, err := common.Marshal(lastStreamResponse)
+		if err != nil {
+			return err
+		}
+		return helper.StringData(c, string(responseBytes))
 	}
 
 	if !thinkToContent {

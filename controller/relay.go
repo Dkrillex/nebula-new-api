@@ -115,34 +115,50 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 		return
 	}
 
-	// STEP 4: 检查如果是 openai/ 前缀的模型，需要特殊处理
+	// STEP 4: 检查如果是 Responses 格式的请求，需要特殊处理
 	if _, ok := request.(*dto.OpenAIResponsesRequest); ok {
-		// 检查是否是 openai/ 前缀的模型（需要响应转换）
+		// 检查是否需要响应转换（无论是 openai/ 前缀还是其他模型，只要请求体是 Responses 格式，都需要转换）
 		if c.GetBool("is_cursor") && c.GetBool("convert_cursor_to_chat") {
-			// openai/ 前缀的模型：请求直接使用 Responses 格式发送到上游的 /v1/responses 接口
+			// 请求体是 Responses 格式：请求直接使用 Responses 格式发送到上游的 /v1/responses 接口
 			// 切换到 Responses 格式，调用上游的 /v1/responses 接口
 			relayFormat = types.RelayFormatOpenAIResponses
 			c.Set("is_cursor", true)
 			c.Set("convert_responses_to_chat", true) // 标记需要将响应从 Responses 转换为 Chat Completions
 		} else {
-			// 非 openai/ 前缀的模型，但请求被解析为 Responses 格式
 			// 检查请求体是否包含 messages 字段（标准的 Chat Completions 格式）
 			requestBody, _ := common.GetRequestBody(c)
 			var bodyCheck struct {
+				Model    string        `json:"model"`
 				Messages []interface{} `json:"messages"`
 			}
 			if err := common.Unmarshal(requestBody, &bodyCheck); err == nil && len(bodyCheck.Messages) > 0 {
 				// 请求包含 messages 字段，说明是标准的 Chat Completions 格式
-				// 应该使用 Chat Completions 格式，而不是 Responses 格式
-				// 重新解析为标准的 Chat Completions 格式
-				textRequest, err := helper.GetAndValidateTextRequest(c, relayconstant.RelayModeChatCompletions)
-				if err == nil {
-					request = textRequest
-					// 保持 Chat Completions 格式
-					relayFormat = types.RelayFormatOpenAI
+				// 检查是否是 openai/ 前缀的模型
+				if strings.HasPrefix(bodyCheck.Model, "openai/") {
+					// openai/ 前缀的模型，但请求体是标准的 Chat Completions 格式
+					// 应该使用 Chat Completions 格式，而不是 Responses 格式
+					// 重新解析为标准的 Chat Completions 格式
+					textRequest, err := helper.GetAndValidateTextRequest(c, relayconstant.RelayModeChatCompletions)
+					if err == nil {
+						request = textRequest
+						// 保持 Chat Completions 格式
+						relayFormat = types.RelayFormatOpenAI
+					} else {
+						// 解析失败，使用 Responses 格式（保持原有逻辑）
+						relayFormat = types.RelayFormatOpenAIResponses
+					}
 				} else {
-					// 解析失败，使用 Responses 格式（保持原有逻辑）
-					relayFormat = types.RelayFormatOpenAIResponses
+					// 非 openai/ 前缀的模型，但请求被解析为 Responses 格式
+					// 重新解析为标准的 Chat Completions 格式
+					textRequest, err := helper.GetAndValidateTextRequest(c, relayconstant.RelayModeChatCompletions)
+					if err == nil {
+						request = textRequest
+						// 保持 Chat Completions 格式
+						relayFormat = types.RelayFormatOpenAI
+					} else {
+						// 解析失败，使用 Responses 格式（保持原有逻辑）
+						relayFormat = types.RelayFormatOpenAIResponses
+					}
 				}
 			} else {
 				// 请求不包含 messages 字段，使用 Responses 格式（保持原有逻辑）

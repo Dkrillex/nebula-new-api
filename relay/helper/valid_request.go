@@ -78,31 +78,41 @@ func GetAndValidateRequest(c *gin.Context, format types.RelayFormat) (request dt
 				if err := common.Unmarshal(requestBody, &modelCheck); err == nil {
 					modelName := modelCheck.Model
 
-					// 只检测 openai/ 前缀的模型
-					isCursorRequest := false
-					if strings.HasPrefix(modelName, "openai/") {
-						isCursorRequest = true
+					// 先检查是否有 messages 字段（标准的 Chat Completions 格式）
+					var bodyCheck struct {
+						Messages []interface{} `json:"messages"`
+						Input    interface{}   `json:"input"`
 					}
-
-					if isCursorRequest {
-						// 尝试按 Responses 格式解析（openai/ 前缀的模型可能使用 Responses 格式）
-						responsesReq, err := GetAndValidateResponsesRequest(c)
-						if err == nil {
-							// 去掉模型名的 openai/ 前缀（如果存在）
-							actualModel := strings.TrimPrefix(responsesReq.Model, "openai/")
-							responsesReq.Model = actualModel
-							// 更新 context 中的原始模型名
-							c.Set("original_model", actualModel)
-							// 设置标志：这是 openai/ 前缀的模型，需要响应转换
-							c.Set("is_cursor", true)
-							c.Set("convert_cursor_to_chat", true)
-							// 保持流式输出
-							return responsesReq, nil
+					if err := common.Unmarshal(requestBody, &bodyCheck); err == nil {
+						// 如果有 messages 字段，走标准的 Chat Completions 流程
+						if len(bodyCheck.Messages) > 0 {
+							// 不设置任何转换标志，继续使用标准解析
+							// 正常走 v1/chat/completions 流程
+						} else if bodyCheck.Input != nil {
+							// 没有 messages 但有 input 字段，检查是否是 Responses 格式
+							isResponsesFormat := detectCursorRequest(requestBody)
+							if isResponsesFormat {
+								// 请求体是 Responses 格式，尝试按 Responses 格式解析
+								responsesReq, err := GetAndValidateResponsesRequest(c)
+								if err == nil {
+									// 检查是否是 openai/ 前缀的模型
+									hasOpenAIPrefix := strings.HasPrefix(modelName, "openai/")
+									if hasOpenAIPrefix {
+										// 去掉模型名的 openai/ 前缀
+										actualModel := strings.TrimPrefix(responsesReq.Model, "openai/")
+										responsesReq.Model = actualModel
+										// 更新 context 中的原始模型名
+										c.Set("original_model", actualModel)
+									}
+									// 无论是否有 openai/ 前缀，只要请求体是 Responses 格式，都需要响应转换
+									// 因为 Cursor 调用 /v1/chat/completions 接口，期望返回 Chat Completions 格式的响应
+									c.Set("is_cursor", true)
+									c.Set("convert_cursor_to_chat", true)
+									// 保持流式输出
+									return responsesReq, nil
+								}
+							}
 						}
-						// 如果解析失败，可能是标准的 Chat Completions 格式，继续使用标准解析
-						// 但仍然标记为需要响应转换
-						c.Set("is_cursor", true)
-						c.Set("convert_chat_to_cursor", true)
 					}
 				}
 			}
