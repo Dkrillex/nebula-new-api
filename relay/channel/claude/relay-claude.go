@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"one-api/common"
+	"one-api/constant"
 	"one-api/dto"
 	"one-api/logger"
 	"one-api/relay/channel/openrouter"
@@ -71,7 +72,7 @@ func RequestOpenAI2ClaudeComplete(textRequest dto.GeneralOpenAIRequest) *dto.Cla
 	return &claudeRequest
 }
 
-func RequestOpenAI2ClaudeMessage(c *gin.Context, textRequest dto.GeneralOpenAIRequest) (*dto.ClaudeRequest, error) {
+func RequestOpenAI2ClaudeMessage(c *gin.Context, textRequest dto.GeneralOpenAIRequest, info *relaycommon.RelayInfo) (*dto.ClaudeRequest, error) {
 	claudeTools := make([]any, 0, len(textRequest.Tools))
 
 	for _, tool := range textRequest.Tools {
@@ -86,8 +87,18 @@ func RequestOpenAI2ClaudeMessage(c *gin.Context, textRequest dto.GeneralOpenAIRe
 			}
 			claudeTool.InputSchema["properties"] = params["properties"]
 			claudeTool.InputSchema["required"] = params["required"]
+			// 过滤掉不被 AWS Bedrock 支持的字段（仅当使用 AWS 渠道时）
+			unsupportedFields := map[string]bool{
+				"type":       true,
+				"properties": true,
+				"required":   true,
+			}
+			// 如果是 AWS Bedrock，需要过滤掉 input_examples 字段
+			if info != nil && info.ChannelType == constant.ChannelTypeAws {
+				unsupportedFields["input_examples"] = true
+			}
 			for s, a := range params {
-				if s == "type" || s == "properties" || s == "required" {
+				if unsupportedFields[s] {
 					continue
 				}
 				claudeTool.InputSchema[s] = a

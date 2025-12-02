@@ -92,7 +92,7 @@ func (a *Adaptor) ConvertOpenAIRequest(c *gin.Context, info *relaycommon.RelayIn
 	if a.RequestMode == RequestModeCompletion {
 		return RequestOpenAI2ClaudeComplete(*request), nil
 	} else {
-		return RequestOpenAI2ClaudeMessage(c, *request)
+		return RequestOpenAI2ClaudeMessage(c, *request, info)
 	}
 }
 
@@ -120,7 +120,6 @@ func (a *Adaptor) DoResponse(c *gin.Context, resp *http.Response, info *relaycom
 	} else {
 		return ClaudeHandler(c, resp, info, a.RequestMode)
 	}
-	return
 }
 
 func (a *Adaptor) GetModelList() []string {
