@@ -127,7 +127,7 @@ func filterSystemField(system any) any {
 	return filterCacheControlTTLRecursive(system)
 }
 
-// filterMessagesField 过滤 messages 字段，移除 cache_control.ttl
+// filterMessagesField 过滤 messages 字段，移除 cache_control.ttl，确保 content 数组中的元素保留 type 字段
 func filterMessagesField(messages any) any {
 	if messages == nil {
 		return nil
@@ -140,7 +140,145 @@ func filterMessagesField(messages any) any {
 
 	filtered := make([]any, 0, len(messagesSlice))
 	for _, msg := range messagesSlice {
-		filtered = append(filtered, filterCacheControlTTLRecursive(msg))
+		filteredMsg := filterMessageContent(msg)
+		filtered = append(filtered, filteredMsg)
+	}
+	return filtered
+}
+
+// filterMessageContent 过滤单个 message，确保 content 数组中的元素保留 type 字段
+func filterMessageContent(msg any) any {
+	if msg == nil {
+		return nil
+	}
+
+	msgMap, ok := msg.(map[string]any)
+	if !ok {
+		return filterCacheControlTTLRecursive(msg)
+	}
+
+	filtered := make(map[string]any)
+	for k, v := range msgMap {
+		if k == "content" {
+			// 特殊处理 content 字段
+			filtered[k] = filterContentField(v)
+		} else {
+			// 其他字段递归过滤 cache_control.ttl
+			filtered[k] = filterCacheControlTTLRecursive(v)
+		}
+	}
+	return filtered
+}
+
+// filterContentField 过滤 content 字段，确保数组元素保留 type 字段
+func filterContentField(content any) any {
+	if content == nil {
+		return nil
+	}
+
+	// 如果是字符串，直接返回（简单格式）
+	if _, ok := content.(string); ok {
+		return content
+	}
+
+	// 如果是数组，需要确保每个元素都有 type 字段
+	contentSlice, ok := content.([]any)
+	if !ok {
+		return filterCacheControlTTLRecursive(content)
+	}
+
+	filtered := make([]any, 0, len(contentSlice))
+	for _, item := range contentSlice {
+		filteredItem := filterContentItem(item)
+		if filteredItem != nil {
+			filtered = append(filtered, filteredItem)
+		}
+	}
+	return filtered
+}
+
+// filterContentItem 过滤单个 content 项，确保保留 type 字段，移除 cache_control.ttl
+func filterContentItem(item any) any {
+	if item == nil {
+		return nil
+	}
+
+	itemMap, ok := item.(map[string]any)
+	if !ok {
+		return item
+	}
+
+	// 定义 content 项支持的白名单字段
+	allowedContentFields := map[string]bool{
+		"type":          true, // 必需字段
+		"text":          true,
+		"source":        true,
+		"cache_control": true, // 需要特殊处理，移除 ttl
+		"id":            true, // tool_use 相关
+		"name":          true, // tool_use 相关
+		"input":         true, // tool_use 相关
+		"tool_use_id":   true, // tool_result 相关
+		"content":       true, // tool_result 相关
+	}
+
+	filtered := make(map[string]any)
+	for k, v := range itemMap {
+		if !allowedContentFields[k] {
+			// 跳过不在白名单中的字段
+			continue
+		}
+
+		if k == "cache_control" {
+			// 特殊处理 cache_control，移除 ttl
+			if cacheControl, ok := v.(map[string]any); ok {
+				filteredCacheControl := make(map[string]any)
+				for ck, cv := range cacheControl {
+					if ck != "ttl" {
+						filteredCacheControl[ck] = cv
+					}
+				}
+				// 如果还有其他字段，保留 cache_control
+				if len(filteredCacheControl) > 0 {
+					filtered[k] = filteredCacheControl
+				}
+			} else {
+				filtered[k] = v
+			}
+		} else if k == "source" {
+			// source 字段也需要过滤，确保只保留支持的字段
+			filtered[k] = filterSourceField(v)
+		} else {
+			filtered[k] = v
+		}
+	}
+
+	// 确保 type 字段存在（如果原本没有，可能是格式错误，但为了兼容性，我们保留原值）
+	return filtered
+}
+
+// filterSourceField 过滤 source 字段，只保留支持的字段
+func filterSourceField(source any) any {
+	if source == nil {
+		return nil
+	}
+
+	sourceMap, ok := source.(map[string]any)
+	if !ok {
+		return source
+	}
+
+	allowedSourceFields := map[string]bool{
+		"type":       true,
+		"media_type": true,
+		"data":       true,
+		"url":        true,
+	}
+
+	filtered := make(map[string]any)
+	for k, v := range sourceMap {
+		if allowedSourceFields[k] {
+			filtered[k] = v
+		}
 	}
 	return filtered
 }
