@@ -646,9 +646,23 @@ func ValidateAccessToken(token string) (user *User) {
 	}
 	token = strings.Replace(token, "Bearer ", "", 1)
 	user = &User{}
-	if DB.Where("access_token = ?", token).First(user).RowsAffected == 1 {
+	result := DB.Where("access_token = ?", token).First(user)
+	if result.Error != nil && !errors.Is(result.Error, gorm.ErrRecordNotFound) {
+		tokenPreview := token
+		if len(tokenPreview) > 10 {
+			tokenPreview = tokenPreview[:10]
+		}
+		common.SysLog(fmt.Sprintf("[ValidateAccessToken] 查询access_token失败: %v, token: %s...", result.Error, tokenPreview))
+		return nil
+	}
+	if result.RowsAffected == 1 {
 		return user
 	}
+	tokenPreview := token
+	if len(tokenPreview) > 10 {
+		tokenPreview = tokenPreview[:10]
+	}
+	common.SysLog(fmt.Sprintf("[ValidateAccessToken] access_token未找到，token前缀: %s...", tokenPreview))
 	return nil
 }
 

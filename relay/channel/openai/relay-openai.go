@@ -523,7 +523,9 @@ func OpenaiRealtimeHandler(c *gin.Context, info *relaycommon.RelayInfo) (*types.
 			default:
 				_, message, err := clientConn.ReadMessage()
 				if err != nil {
-					if !websocket.IsCloseError(err, websocket.CloseNormalClosure, websocket.CloseGoingAway) {
+					if websocket.IsCloseError(err, websocket.CloseNormalClosure, websocket.CloseGoingAway, websocket.CloseAbnormalClosure) {
+						common.SysLog(fmt.Sprintf("[Realtime][Client->Upstream] client closed: %v", err))
+					} else {
 						errChan <- fmt.Errorf("error reading from client: %v", err)
 					}
 					close(clientClosed)
@@ -583,7 +585,9 @@ func OpenaiRealtimeHandler(c *gin.Context, info *relaycommon.RelayInfo) (*types.
 			default:
 				_, message, err := targetConn.ReadMessage()
 				if err != nil {
-					if !websocket.IsCloseError(err, websocket.CloseNormalClosure, websocket.CloseGoingAway) {
+					if websocket.IsCloseError(err, websocket.CloseNormalClosure, websocket.CloseGoingAway, websocket.CloseAbnormalClosure) {
+						common.SysLog(fmt.Sprintf("[Realtime][Upstream->Client] upstream closed: %v", err))
+					} else {
 						errChan <- fmt.Errorf("error reading from target: %v", err)
 					}
 					close(targetClosed)
@@ -678,11 +682,14 @@ func OpenaiRealtimeHandler(c *gin.Context, info *relaycommon.RelayInfo) (*types.
 
 	select {
 	case <-clientClosed:
+		common.SysLog("[Realtime] exit select: clientClosed")
 	case <-targetClosed:
+		common.SysLog("[Realtime] exit select: targetClosed (upstream)")
 	case err := <-errChan:
 		//return service.OpenAIErrorWrapper(err, "realtime_error", http.StatusInternalServerError), nil
 		logger.LogError(c, "realtime error: "+err.Error())
 	case <-c.Done():
+		common.SysLog("[Realtime] exit select: context done")
 	}
 
 	if usage.TotalTokens != 0 {

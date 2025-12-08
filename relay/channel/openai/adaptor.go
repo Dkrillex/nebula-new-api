@@ -123,6 +123,12 @@ func (a *Adaptor) GetRequestURL(info *relaycommon.RelayInfo) (string, error) {
 		if apiVersion == "" {
 			apiVersion = constant.AzureDefaultAPIVersion
 		}
+		// 如果配置了模型特定的 API 版本，优先使用模型特定的版本
+		if info.ChannelOtherSettings.AzureModelApiVersions != nil && len(info.ChannelOtherSettings.AzureModelApiVersions) > 0 {
+			if modelApiVersion, exists := info.ChannelOtherSettings.AzureModelApiVersions[info.UpstreamModelName]; exists && modelApiVersion != "" {
+				apiVersion = modelApiVersion
+			}
+		}
 		// https://learn.microsoft.com/en-us/azure/cognitive-services/openai/chatgpt-quickstart?pivots=rest-api&tabs=command-line#rest-api
 		requestURL := strings.Split(info.RequestURLPath, "?")[0]
 		requestURL = fmt.Sprintf("%s?api-version=%s", requestURL, apiVersion)
@@ -189,21 +195,10 @@ func (a *Adaptor) SetupRequestHeader(c *gin.Context, header *http.Header, info *
 		header.Set("OpenAI-Organization", info.Organization)
 	}
 	if info.RelayMode == relayconstant.RelayModeRealtime {
-		swp := c.Request.Header.Get("Sec-WebSocket-Protocol")
-		if swp != "" {
-			items := []string{
-				"realtime",
-				"openai-insecure-api-key." + info.ApiKey,
-				"openai-beta.realtime-v1",
-			}
-			header.Set("Sec-WebSocket-Protocol", strings.Join(items, ","))
-			//req.Header.Set("Sec-WebSocket-Key", c.Request.Header.Get("Sec-WebSocket-Key"))
-			//req.Header.Set("Sec-Websocket-Extensions", c.Request.Header.Get("Sec-Websocket-Extensions"))
-			//req.Header.Set("Sec-Websocket-Version", c.Request.Header.Get("Sec-Websocket-Version"))
-		} else {
-			header.Set("openai-beta", "realtime=v1")
-			header.Set("Authorization", "Bearer "+info.ApiKey)
-		}
+		// 对接自建 Realtime 服务：统一使用 Authorization 头，Sec-WebSocket-Protocol 仅为 realtime
+		header.Set("Sec-WebSocket-Protocol", "realtime")
+		header.Set("Authorization", "Bearer "+info.ApiKey)
+		header.Set("openai-beta", "realtime=v1")
 	} else {
 		header.Set("Authorization", "Bearer "+info.ApiKey)
 	}

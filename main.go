@@ -7,7 +7,6 @@ import (
 	"log"
 	"net/http"
 	"one-api/common"
-	"one-api/constant"
 	"one-api/controller"
 	"one-api/logger"
 	"one-api/middleware"
@@ -102,14 +101,14 @@ func main() {
 	go controller.AutomaticallyTestChannels()
 
 	// 任务进度轮询已禁用，不启动线程
-	if common.IsMasterNode && constant.UpdateTask {
-		gopool.Go(func() {
-			controller.UpdateMidjourneyTaskBulk()
-		})
-		gopool.Go(func() {
-			controller.UpdateTaskBulk()
-		})
-	}
+	//if common.IsMasterNode && constant.UpdateTask {
+	//	gopool.Go(func() {
+	//		controller.UpdateMidjourneyTaskBulk()
+	//	})
+	//	gopool.Go(func() {
+	//		controller.UpdateTaskBulk()
+	//	})
+	//}
 	if os.Getenv("BATCH_UPDATE_ENABLED") == "true" {
 		common.BatchUpdateEnabled = true
 		common.SysLog("batch update enabled with interval " + strconv.Itoa(common.BatchUpdateInterval) + "s")

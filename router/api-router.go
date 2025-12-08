@@ -230,6 +230,9 @@ func SetApiRouter(router *gin.Engine) {
 			taskRoute.GET("/", middleware.AdminAuth(), controller.GetAllTask)
 		}
 
+		// WebRTC 信令透传（上游 /v1/realtime）
+		apiRouter.POST("/realtime/webrtc/offer", controller.RealtimeWebRTCOffer)
+
 		vendorRoute := apiRouter.Group("/vendors")
 		vendorRoute.Use(middleware.AdminAuth())
 		{
@@ -273,6 +276,11 @@ func SetApiRouter(router *gin.Engine) {
 			syncSystemRoute.POST("/videos/generations", controller.SyncVideoGeneration)
 			syncSystemRoute.GET("/videos/generations/download", controller.SyncDownloadVideoBase64) // ⚠️ 必须在:task_id之前
 			syncSystemRoute.GET("/videos/generations/:task_id", controller.SyncGetVideoTask)
+			syncSystemRoute.GET("/realtime", controller.SyncRealtime)
+			syncSystemRoute.POST("/realtime/webrtc", controller.SyncRealtimeWebRTC)
 		}
 	}
+
+	// 顶层路由：兼容 WebRTC SDP 直连（POST application/sdp 到 /v1/realtime）
+	router.POST("/v1/realtime", controller.RealtimeWebRTCDirect)
 }

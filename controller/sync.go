@@ -1384,3 +1384,129 @@ func SyncImageEdits(c *gin.Context) {
 	// 转发请求到模型
 	Relay(c, types.RelayFormatOpenAIImage)
 }
+
+// SyncRealtime 处理外部系统实时对话请求
+// @Summary 外部系统实时对话
+// @Description 供外部系统调用，通过查询参数中的user_id指定实际扣费用户进行实时对话（WebSocket连接）
+// @Tags 外部系统集成
+// @Accept json
+// @Produce json
+// @Param user_id query int true "用户ID"
+// @Param model query string true "模型名称"
+// @Param group query string false "分组名称"
+// @Success 200 {object} common.Response{data=object}
+// @Failure 400 {object} common.Response{msg=string}
+// @Failure 500 {object} common.Response{msg=string}
+// @Router /api/sync/system/realtime [get]
+func SyncRealtime(c *gin.Context) {
+	var newAPIError *types.NewAPIError
+
+	defer func() {
+		if newAPIError != nil {
+			c.JSON(newAPIError.StatusCode, gin.H{
+				"error": newAPIError.ToOpenAIError(),
+			})
+		}
+	}()
+
+	// 从查询参数中解析请求
+	realtimeRequest := &dto.SyncRealtimeRequest{}
+	if err := c.ShouldBindQuery(realtimeRequest); err != nil {
+		newAPIError = types.NewError(err, types.ErrorCodeInvalidRequest)
+		return
+	}
+
+	// 验证必需参数（Go系统只需要 nebula_api_id，它就是这个系统的 userId）
+	if realtimeRequest.NebulaApiId <= 0 {
+		newAPIError = types.NewError(errors.New("无效的Nebula API ID"), types.ErrorCodeInvalidRequest)
+		return
+	}
+
+	// 使用 nebula_api_id 作为 Go 系统的用户ID（对于Go系统来说，nebula_api_id 就是 userId）
+	userId := realtimeRequest.NebulaApiId
+
+	// 先尝试从缓存获取用户信息
+	userCache, err := model.GetUserCache(userId)
+	if err != nil {
+		// 缓存中没有，从数据库查询
+		user, dbErr := model.GetUserById(userId, true)
+		if dbErr != nil {
+			newAPIError = types.NewError(errors.New("用户不存在"), types.ErrorCodeInvalidRequest)
+			return
+		}
+		// 将查询结果转换为缓存对象
+		userCache = user.ToBaseUser()
+	}
+
+	// 检查用户状态
+	if userCache.Status != common.UserStatusEnabled {
+		newAPIError = types.NewError(errors.New("用户已被禁用"), types.ErrorCodeInvalidRequest)
+		return
+	}
+
+	// 验证模型参数
+	if realtimeRequest.Model == "" {
+		newAPIError = types.NewError(errors.New("请选择模型"), types.ErrorCodeInvalidRequest)
+		return
+	}
+	c.Set("original_model", realtimeRequest.Model)
+
+	// 设置分组
+	group := realtimeRequest.Group
+	if group == "" {
+		group = userCache.Group
+	}
+	c.Set("group", group)
+
+	// 设置用户ID到上下文（nebula_api_id 就是 Go 系统的 userId）
+	c.Set("id", userId)
+
+	// 写入用户缓存到上下文
+	userCache.WriteContext(c)
+
+	// 创建临时令牌
+	tempToken := &model.Token{
+		UserId: userId,
+		Name:   fmt.Sprintf("nebula-realtime-%s", group),
+		Group:  group,
+	}
+	_ = middleware.SetupContextForToken(c, tempToken)
+
+	// 直接调用CacheGetRandomSatisfiedChannel获取最高优先级渠道
+	channel, _, err := model.CacheGetRandomSatisfiedChannel(c, group, realtimeRequest.Model, 0)
+	if err != nil {
+		newAPIError = types.NewError(fmt.Errorf("获取分组 %s 下模型 %s 的可用渠道失败: %s", group, realtimeRequest.Model, err.Error()), types.ErrorCodeGetChannelFailed, types.ErrOptionWithSkipRetry())
+		return
+	}
+	if channel == nil {
+		newAPIError = types.NewError(fmt.Errorf("分组 %s 下模型 %s 的可用渠道不存在", group, realtimeRequest.Model), types.ErrorCodeGetChannelFailed, types.ErrOptionWithSkipRetry())
+		return
+	}
+	// 设置渠道上下文
+	newAPIError = middleware.SetupContextForSelectedChannel(c, channel, realtimeRequest.Model)
+	if newAPIError != nil {
+		return
+	}
+
+	// 保存原始路径信息，用于 genBaseRelayInfo 中判断是否为 sync realtime 请求
+	// 注意：需要在修改路径之前保存，以便 genBaseRelayInfo 能够正确识别
+	c.Set("is_sync_realtime", true)
+
+	// 将请求路径修改为 /v1/realtime，保留查询参数中的 model
+	c.Request.URL.Path = "/v1/realtime"
+	// 确保查询参数中包含 model
+	if c.Request.URL.RawQuery == "" {
+		c.Request.URL.RawQuery = fmt.Sprintf("model=%s", realtimeRequest.Model)
+	} else {
+		// 如果已经有查询参数，检查是否已有 model 参数
+		if !strings.Contains(c.Request.URL.RawQuery, "model=") {
+			c.Request.URL.RawQuery += fmt.Sprintf("&model=%s", realtimeRequest.Model)
+		}
+	}
+
+	// 设置请求开始时间
+	common.SetContextKey(c, constant.ContextKeyRequestStartTime, time.Now())
+
+	// 转发请求到实时对话模型（WebSocket）
+	Relay(c, types.RelayFormatOpenAIRealtime)
+}

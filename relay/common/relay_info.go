@@ -430,6 +430,10 @@ func genBaseRelayInfo(c *gin.Context, request dto.Request) *RelayInfo {
 	if strings.HasPrefix(c.Request.URL.Path, "/api/sync/system/videos/generations") {
 		info.IsPlayground = true
 	}
+	// 检查是否为 sync realtime 请求（通过 context 标志判断，因为路径可能已被修改）
+	if c.GetBool("is_sync_realtime") || strings.HasPrefix(c.Request.URL.Path, "/api/sync/system/realtime") {
+		info.IsPlayground = true
+	}
 
 	userSetting, ok := common.GetContextKeyType[dto.UserSetting](c, constant.ContextKeyUserSetting)
 	if ok {

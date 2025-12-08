@@ -86,3 +86,14 @@ type RealtimeContent struct {
 	Audio      string `json:"audio,omitempty"` // Base64-encoded audio bytes.
 	Transcript string `json:"transcript,omitempty"`
 }
+
+// SyncRealtimeRequest 外部系统实时对话请求结构体
+// 注意：实时对话使用 WebSocket 连接，user_id、nebula_api_id 和 model 通过查询参数传递
+// user_id: Java系统的用户ID（Java端验证用，Go系统不使用）
+// nebula_api_id: Go系统的用户ID（对于Go系统来说，这就是userId）
+type SyncRealtimeRequest struct {
+	UserId      int    `json:"user_id" form:"user_id"`                                // Java系统用户ID，Go系统不使用，但保留以兼容
+	NebulaApiId int    `json:"nebula_api_id" form:"nebula_api_id" binding:"required"` // Go系统的userId
+	Model       string `json:"model" form:"model" binding:"required"`
+	Group       string `json:"group" form:"group"`
+}

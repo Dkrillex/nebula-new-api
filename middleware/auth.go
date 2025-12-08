@@ -323,7 +323,12 @@ func SystemAccessTokenAuth() func(c *gin.Context) {
 	return func(c *gin.Context) {
 		// 从Authorization头获取访问令牌
 		accessToken := c.Request.Header.Get("Authorization")
+		// 允许从 query 参数中获取（方便浏览器发起的 WS 握手无法自定义 header 的场景）
 		if accessToken == "" {
+			accessToken = c.Query("access_token")
+		}
+		if accessToken == "" {
+			common.SysLog(fmt.Sprintf("[SystemAccessTokenAuth] 未提供 access token, path: %s", c.Request.URL.Path))
 			c.JSON(http.StatusUnauthorized, gin.H{
 				"success": false,
 				"message": "无权进行此操作，未提供 access token",
@@ -335,6 +340,11 @@ func SystemAccessTokenAuth() func(c *gin.Context) {
 		// 验证访问令牌
 		user := model.ValidateAccessToken(accessToken)
 		if user == nil || user.Username == "" {
+			tokenPreview := accessToken
+			if len(tokenPreview) > 20 {
+				tokenPreview = tokenPreview[:20] + "..."
+			}
+			common.SysLog(fmt.Sprintf("[SystemAccessTokenAuth] access token 无效, path: %s, token: %s", c.Request.URL.Path, tokenPreview))
 			c.JSON(http.StatusUnauthorized, gin.H{
 				"success": false,
 				"message": "无权进行此操作，access token 无效",

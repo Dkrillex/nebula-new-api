@@ -159,6 +159,8 @@ const EditChannelModal = (props) => {
     allow_service_tier: false,
     disable_store: false, // false = 允许透传（默认开启）
     allow_safety_identifier: false,
+    // Azure 模型特定 API 版本配置
+    azure_model_api_versions: '',
   };
   const [batch, setBatch] = useState(false);
   const [multiToSingle, setMultiToSingle] = useState(false);
@@ -358,6 +360,39 @@ const EditChannelModal = (props) => {
     handleInputChange('settings', settingsJson);
   };
 
+  // 处理模型特定 API 版本配置变更
+  const handleAzureModelApiVersionsChange = (value) => {
+    // 更新inputs状态
+    setInputs((prev) => ({ ...prev, azure_model_api_versions: value }));
+
+    // 更新settings JSON
+    let settings = {};
+    if (inputs.settings) {
+      try {
+        settings = JSON.parse(inputs.settings);
+      } catch (error) {
+        console.error('解析设置失败:', error);
+      }
+    }
+
+    // 将 JSON 字符串解析为对象并保存
+    if (value && value.trim()) {
+      try {
+        settings.azure_model_api_versions = JSON.parse(value);
+      } catch (error) {
+        console.error('解析模型 API 版本配置失败:', error);
+        // 如果解析失败，不更新设置
+        return;
+      }
+    } else {
+      // 如果为空，删除该字段
+      delete settings.azure_model_api_versions;
+    }
+
+    const settingsJson = JSON.stringify(settings);
+    handleInputChange('settings', settingsJson);
+  };
+
   const handleInputChange = (name, value) => {
     if (formApiRef.current) {
       formApiRef.current.setValue(name, value);
@@ -513,6 +548,16 @@ const EditChannelModal = (props) => {
           const parsedSettings = JSON.parse(data.settings);
           data.azure_responses_version =
             parsedSettings.azure_responses_version || '';
+          // 读取 Azure 模型特定 API 版本配置
+          if (parsedSettings.azure_model_api_versions) {
+            data.azure_model_api_versions = JSON.stringify(
+              parsedSettings.azure_model_api_versions,
+              null,
+              2,
+            );
+          } else {
+            data.azure_model_api_versions = '';
+          }
           // 读取 Vertex 密钥格式
           data.vertex_key_type = parsedSettings.vertex_key_type || 'json';
           // 读取企业账户设置
@@ -526,6 +571,7 @@ const EditChannelModal = (props) => {
         } catch (error) {
           console.error('解析其他设置失败:', error);
           data.azure_responses_version = '';
+          data.azure_model_api_versions = '';
           data.region = '';
           data.vertex_key_type = 'json';
           data.is_enterprise_account = false;
@@ -535,6 +581,7 @@ const EditChannelModal = (props) => {
         }
       } else {
         // 兼容历史数据：老渠道没有 settings 时，默认按 json 展示
+        data.azure_model_api_versions = '';
         data.vertex_key_type = 'json';
         data.is_enterprise_account = false;
         data.allow_service_tier = false;
@@ -1020,10 +1067,14 @@ const EditChannelModal = (props) => {
     delete localInputs.is_enterprise_account;
     // 顶层的 vertex_key_type 不应发送给后端
     delete localInputs.vertex_key_type;
+    // azure_model_api_versions 已保存在 settings 中，不需要作为顶层字段发送
+    delete localInputs.azure_model_api_versions;
     // 清理字段透传控制的临时字段
     delete localInputs.allow_service_tier;
     delete localInputs.disable_store;
     delete localInputs.allow_safety_identifier;
+    // azure_model_api_versions 已保存在 settings 中，不需要作为顶层字段发送
+    delete localInputs.azure_model_api_versions;
 
     let res;
     localInputs.auto_ban = localInputs.auto_ban ? 1 : 0;
@@ -1996,6 +2047,38 @@ const EditChannelModal = (props) => {
                                 )
                               }
                               showClear
+                            />
+                          </div>
+                          <div>
+                            <JSONEditor
+                              key={`azure_model_api_versions-${isEdit ? channelId : 'new'}`}
+                              field='azure_model_api_versions'
+                              label={t('模型特定 API 版本配置')}
+                              placeholder={
+                                t(
+                                  '可选，为不同模型配置不同的 API 版本。如果模型未在此配置中，则使用上方的默认 API 版本。例如：',
+                                ) +
+                                `\n${JSON.stringify(
+                                  {
+                                    'gpt-4': '2024-02-15-preview',
+                                    'gpt-3.5-turbo': '2023-05-15',
+                                  },
+                                  null,
+                                  2,
+                                )}`
+                              }
+                              value={inputs.azure_model_api_versions || ''}
+                              onChange={handleAzureModelApiVersionsChange}
+                              template={{
+                                'gpt-4': '2024-02-15-preview',
+                                'gpt-3.5-turbo': '2023-05-15',
+                              }}
+                              templateLabel={t('填入模板')}
+                              editorType='keyValue'
+                              formApi={formApiRef.current}
+                              extraText={t(
+                                '键为模型名称，值为对应的 API 版本（例如：2024-02-15-preview）',
+                              )}
                             />
                           </div>
                         </>

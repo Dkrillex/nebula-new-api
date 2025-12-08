@@ -219,6 +219,8 @@ func filterContentItem(item any) any {
 		"input":         true, // tool_use 相关
 		"tool_use_id":   true, // tool_result 相关
 		"content":       true, // tool_result 相关
+		"thinking":      true, // thinking 内容需保留，避免 Bedrock 校验失败
+		"signature":     true, // thinking 块签名需保留，避免校验失败
 	}
 
 	filtered := make(map[string]any)
