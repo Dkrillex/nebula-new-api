@@ -17,8 +17,11 @@ import (
 type Pricing struct {
 	ModelName              string                  `json:"model_name"`
 	Description            string                  `json:"description,omitempty"`
+	DescriptionEn          string                  `json:"description_en,omitempty"`
 	Icon                   string                  `json:"icon,omitempty"`
+	IconURL                string                  `json:"icon_url,omitempty"`
 	Tags                   string                  `json:"tags,omitempty"`
+	TagsEn                 string                  `json:"tags_en,omitempty"`
 	VendorID               int                     `json:"vendor_id,omitempty"`
 	QuotaType              int                     `json:"quota_type"`
 	ModelRatio             float64                 `json:"model_ratio"`
@@ -313,8 +316,11 @@ func updatePricing() {
 				continue
 			}
 			pricing.Description = meta.Description
+			pricing.DescriptionEn = meta.DescriptionEn
 			pricing.Icon = meta.Icon
+			pricing.IconURL = meta.IconURL
 			pricing.Tags = meta.Tags
+			pricing.TagsEn = meta.TagsEn
 			pricing.VendorID = meta.VendorID
 		}
 		// 优先级1：检查图像Token表定价

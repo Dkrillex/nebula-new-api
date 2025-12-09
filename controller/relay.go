@@ -81,9 +81,27 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 	)
 
 	if relayFormat == types.RelayFormatOpenAIRealtime {
+		// 检查 WebSocket 升级请求头
+		connection := c.Request.Header.Get("Connection")
+		upgrade := c.Request.Header.Get("Upgrade")
+		common.SysLog(fmt.Sprintf("[Relay] WebSocket upgrade check: Connection=%s, Upgrade=%s", connection, upgrade))
+
+		// 如果 Connection 头被代理修改为 close，尝试修复
+		if strings.ToLower(connection) == "close" {
+			common.SysLog(fmt.Sprintf("[Relay] Connection header was modified to 'close', fixing to 'Upgrade'"))
+			c.Request.Header.Set("Connection", "Upgrade")
+		}
+		// 确保 Upgrade 头存在
+		if upgrade == "" {
+			c.Request.Header.Set("Upgrade", "websocket")
+		}
+
 		var err error
 		ws, err = upgrader.Upgrade(c.Writer, c.Request, nil)
 		if err != nil {
+			common.SysLog(fmt.Sprintf("[Relay] WebSocket upgrade failed: %v, Connection=%s, Upgrade=%s, Sec-WebSocket-Key=%s, Sec-WebSocket-Version=%s",
+				err, c.Request.Header.Get("Connection"), c.Request.Header.Get("Upgrade"),
+				c.Request.Header.Get("Sec-WebSocket-Key"), c.Request.Header.Get("Sec-WebSocket-Version")))
 			helper.WssError(c, ws, types.NewError(err, types.ErrorCodeGetChannelFailed, types.ErrOptionWithSkipRetry()).ToOpenAIError())
 			return
 		}

@@ -113,8 +113,10 @@ const EditModelModal = (props) => {
   const getInitValues = () => ({
     model_name: props.editingModel?.model_name || '',
     description: '',
+    description_en: '',
     icon: '',
     tags: [],
+    tags_en: [],
     vendor_id: undefined,
     vendor: '',
     vendor_icon: '',
@@ -141,6 +143,11 @@ const EditModelModal = (props) => {
           data.tags = data.tags.split(',').filter(Boolean);
         } else {
           data.tags = [];
+        }
+        if (data.tags_en) {
+          data.tags_en = data.tags_en.split(',').filter(Boolean);
+        } else {
+          data.tags_en = [];
         }
         // endpoints 保持原始 JSON 字符串，若为空设为空串
         if (!data.endpoints) {
@@ -193,6 +200,9 @@ const EditModelModal = (props) => {
       const submitData = {
         ...values,
         tags: Array.isArray(values.tags) ? values.tags.join(',') : values.tags,
+        tags_en: Array.isArray(values.tags_en)
+          ? values.tags_en.join(',')
+          : values.tags_en,
         endpoints: values.endpoints || '',
         status: values.status ? 1 : 0,
         sync_official: values.sync_official ? 1 : 0,
@@ -364,6 +374,15 @@ const EditModelModal = (props) => {
                     />
                   </Col>
                   <Col span={24}>
+                    <Form.TextArea
+                      field='description_en'
+                      label={t('英文描述')}
+                      placeholder={t('请输入英文描述（用于英文界面展示）')}
+                      rows={3}
+                      showClear
+                    />
+                  </Col>
+                  <Col span={24}>
                     <Form.TagInput
                       field='tags'
                       label={t('标签')}
@@ -419,6 +438,33 @@ const EditModelModal = (props) => {
                           </Space>
                         ),
                       })}
+                    />
+                  </Col>
+                  <Col span={24}>
+                    <Form.TagInput
+                      field='tags_en'
+                      label={t('英文标签')}
+                      placeholder={t('输入英文标签或使用","分隔多个标签')}
+                      addOnBlur
+                      showClear
+                      onChange={(newTags) => {
+                        if (!formApiRef.current) return;
+                        const normalize = (tags) => {
+                          if (!Array.isArray(tags)) return [];
+                          return [
+                            ...new Set(
+                              tags.flatMap((tag) =>
+                                tag
+                                  .split(',')
+                                  .map((t) => t.trim())
+                                  .filter(Boolean),
+                              ),
+                            ),
+                          ];
+                        };
+                        const normalized = normalize(newTags);
+                        formApiRef.current.setValue('tags_en', normalized);
+                      }}
                     />
                   </Col>
                   <Col span={24}>
