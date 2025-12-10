@@ -33,6 +33,8 @@ func relayHandler(c *gin.Context, info *relaycommon.RelayInfo) *types.NewAPIErro
 	switch info.RelayMode {
 	case relayconstant.RelayModeImagesGenerations, relayconstant.RelayModeImagesEdits:
 		err = relay.ImageHelper(c, info)
+	case relayconstant.RelayModeFiles:
+		err = relay.FileHelper(c, info)
 	case relayconstant.RelayModeAudioSpeech:
 		fallthrough
 	case relayconstant.RelayModeAudioTranslation:
@@ -191,6 +193,18 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 		// 更新 originalModel 变量（如果 context 中已更新）
 		if updatedModel := c.GetString("original_model"); updatedModel != "" {
 			originalModel = updatedModel
+		}
+	}
+
+	// 在转发前自动处理 chat 文件上传与消息改写
+	if relayFormat == types.RelayFormatOpenAI {
+		if chatReq, ok := request.(*dto.GeneralOpenAIRequest); ok {
+			updatedReq, uploadErr := helper.AutoUploadChatFiles(c, relayconstant.Path2RelayMode(c.Request.URL.Path), chatReq)
+			if uploadErr != nil {
+				newAPIError = uploadErr
+				return
+			}
+			request = updatedReq
 		}
 	}
 

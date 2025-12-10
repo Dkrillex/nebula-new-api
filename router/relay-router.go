@@ -143,7 +143,9 @@ func SetRelayRouter(router *gin.Engine) {
 		// not implemented
 		httpRouter.POST("/images/variations", controller.RelayNotImplemented)
 		httpRouter.GET("/files", controller.RelayNotImplemented)
-		httpRouter.POST("/files", controller.RelayNotImplemented)
+		httpRouter.POST("/files", func(c *gin.Context) {
+			controller.Relay(c, types.RelayFormatOpenAI)
+		})
 		httpRouter.DELETE("/files/:id", controller.RelayNotImplemented)
 		httpRouter.GET("/files/:id", controller.RelayNotImplemented)
 		httpRouter.GET("/files/:id/content", controller.RelayNotImplemented)

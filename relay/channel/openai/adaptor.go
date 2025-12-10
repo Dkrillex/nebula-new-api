@@ -123,6 +123,14 @@ func (a *Adaptor) GetRequestURL(info *relaycommon.RelayInfo) (string, error) {
 		if apiVersion == "" {
 			apiVersion = constant.AzureDefaultAPIVersion
 		}
+		// 文件上传走资源级别接口，不依赖 deployment
+		if info.RelayMode == relayconstant.RelayModeFiles {
+			requestURL := "/openai/v1/files"
+			if apiVersion != "" {
+				requestURL = fmt.Sprintf("%s?api-version=%s", requestURL, apiVersion)
+			}
+			return relaycommon.GetFullRequestURL(info.ChannelBaseUrl, requestURL, info.ChannelType), nil
+		}
 		// 如果配置了模型特定的 API 版本，优先使用模型特定的版本
 		if info.ChannelOtherSettings.AzureModelApiVersions != nil && len(info.ChannelOtherSettings.AzureModelApiVersions) > 0 {
 			if modelApiVersion, exists := info.ChannelOtherSettings.AzureModelApiVersions[info.UpstreamModelName]; exists && modelApiVersion != "" {

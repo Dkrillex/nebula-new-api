@@ -67,6 +67,10 @@ func GetAndValidateRequest(c *gin.Context, format types.RelayFormat) (request dt
 
 	switch format {
 	case types.RelayFormatOpenAI:
+		if relayMode == relayconstant.RelayModeFiles {
+			// 文件上传走透传，不需要模型和消息校验
+			return &dto.BaseRequest{}, nil
+		}
 		// 如果是 /v1/chat/completions，检测是否为 Cursor 请求
 		if relayMode == relayconstant.RelayModeChatCompletions {
 			// 先读取请求体
