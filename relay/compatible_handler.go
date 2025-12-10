@@ -151,7 +151,12 @@ func TextHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *types
 			}
 		}
 
-		logger.LogDebug(c, fmt.Sprintf("text request body: %s", string(jsonData)))
+		logStr := string(jsonData)
+		const maxLogBodyLen = 2000 // 防止日志打印超大（如 base64）
+		if len(logStr) > maxLogBodyLen {
+			logStr = logStr[:maxLogBodyLen] + "...(truncated)"
+		}
+		logger.LogDebug(c, fmt.Sprintf("text request body: %s", logStr))
 
 		requestBody = bytes.NewBuffer(jsonData)
 	}
