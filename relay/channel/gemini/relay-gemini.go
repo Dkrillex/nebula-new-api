@@ -211,16 +211,26 @@ func CovertGemini2OpenAI(c *gin.Context, textRequest dto.GeneralOpenAIRequest, i
 			if googleBody, ok := extraBody["google"].(map[string]interface{}); ok {
 				adaptorWithExtraBody = true
 				if thinkingConfig, ok := googleBody["thinking_config"].(map[string]interface{}); ok {
-					if budget, ok := thinkingConfig["thinking_budget"].(float64); ok {
-						budgetInt := int(budget)
-						geminiRequest.GenerationConfig.ThinkingConfig = &dto.GeminiThinkingConfig{
-							ThinkingBudget:  common.GetPointer(budgetInt),
-							IncludeThoughts: true,
+					rawBudget, hasBudget := thinkingConfig["thinking_budget"].(float64)
+					includeThoughts := true
+					if val, ok := thinkingConfig["include_thoughts"].(bool); ok {
+						includeThoughts = val
+					}
+
+					if hasBudget {
+						budgetInt := clampThinkingBudget(info.UpstreamModelName, int(rawBudget))
+						if budgetInt > 0 {
+							geminiRequest.GenerationConfig.ThinkingConfig = &dto.GeminiThinkingConfig{
+								ThinkingBudget:  common.GetPointer(budgetInt),
+								IncludeThoughts: includeThoughts,
+							}
+						} else {
+							// 禁用思考模式时，不要携带 includeThoughts，避免 Vertex 报错
+							geminiRequest.GenerationConfig.ThinkingConfig = nil
 						}
-					} else {
-						geminiRequest.GenerationConfig.ThinkingConfig = &dto.GeminiThinkingConfig{
-							IncludeThoughts: true,
-						}
+					} else if includeThoughts {
+						// 只请求 includeThoughts 但未提供预算，视为无效配置
+						geminiRequest.GenerationConfig.ThinkingConfig = nil
 					}
 				}
 			}

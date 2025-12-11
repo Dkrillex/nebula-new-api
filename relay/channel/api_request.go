@@ -64,7 +64,7 @@ func DoApiRequest(a Adaptor, c *gin.Context, info *common.RelayInfo, requestBody
 	}
 	if common2.DebugEnabled {
 		logger.LogDebug(c, fmt.Sprintf("[DoApiRequest] Method: %s, URL: %s", c.Request.Method, fullRequestURL))
-		logger.LogDebug(c, fmt.Sprintf("[DoApiRequest] Content-Type: %s", c.Request.Header.Get("Content-Type")))
+		//logger.LogDebug(c, fmt.Sprintf("[DoApiRequest] Content-Type: %s", c.Request.Header.Get("Content-Type")))
 	}
 	req, err := http.NewRequest(c.Request.Method, fullRequestURL, requestBody)
 	if err != nil {

@@ -71,10 +71,10 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 
 	// 在函数开始就打印请求头和请求体，确保无论在哪里出错都能看到
 	requestBody, _ := common.GetRequestBody(c)
-	common.SysLog(fmt.Sprintf("[Relay] requestHeaders: %s", formatRequestHeadersForLog(c.Request.Header)))
-	structure, data := formatRequestBodyForLog(requestBody)
-	common.SysLog(fmt.Sprintf("[Relay] requestBody结构: %s", structure))
-	common.SysLog(fmt.Sprintf("[Relay] requestBody数据: %s", data))
+	//common.SysLog(fmt.Sprintf("[Relay] requestHeaders: %s", formatRequestHeadersForLog(c.Request.Header)))
+	//structure, data := formatRequestBodyForLog(requestBody)
+	//common.SysLog(fmt.Sprintf("[Relay] requestBody结构: %s", structure))
+	//common.SysLog(fmt.Sprintf("[Relay] requestBody数据: %s", data))
 	c.Request.Body = io.NopCloser(bytes.NewBuffer(requestBody))
 
 	var (
