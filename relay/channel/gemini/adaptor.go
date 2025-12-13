@@ -187,11 +187,30 @@ func (a *Adaptor) ConvertImageRequest(c *gin.Context, info *relaycommon.RelayInf
 		// 从Extra中获取各种参数，如果没有则使用默认值
 		temperature := 1.0
 		maxOutputTokens := uint(32768)
-		responseModalities := []string{"TEXT", "IMAGE"}
+		responseModalities := []string{"IMAGE"} // 默认只返回图片
 		topP := 0.95
-		aspectRatio := "1:1" // 默认宽高比
+		aspectRatio := "1:1"    // 默认宽高比
+		imageSize := "1K"       // 默认图片尺寸
+		mimeType := "image/png" // 默认MIME类型
 
 		if request.Extra != nil {
+			// 获取response_modalities参数
+			if modalitiesData, exists := request.Extra["response_modalities"]; exists {
+				var modalitiesValue []string
+				// 先尝试直接解析JSON
+				if err := json.Unmarshal(modalitiesData, &modalitiesValue); err == nil {
+					responseModalities = modalitiesValue
+				} else {
+					// 如果失败，尝试解析为字符串再转换
+					var modalitiesStr string
+					if err := json.Unmarshal(modalitiesData, &modalitiesStr); err == nil {
+						if err := json.Unmarshal([]byte(modalitiesStr), &modalitiesValue); err == nil {
+							responseModalities = modalitiesValue
+						}
+					}
+				}
+			}
+
 			// 获取temperature参数
 			if tempData, exists := request.Extra["temperature"]; exists {
 				var tempValue float64
@@ -226,23 +245,6 @@ func (a *Adaptor) ConvertImageRequest(c *gin.Context, info *relaycommon.RelayInf
 				}
 			}
 
-			// 获取response_modalities参数
-			if modalitiesData, exists := request.Extra["response_modalities"]; exists {
-				var modalitiesValue []string
-				// 先尝试直接解析JSON
-				if err := json.Unmarshal(modalitiesData, &modalitiesValue); err == nil {
-					responseModalities = modalitiesValue
-				} else {
-					// 如果失败，尝试解析为字符串再转换
-					var modalitiesStr string
-					if err := json.Unmarshal(modalitiesData, &modalitiesStr); err == nil {
-						if err := json.Unmarshal([]byte(modalitiesStr), &modalitiesValue); err == nil {
-							responseModalities = modalitiesValue
-						}
-					}
-				}
-			}
-
 			// 获取top_p参数
 			if topPData, exists := request.Extra["top_p"]; exists {
 				var topPValue float64
@@ -271,6 +273,36 @@ func (a *Adaptor) ConvertImageRequest(c *gin.Context, info *relaycommon.RelayInf
 					var aspectRatioStr string
 					if err := json.Unmarshal(aspectRatioData, &aspectRatioStr); err == nil {
 						aspectRatio = aspectRatioStr
+					}
+				}
+			}
+
+			// 获取image_size参数
+			if imageSizeData, exists := request.Extra["image_size"]; exists {
+				var imageSizeValue string
+				// 先尝试直接解析JSON
+				if err := json.Unmarshal(imageSizeData, &imageSizeValue); err == nil {
+					imageSize = imageSizeValue
+				} else {
+					// 如果失败，尝试解析为字符串
+					var imageSizeStr string
+					if err := json.Unmarshal(imageSizeData, &imageSizeStr); err == nil {
+						imageSize = imageSizeStr
+					}
+				}
+			}
+
+			// 获取image_mime_type参数
+			if mimeTypeData, exists := request.Extra["image_mime_type"]; exists {
+				var mimeTypeValue string
+				// 先尝试直接解析JSON
+				if err := json.Unmarshal(mimeTypeData, &mimeTypeValue); err == nil {
+					mimeType = mimeTypeValue
+				} else {
+					// 如果失败，尝试解析为字符串
+					var mimeTypeStr string
+					if err := json.Unmarshal(mimeTypeData, &mimeTypeStr); err == nil {
+						mimeType = mimeTypeStr
 					}
 				}
 			}
@@ -309,9 +341,13 @@ func (a *Adaptor) ConvertImageRequest(c *gin.Context, info *relaycommon.RelayInf
 			}
 		}
 
-		// 构建ImageConfig，包含aspectRatio
+		// 构建ImageConfig，包含aspectRatio、imageSize和imageOutputOptions
 		imageConfig := map[string]interface{}{
 			"aspectRatio": aspectRatio,
+			"imageSize":   imageSize,
+			"imageOutputOptions": map[string]interface{}{
+				"mimeType": mimeType,
+			},
 		}
 		imageConfigJSON, _ := json.Marshal(imageConfig)
 

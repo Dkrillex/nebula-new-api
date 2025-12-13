@@ -3,6 +3,7 @@ package ratio_setting
 import (
 	"encoding/json"
 	"one-api/common"
+	"strings"
 	"sync"
 )
 
@@ -150,7 +151,13 @@ func GetCacheRatio(name string) (float64, bool) {
 	defer cacheRatioMapMutex.RUnlock()
 	ratio, ok := cacheRatioMap[name]
 	if !ok {
-		return 1, false // Default to 1 if not found
+		// 动态兜底逻辑
+		if strings.Contains(strings.ToLower(name), "claude") {
+			return 0.1, false // Claude 系列默认 0.1
+		} else if strings.Contains(strings.ToLower(name), "gpt") {
+			return 0.12, false // GPT 系列默认 0.12
+		}
+		return 0.5, false // 其他模型默认 0.5
 	}
 	return ratio, true
 }
