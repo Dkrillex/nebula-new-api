@@ -193,117 +193,118 @@ func (a *Adaptor) ConvertImageRequest(c *gin.Context, info *relaycommon.RelayInf
 		imageSize := "1K"       // 默认图片尺寸
 		mimeType := "image/png" // 默认MIME类型
 
+		// 辅助函数：从json.RawMessage中读取值
+		readStringValue := func(data json.RawMessage) (string, bool) {
+			var value string
+			if err := json.Unmarshal(data, &value); err == nil {
+				return value, true
+			}
+			return "", false
+		}
+
+		readFloatValue := func(data json.RawMessage) (float64, bool) {
+			var value float64
+			if err := json.Unmarshal(data, &value); err == nil {
+				return value, true
+			}
+			return 0, false
+		}
+
+		readUintValue := func(data json.RawMessage) (uint, bool) {
+			var value uint
+			if err := json.Unmarshal(data, &value); err == nil {
+				return value, true
+			}
+			// 尝试作为float64解析，然后转换
+			var floatValue float64
+			if err := json.Unmarshal(data, &floatValue); err == nil {
+				return uint(floatValue), true
+			}
+			return 0, false
+		}
+
+		readStringArrayValue := func(data json.RawMessage) ([]string, bool) {
+			var value []string
+			if err := json.Unmarshal(data, &value); err == nil {
+				return value, true
+			}
+			return nil, false
+		}
+
+		// 先尝试从嵌套的extra对象中读取参数
+		var extraMap map[string]json.RawMessage
 		if request.Extra != nil {
-			// 获取response_modalities参数
-			if modalitiesData, exists := request.Extra["response_modalities"]; exists {
-				var modalitiesValue []string
-				// 先尝试直接解析JSON
-				if err := json.Unmarshal(modalitiesData, &modalitiesValue); err == nil {
-					responseModalities = modalitiesValue
-				} else {
-					// 如果失败，尝试解析为字符串再转换
-					var modalitiesStr string
-					if err := json.Unmarshal(modalitiesData, &modalitiesStr); err == nil {
-						if err := json.Unmarshal([]byte(modalitiesStr), &modalitiesValue); err == nil {
-							responseModalities = modalitiesValue
+			if extraData, exists := request.Extra["extra"]; exists {
+				// 解析嵌套的extra对象
+				if err := json.Unmarshal(extraData, &extraMap); err == nil {
+					// 从嵌套的extra对象中读取参数
+					if value, ok := readStringArrayValue(extraMap["response_modalities"]); ok {
+						responseModalities = value
+					}
+					if value, ok := readFloatValue(extraMap["temperature"]); ok {
+						temperature = value
+					}
+					if value, ok := readUintValue(extraMap["max_output_tokens"]); ok {
+						maxOutputTokens = value
+					}
+					if value, ok := readFloatValue(extraMap["top_p"]); ok {
+						topP = value
+					}
+					if value, ok := readStringValue(extraMap["aspect_ratio"]); ok {
+						aspectRatio = value
+					}
+					if value, ok := readStringValue(extraMap["image_size"]); ok {
+						if value == "1K" || value == "2K" || value == "4K" {
+							imageSize = value
+						}
+					}
+					if value, ok := readStringValue(extraMap["image_mime_type"]); ok {
+						if value == "image/png" || value == "image/jpeg" {
+							mimeType = value
 						}
 					}
 				}
+			}
+		}
+
+		// 如果Extra不为空，也尝试直接从Extra中读取（向后兼容，优先级高于嵌套的extra对象）
+		if request.Extra != nil {
+			// 获取response_modalities参数
+			if value, ok := readStringArrayValue(request.Extra["response_modalities"]); ok {
+				responseModalities = value
 			}
 
 			// 获取temperature参数
-			if tempData, exists := request.Extra["temperature"]; exists {
-				var tempValue float64
-				// 先尝试直接解析JSON
-				if err := json.Unmarshal(tempData, &tempValue); err == nil {
-					temperature = tempValue
-				} else {
-					// 如果失败，尝试解析为字符串再转换
-					var tempStr string
-					if err := json.Unmarshal(tempData, &tempStr); err == nil {
-						if err := json.Unmarshal([]byte(tempStr), &tempValue); err == nil {
-							temperature = tempValue
-						}
-					}
-				}
+			if value, ok := readFloatValue(request.Extra["temperature"]); ok {
+				temperature = value
 			}
 
 			// 获取max_output_tokens参数
-			if maxTokensData, exists := request.Extra["max_output_tokens"]; exists {
-				var maxTokensValue uint
-				// 先尝试直接解析JSON
-				if err := json.Unmarshal(maxTokensData, &maxTokensValue); err == nil {
-					maxOutputTokens = maxTokensValue
-				} else {
-					// 如果失败，尝试解析为字符串再转换
-					var maxTokensStr string
-					if err := json.Unmarshal(maxTokensData, &maxTokensStr); err == nil {
-						if err := json.Unmarshal([]byte(maxTokensStr), &maxTokensValue); err == nil {
-							maxOutputTokens = maxTokensValue
-						}
-					}
-				}
+			if value, ok := readUintValue(request.Extra["max_output_tokens"]); ok {
+				maxOutputTokens = value
 			}
 
 			// 获取top_p参数
-			if topPData, exists := request.Extra["top_p"]; exists {
-				var topPValue float64
-				// 先尝试直接解析JSON
-				if err := json.Unmarshal(topPData, &topPValue); err == nil {
-					topP = topPValue
-				} else {
-					// 如果失败，尝试解析为字符串再转换
-					var topPStr string
-					if err := json.Unmarshal(topPData, &topPStr); err == nil {
-						if err := json.Unmarshal([]byte(topPStr), &topPValue); err == nil {
-							topP = topPValue
-						}
-					}
-				}
+			if value, ok := readFloatValue(request.Extra["top_p"]); ok {
+				topP = value
 			}
 
 			// 获取aspect_ratio参数
-			if aspectRatioData, exists := request.Extra["aspect_ratio"]; exists {
-				var aspectRatioValue string
-				// 先尝试直接解析JSON
-				if err := json.Unmarshal(aspectRatioData, &aspectRatioValue); err == nil {
-					aspectRatio = aspectRatioValue
-				} else {
-					// 如果失败，尝试解析为字符串再转换
-					var aspectRatioStr string
-					if err := json.Unmarshal(aspectRatioData, &aspectRatioStr); err == nil {
-						aspectRatio = aspectRatioStr
-					}
-				}
+			if value, ok := readStringValue(request.Extra["aspect_ratio"]); ok {
+				aspectRatio = value
 			}
 
 			// 获取image_size参数
-			if imageSizeData, exists := request.Extra["image_size"]; exists {
-				var imageSizeValue string
-				// 先尝试直接解析JSON
-				if err := json.Unmarshal(imageSizeData, &imageSizeValue); err == nil {
-					imageSize = imageSizeValue
-				} else {
-					// 如果失败，尝试解析为字符串
-					var imageSizeStr string
-					if err := json.Unmarshal(imageSizeData, &imageSizeStr); err == nil {
-						imageSize = imageSizeStr
-					}
+			if value, ok := readStringValue(request.Extra["image_size"]); ok {
+				if value == "1K" || value == "2K" || value == "4K" {
+					imageSize = value
 				}
 			}
 
 			// 获取image_mime_type参数
-			if mimeTypeData, exists := request.Extra["image_mime_type"]; exists {
-				var mimeTypeValue string
-				// 先尝试直接解析JSON
-				if err := json.Unmarshal(mimeTypeData, &mimeTypeValue); err == nil {
-					mimeType = mimeTypeValue
-				} else {
-					// 如果失败，尝试解析为字符串
-					var mimeTypeStr string
-					if err := json.Unmarshal(mimeTypeData, &mimeTypeStr); err == nil {
-						mimeType = mimeTypeStr
-					}
+			if value, ok := readStringValue(request.Extra["image_mime_type"]); ok {
+				if value == "image/png" || value == "image/jpeg" {
+					mimeType = value
 				}
 			}
 		}
