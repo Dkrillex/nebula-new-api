@@ -507,16 +507,26 @@ func GetModelPrice(name string, printErr bool) (float64, bool) {
 	modelPriceMapMutex.RLock()
 	defer modelPriceMapMutex.RUnlock()
 
-	name = FormatMatchingModelName(name)
-
-	price, ok := modelPriceMap[name]
-	if !ok {
-		if printErr {
-			common.SysError("model price not found: " + name)
-		}
-		return -1, false
+	// 先尝试通配符格式（用于定价配置）
+	pricingName := FormatMatchingModelNameForPricing(name)
+	price, ok := modelPriceMap[pricingName]
+	if ok {
+		return price, true
 	}
-	return price, true
+
+	// 如果通配符格式找不到，尝试基础模型名称
+	baseName := FormatMatchingModelName(name)
+	if baseName != pricingName {
+		price, ok = modelPriceMap[baseName]
+		if ok {
+			return price, true
+		}
+	}
+
+	if printErr {
+		common.SysError("model price not found: " + name)
+	}
+	return -1, false
 }
 
 func UpdateModelRatioByJSONString(jsonStr string) error {
@@ -542,13 +552,23 @@ func GetModelRatio(name string) (float64, bool, string) {
 	modelRatioMapMutex.RLock()
 	defer modelRatioMapMutex.RUnlock()
 
-	name = FormatMatchingModelName(name)
-
-	ratio, ok := modelRatioMap[name]
-	if !ok {
-		return 37.5, operation_setting.SelfUseModeEnabled, name
+	// 先尝试通配符格式（用于定价配置）
+	pricingName := FormatMatchingModelNameForPricing(name)
+	ratio, ok := modelRatioMap[pricingName]
+	if ok {
+		return ratio, true, pricingName
 	}
-	return ratio, true, name
+
+	// 如果通配符格式找不到，尝试基础模型名称
+	baseName := FormatMatchingModelName(name)
+	if baseName != pricingName {
+		ratio, ok = modelRatioMap[baseName]
+		if ok {
+			return ratio, true, baseName
+		}
+	}
+
+	return 37.5, operation_setting.SelfUseModeEnabled, baseName
 }
 
 func DefaultModelRatio2JSONString() string {
@@ -1220,15 +1240,28 @@ func GetVideoModelPriceByResolution(modelName, resolution string) (float64, bool
 }
 
 // 转换模型名，减少渠道必须配置各种带参数模型
+// 此函数用于数据库查询，始终返回基础模型名称（去除所有后缀）
 func FormatMatchingModelName(name string) string {
-
-	if strings.HasPrefix(name, "gemini-2.5-flash-lite") {
-		name = handleThinkingBudgetModel(name, "gemini-2.5-flash-lite", "gemini-2.5-flash-lite-thinking-*")
-	} else if strings.HasPrefix(name, "gemini-2.5-flash") {
-		name = handleThinkingBudgetModel(name, "gemini-2.5-flash", "gemini-2.5-flash-thinking-*")
-	} else if strings.HasPrefix(name, "gemini-2.5-pro") {
-		name = handleThinkingBudgetModel(name, "gemini-2.5-pro", "gemini-2.5-pro-thinking-*")
+	// 先处理 -thinking-<数字> 格式，去除这部分以匹配数据库中的基础模型名称
+	// 例如：gemini-2.5-flash-thinking-128 -> gemini-2.5-flash
+	if strings.Contains(name, "-thinking-") {
+		parts := strings.SplitN(name, "-thinking-", 2)
+		if len(parts) == 2 {
+			// 检查第二部分是否为数字
+			if _, err := strconv.Atoi(parts[1]); err == nil {
+				// 是数字，去除 -thinking-<数字> 部分
+				name = parts[0]
+			}
+		}
 	}
+
+	// 处理 -thinking-low / -thinking-high 后缀
+	name = strings.TrimSuffix(name, "-thinking-low")
+	name = strings.TrimSuffix(name, "-thinking-high")
+	// 处理 -thinking 后缀（不带数字的情况），去除后缀以匹配数据库中的基础模型名称
+	name = strings.TrimSuffix(name, "-thinking")
+	// 处理 -nothinking 后缀
+	name = strings.TrimSuffix(name, "-nothinking")
 
 	if strings.HasPrefix(name, "gpt-4-gizmo") {
 		name = "gpt-4-gizmo-*"
@@ -1237,6 +1270,23 @@ func FormatMatchingModelName(name string) string {
 		name = "gpt-4o-gizmo-*"
 	}
 	return name
+}
+
+// FormatMatchingModelNameForPricing 用于定价匹配，可能返回通配符格式
+// 例如：gemini-2.5-flash-thinking-128 -> gemini-2.5-flash-thinking-*
+func FormatMatchingModelNameForPricing(name string) string {
+	// 对于 -thinking-<数字> 格式，返回通配符以便统一配置定价
+	if strings.Contains(name, "-thinking-") {
+		if strings.HasPrefix(name, "gemini-2.5-flash-lite") {
+			return "gemini-2.5-flash-lite-thinking-*"
+		} else if strings.HasPrefix(name, "gemini-2.5-flash") {
+			return "gemini-2.5-flash-thinking-*"
+		} else if strings.HasPrefix(name, "gemini-2.5-pro") {
+			return "gemini-2.5-pro-thinking-*"
+		}
+	}
+	// 其他情况使用基础格式化
+	return FormatMatchingModelName(name)
 }
 
 // loadModelPriceFromDatabase loads model price configuration from database

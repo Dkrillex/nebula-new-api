@@ -139,6 +139,8 @@ func (r *GeminiChatRequest) SetTools(tools []GeminiChatTool) {
 type GeminiThinkingConfig struct {
 	IncludeThoughts bool `json:"includeThoughts,omitempty"`
 	ThinkingBudget  *int `json:"thinkingBudget,omitempty"`
+	// Gemini 3 Pro 使用的思考级别，取值 LOW/HIGH
+	ThinkingLevel string `json:"thinkingLevel,omitempty"`
 }
 
 func (c *GeminiThinkingConfig) SetThinkingBudget(budget int) {

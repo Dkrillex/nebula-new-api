@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"one-api/common"
+	"one-api/setting/ratio_setting"
 	"strings"
 	"sync"
 
@@ -117,6 +118,25 @@ func GetRandomSatisfiedChannel(group string, model string, retry int) (*Channel,
 	}
 	if err != nil {
 		return nil, err
+	}
+	// If no abilities found with the original model name, try with normalized model name
+	if len(abilities) == 0 {
+		normalizedModel := ratio_setting.FormatMatchingModelName(model)
+		if normalizedModel != model {
+			// Try again with normalized model name
+			channelQuery, err = getChannelQuery(group, normalizedModel, retry)
+			if err != nil {
+				return nil, err
+			}
+			if common.UsingSQLite || common.UsingPostgreSQL {
+				err = channelQuery.Order("weight DESC").Find(&abilities).Error
+			} else {
+				err = channelQuery.Order("weight DESC").Find(&abilities).Error
+			}
+			if err != nil {
+				return nil, err
+			}
+		}
 	}
 	channel := Channel{}
 	if len(abilities) > 0 {

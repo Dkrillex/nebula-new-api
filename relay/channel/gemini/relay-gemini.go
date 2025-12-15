@@ -62,6 +62,10 @@ func is25FlashLiteModel(modelName string) bool {
 	return strings.HasPrefix(modelName, "gemini-2.5-flash-lite")
 }
 
+func isGemini3ProModel(modelName string) bool {
+	return strings.HasPrefix(modelName, "gemini-3-pro")
+}
+
 // clampThinkingBudget 根据模型名称将预算限制在允许的范围内
 func clampThinkingBudget(modelName string, budget int) int {
 	isNew25Pro := isNew25ProModel(modelName)
@@ -122,6 +126,30 @@ func clampThinkingBudgetByEffort(modelName string, effort string) int {
 func ThinkingAdaptor(geminiRequest *dto.GeminiChatRequest, info *relaycommon.RelayInfo, oaiRequest ...dto.GeneralOpenAIRequest) {
 	if model_setting.GetGeminiSettings().ThinkingAdapterEnabled {
 		modelName := info.UpstreamModelName
+		// Gemini 3 Pro 默认开启思考模式，使用 thinkingLevel（LOW/HIGH）
+		if isGemini3ProModel(modelName) {
+			level := "HIGH"
+			if strings.HasSuffix(modelName, "-thinking-low") {
+				level = "LOW"
+			} else if strings.HasSuffix(modelName, "-thinking-high") {
+				level = "HIGH"
+			} else if len(oaiRequest) > 0 {
+				// reasoning_effort 映射到 thinkingLevel
+				switch strings.ToLower(oaiRequest[0].ReasoningEffort) {
+				case "low", "medium":
+					level = "LOW"
+				case "high":
+					level = "HIGH"
+				}
+			}
+
+			geminiRequest.GenerationConfig.ThinkingConfig = &dto.GeminiThinkingConfig{
+				IncludeThoughts: true,
+				ThinkingLevel:   level,
+			}
+			return
+		}
+
 		isNew25Pro := strings.HasPrefix(modelName, "gemini-2.5-pro") &&
 			!strings.HasPrefix(modelName, "gemini-2.5-pro-preview-05-06") &&
 			!strings.HasPrefix(modelName, "gemini-2.5-pro-preview-03-25")
@@ -199,7 +227,7 @@ func CovertGemini2OpenAI(c *gin.Context, textRequest dto.GeneralOpenAIRequest, i
 		}
 	}
 
-	adaptorWithExtraBody := false
+	thinkingConfigured := false
 
 	if len(textRequest.ExtraBody) > 0 {
 		if !strings.HasSuffix(info.UpstreamModelName, "-nothinking") {
@@ -209,35 +237,83 @@ func CovertGemini2OpenAI(c *gin.Context, textRequest dto.GeneralOpenAIRequest, i
 			}
 			// eg. {"google":{"thinking_config":{"thinking_budget":5324,"include_thoughts":true}}}
 			if googleBody, ok := extraBody["google"].(map[string]interface{}); ok {
-				adaptorWithExtraBody = true
 				if thinkingConfig, ok := googleBody["thinking_config"].(map[string]interface{}); ok {
 					rawBudget, hasBudget := thinkingConfig["thinking_budget"].(float64)
+					rawLevel, hasLevel := thinkingConfig["thinking_level"].(string)
 					includeThoughts := true
 					if val, ok := thinkingConfig["include_thoughts"].(bool); ok {
 						includeThoughts = val
 					}
 
-					if hasBudget {
-						budgetInt := clampThinkingBudget(info.UpstreamModelName, int(rawBudget))
-						if budgetInt > 0 {
+					if hasLevel {
+						level := strings.ToUpper(rawLevel)
+						if level != "LOW" && level != "HIGH" {
+							level = "HIGH"
+						}
+						geminiRequest.GenerationConfig.ThinkingConfig = &dto.GeminiThinkingConfig{
+							IncludeThoughts: includeThoughts,
+							ThinkingLevel:   level,
+						}
+						thinkingConfigured = true
+					} else if hasBudget {
+						budgetInt := int(rawBudget)
+						if budgetInt == -1 {
+							// thinking_budget: -1 表示自动开启思考模式，让模型自己决定是否思考
+							// 不设置 ThinkingBudget，只设置 IncludeThoughts
 							geminiRequest.GenerationConfig.ThinkingConfig = &dto.GeminiThinkingConfig{
-								ThinkingBudget:  common.GetPointer(budgetInt),
 								IncludeThoughts: includeThoughts,
+								// ThinkingBudget 不设置，让模型自动决定
 							}
+							thinkingConfigured = true
+						} else if budgetInt == 0 {
+							// thinking_budget: 0 表示显式禁用思考模式
+							geminiRequest.GenerationConfig.ThinkingConfig = &dto.GeminiThinkingConfig{
+								ThinkingBudget:  common.GetPointer(0),
+								IncludeThoughts: false, // 禁用思考模式时，不包含思考内容
+							}
+							thinkingConfigured = true
 						} else {
-							// 禁用思考模式时，不要携带 includeThoughts，避免 Vertex 报错
-							geminiRequest.GenerationConfig.ThinkingConfig = nil
+							// thinking_budget > 0 表示设置具体的思考预算
+							clampedBudget := clampThinkingBudget(info.UpstreamModelName, budgetInt)
+							if clampedBudget > 0 {
+								geminiRequest.GenerationConfig.ThinkingConfig = &dto.GeminiThinkingConfig{
+									ThinkingBudget:  common.GetPointer(clampedBudget),
+									IncludeThoughts: includeThoughts,
+								}
+							} else {
+								// 如果限制后的预算为 0，则禁用思考模式
+								geminiRequest.GenerationConfig.ThinkingConfig = &dto.GeminiThinkingConfig{
+									ThinkingBudget:  common.GetPointer(0),
+									IncludeThoughts: false,
+								}
+							}
+							thinkingConfigured = true
 						}
 					} else if includeThoughts {
 						// 只请求 includeThoughts 但未提供预算，视为无效配置
 						geminiRequest.GenerationConfig.ThinkingConfig = nil
 					}
 				}
+
+				// 合并来自 extra_body 的原生 Gemini 工具配置
+				if toolsRaw, ok := googleBody["tools"]; ok {
+					existingTools := geminiRequest.GetTools()
+
+					if toolsArr, err := common.Any2Type[[]dto.GeminiChatTool](toolsRaw); err == nil {
+						existingTools = append(existingTools, toolsArr...)
+					} else if toolObj, err := common.Any2Type[dto.GeminiChatTool](toolsRaw); err == nil {
+						existingTools = append(existingTools, toolObj)
+					}
+
+					if len(existingTools) > 0 {
+						geminiRequest.SetTools(existingTools)
+					}
+				}
 			}
 		}
 	}
 
-	if !adaptorWithExtraBody {
+	if !thinkingConfigured {
 		ThinkingAdaptor(&geminiRequest, info, textRequest)
 	}
 
