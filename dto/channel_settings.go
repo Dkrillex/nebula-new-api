@@ -18,7 +18,7 @@ const (
 
 type ChannelOtherSettings struct {
 	AzureResponsesVersion string            `json:"azure_responses_version,omitempty"`
-	AzureModelApiVersions map[string]string `json:"azure_model_api_versions,omitempty"` // 模型名 -> API版本映射，例如: {"gpt-4": "2024-02-15-preview", "gpt-3.5-turbo": "2023-05-15"}
+	AzureModelApiVersions map[string]string `json:"azure_model_api_versions,omitempty"` // 模型特定的 API 版本映射，例如: {"sora-2": "preview", "o1": "2024-02-15-preview"}，如果模型未在此配置中，则使用默认 API 版本。对于 Responses API，如果模型未在此配置中，则使用默认 Responses API 版本
 	VertexKeyType         VertexKeyType     `json:"vertex_key_type,omitempty"`          // "json" or "api_key"
 	OpenRouterEnterprise  *bool             `json:"openrouter_enterprise,omitempty"`
 	AllowServiceTier      bool              `json:"allow_service_tier,omitempty"`      // 是否允许 service_tier 透传（默认过滤以避免额外计费）

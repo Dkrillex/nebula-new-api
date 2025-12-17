@@ -84,12 +84,14 @@ type TaskAdaptor struct {
 	ChannelType int
 	apiKey      string
 	baseURL     string
+	relayInfo   *relaycommon.RelayInfo // 保存 RelayInfo 以便后续使用模型特定的 API 版本
 }
 
 func (a *TaskAdaptor) Init(info *relaycommon.RelayInfo) {
 	a.ChannelType = info.ChannelType
 	a.baseURL = info.ChannelBaseUrl
 	a.apiKey = info.ApiKey
+	a.relayInfo = info // 保存 RelayInfo 以便后续使用
 }
 
 func (a *TaskAdaptor) ValidateRequestAndSetAction(c *gin.Context, info *relaycommon.RelayInfo) (taskErr *dto.TaskError) {
@@ -118,15 +120,35 @@ func (a *TaskAdaptor) ValidateRequestAndSetAction(c *gin.Context, info *relaycom
 	return relaycommon.ValidateMultipartDirect(c, info)
 }
 
+// getAPIVersion 获取正确的 API 版本，优先使用模型特定的版本配置
+func (a *TaskAdaptor) getAPIVersion(defaultVersion string) string {
+	if a.ChannelType != constant.ChannelTypeAzure {
+		return defaultVersion
+	}
+
+	// 如果配置了模型特定的 API 版本，优先使用模型特定的版本
+	if a.relayInfo != nil {
+		// 检查是否有模型特定的 API 版本配置
+		if len(a.relayInfo.ChannelOtherSettings.AzureModelApiVersions) > 0 {
+			if modelApiVersion, exists := a.relayInfo.ChannelOtherSettings.AzureModelApiVersions[a.relayInfo.UpstreamModelName]; exists && modelApiVersion != "" {
+				common.SysLog(fmt.Sprintf("[Sora2] 使用模型特定的 API 版本: %s (模型: %s)", modelApiVersion, a.relayInfo.UpstreamModelName))
+				return modelApiVersion
+			}
+		}
+	}
+
+	// 使用默认版本
+	if defaultVersion == "" {
+		return "preview"
+	}
+	return defaultVersion
+}
+
 func (a *TaskAdaptor) BuildRequestURL(info *relaycommon.RelayInfo) (string, error) {
 	var url string
 	// Azure OpenAI Sora 2 API
 	if a.ChannelType == constant.ChannelTypeAzure {
-		apiVersion := info.ApiVersion
-		if apiVersion == "" {
-			apiVersion = "preview" // Sora 2 仍然需要 api-version 参数
-		}
-
+		apiVersion := a.getAPIVersion(info.ApiVersion)
 		url = fmt.Sprintf("%s/openai/v1/videos?api-version=%s", a.baseURL, apiVersion)
 	} else {
 		// 原生 OpenAI Sora API
@@ -516,10 +538,7 @@ func (a *TaskAdaptor) DoRequest(c *gin.Context, info *relaycommon.RelayInfo, req
 	if remixVideoID, exists := c.Get("sora_remix_video_id"); exists && remixVideoID != nil {
 		if remixStr, ok := remixVideoID.(string); ok && remixStr != "" {
 			// Remix 模式：修改 URL 为 /videos/{video_id}/remix
-			apiVersion := info.ApiVersion
-			if apiVersion == "" {
-				apiVersion = "preview"
-			}
+			apiVersion := a.getAPIVersion(info.ApiVersion)
 
 			remixURL := fmt.Sprintf("%s/openai/v1/videos/%s/remix?api-version=%s", a.baseURL, remixStr, apiVersion)
 			common.SysLog(fmt.Sprintf("[Sora2] Remix模式 - 修改URL为: %s", remixURL))
@@ -596,8 +615,8 @@ func (a *TaskAdaptor) FetchTask(baseUrl, key string, body map[string]any) (*http
 	var uri string
 	// Azure OpenAI Sora 2 API
 	if a.ChannelType == constant.ChannelTypeAzure {
-		// Sora 2 格式: /openai/v1/videos/{video_id}?api-version=preview
-		apiVersion := "preview"
+		// 使用模型特定的 API 版本，如果没有配置则使用默认版本
+		apiVersion := a.getAPIVersion("")
 		uri = fmt.Sprintf("%s/openai/v1/videos/%s?api-version=%s", baseUrl, taskID, apiVersion)
 	} else {
 		// 原生 OpenAI Sora API
@@ -636,8 +655,8 @@ func (a *TaskAdaptor) FetchVideoContent(baseUrl, key, jobID, genID string) (*htt
 	var uri string
 
 	if a.ChannelType == constant.ChannelTypeAzure {
-		// Sora 2 格式: /openai/v1/videos/{video_id}/content?variant=video&api-version=preview
-		apiVersion := "preview"
+		// 使用模型特定的 API 版本，如果没有配置则使用默认版本
+		apiVersion := a.getAPIVersion("")
 		uri = fmt.Sprintf("%s/openai/v1/videos/%s/content?variant=video&api-version=%s", baseUrl, jobID, apiVersion)
 	} else {
 		// 原生 OpenAI: /v1/videos/{video_id}/content?variant=video

@@ -7,6 +7,12 @@ build
 *.db-journal
 logs
 web/dist
+web/nebula_llm_web
+web/nebula_llm_web.zip
+web/nebula_llm_web.zip-ssr
+nebula_llm.zip
+nebula_llm.zip-ssr
+nebula_llm
 .env
 one-api
 new-api

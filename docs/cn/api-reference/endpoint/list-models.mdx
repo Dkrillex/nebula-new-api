@@ -1,0 +1,362 @@
+# 获取模型列表
+
+获取当前可用的模型列表。本接口支持自动识别返回格式，无需手动指定。
+
+:::info 自动格式识别
+根据请求头自动返回对应格式：Anthropic、Gemini 或 OpenAI 格式
+:::
+
+## 快速开始
+
+### 基本请求
+
+所有请求都需要包含 `Authorization` 头进行身份验证：
+
+```http
+GET /v1/models
+Authorization: Bearer {your_token}
+```
+
+### 如何选择返回格式？
+
+接口会根据你提供的**额外请求头**自动识别并返回对应格式：
+
+| 使用场景 | 需要添加的请求头 | 返回格式 |
+|---------|----------------|---------|
+| **OpenAI 客户端** | 无需额外请求头（默认） | OpenAI 格式 |
+| **Anthropic/Claude 客户端** | `x-api-key` + `anthropic-version` | Anthropic 格式 |
+| **Google Gemini 客户端** | `x-goog-api-key` **或** URL 参数 `?key=xxx` | Gemini 格式 |
+
+> 💡 **提示**：如果你使用的是标准的 OpenAI SDK，直接调用即可，无需添加任何额外请求头。
+
+### 快速决策流程图
+
+```
+开始调用 /v1/models
+    │
+    ├─ 是否包含 x-api-key 且 anthropic-version？
+    │   ├─ 是 → 返回 Anthropic 格式
+    │   └─ 否 ↓
+    │
+    ├─ 是否包含 x-goog-api-key 或 key 查询参数？
+    │   ├─ 是 → 返回 Gemini 格式
+    │   └─ 否 ↓
+    │
+    └─ 默认 → 返回 OpenAI 格式
+```
+
+### 一分钟上手示例
+
+**最简单的用法（OpenAI 格式）**：
+```bash
+curl https://llm.ai-nebula.com/v1/models \
+  -H "Authorization: Bearer sk-xxx"
+```
+
+**需要 Anthropic 格式时**：
+```bash
+curl https://llm.ai-nebula.com/v1/models \
+  -H "Authorization: Bearer sk-xxx" \
+  -H "x-api-key: sk-xxx" \
+  -H "anthropic-version: 2023-06-01"
+```
+
+**需要 Gemini 格式时**：
+```bash
+curl "https://llm.ai-nebula.com/v1/models?key=YOUR_KEY" \
+  -H "Authorization: Bearer sk-xxx"
+```
+
+## 请求头说明
+
+### 必填请求头
+
+#### Authorization
+- **类型**: `string`
+- **格式**: `Bearer {token}`
+- **说明**: 身份验证令牌，所有请求都必须包含此头
+- **示例**: `Bearer sk-xxxxxxxxxx`
+
+### 可选请求头（用于格式识别）
+
+#### 1. 返回 Anthropic 格式
+
+同时添加以下两个请求头：
+
+- **x-api-key**: `string` - Anthropic API Key（通常与 Authorization 中的 token 相同）
+- **anthropic-version**: `string` - Anthropic API 版本，例如 `2023-06-01` 或 `2024-01-01`
+
+> **何时使用**：当你使用 Anthropic 官方的 Claude SDK 或需要 Anthropic 格式的响应时。
+
+#### 2. 返回 Gemini 格式
+
+**方式一**：使用请求头
+- **x-goog-api-key**: `string` - Google API Key
+
+**方式二**：使用查询参数（推荐）
+- **key**: `string` - 作为 URL 查询参数传递，例如 `/v1/models?key=YOUR_API_KEY`
+
+> **何时使用**：当你使用 Google Gemini SDK 或需要 Gemini 格式的响应时。
+
+#### 3. 返回 OpenAI 格式（默认）
+
+- **无需额外请求头**：不添加上述任何请求头时，默认返回 OpenAI 格式
+
+> **何时使用**：使用 OpenAI SDK、LangChain、或其他兼容 OpenAI API 的客户端时。
+
+## 完整请求示例
+
+### 场景 1: OpenAI 格式（默认，最常用）
+
+**适用场景**：使用 OpenAI SDK、LangChain、AutoGPT 等工具
+
+```bash
+curl --request GET \
+  --url https://llm.ai-nebula.com/v1/models \
+  --header 'Authorization: Bearer sk-xxxxxxxxxx'
+```
+
+**Python 示例**：
+```python
+import requests
+
+headers = {
+    "Authorization": "Bearer sk-xxxxxxxxxx"
+}
+
+response = requests.get("https://llm.ai-nebula.com/v1/models", headers=headers)
+print(response.json())
+```
+
+**JavaScript 示例**：
+```javascript
+fetch('https://llm.ai-nebula.com/v1/models', {
+  headers: {
+    'Authorization': 'Bearer sk-xxxxxxxxxx'
+  }
+})
+.then(response => response.json())
+.then(data => console.log(data));
+```
+
+### 场景 2: Anthropic 格式
+
+**适用场景**：使用 Anthropic 官方的 Claude SDK
+
+```bash
+curl --request GET \
+  --url https://llm.ai-nebula.com/v1/models \
+  --header 'Authorization: Bearer sk-xxxxxxxxxx' \
+  --header 'x-api-key: sk-xxxxxxxxxx' \
+  --header 'anthropic-version: 2023-06-01'
+```
+
+**Python 示例（使用 Anthropic SDK）**：
+```python
+from anthropic import Anthropic
+
+client = Anthropic(
+    api_key="sk-xxxxxxxxxx",
+    base_url="https://llm.ai-nebula.com"  # 指向你的 API 地址
+)
+
+models = client.models.list()
+print(models)
+```
+
+### 场景 3: Gemini 格式
+
+**方式 A：使用请求头**
+
+```bash
+curl --request GET \
+  --url https://llm.ai-nebula.com/v1/models \
+  --header 'Authorization: Bearer sk-xxxxxxxxxx' \
+  --header 'x-goog-api-key: YOUR_GOOGLE_API_KEY'
+```
+
+**方式 B：使用查询参数（推荐）**
+
+```bash
+curl --request GET \
+  --url 'https://llm.ai-nebula.com/v1/models?key=YOUR_GOOGLE_API_KEY' \
+  --header 'Authorization: Bearer sk-xxxxxxxxxx'
+```
+
+**Python 示例**：
+```python
+import requests
+
+headers = {
+    "Authorization": "Bearer sk-xxxxxxxxxx"
+}
+
+# 方式 1: 使用请求头
+response = requests.get(
+    "https://llm.ai-nebula.com/v1/models",
+    headers={
+        **headers,
+        "x-goog-api-key": "YOUR_GOOGLE_API_KEY"
+    }
+)
+
+# 方式 2: 使用查询参数（推荐）
+response = requests.get(
+    "https://llm.ai-nebula.com/v1/models?key=YOUR_GOOGLE_API_KEY",
+    headers=headers
+)
+
+print(response.json())
+```
+
+## 响应
+
+### OpenAI 格式（默认）
+
+```json
+{
+  "success": true,
+  "data": [
+    {
+      "id": "gpt-4",
+      "object": "model",
+      "created": 1626777600,
+      "owned_by": "openai",
+      "supported_endpoint_types": ["chat", "completion"]
+    },
+    {
+      "id": "gpt-3.5-turbo",
+      "object": "model",
+      "created": 1626777600,
+      "owned_by": "openai",
+      "supported_endpoint_types": ["chat"]
+    }
+  ],
+  "object": "list"
+}
+```
+
+### Anthropic 格式
+
+```json
+{
+  "data": [
+    {
+      "id": "claude-3-opus-20240229",
+      "created_at": "2024-02-29T00:00:00Z",
+      "display_name": "claude-3-opus-20240229",
+      "type": "model"
+    },
+    {
+      "id": "claude-3-sonnet-20240229",
+      "created_at": "2024-02-29T00:00:00Z",
+      "display_name": "claude-3-sonnet-20240229",
+      "type": "model"
+    }
+  ],
+  "first_id": "claude-3-opus-20240229",
+  "has_more": false,
+  "last_id": "claude-3-sonnet-20240229"
+}
+```
+
+### Gemini 格式
+
+```json
+{
+  "models": [
+    {
+      "name": "gemini-pro",
+      "displayName": "gemini-pro"
+    },
+    {
+      "name": "gemini-pro-vision",
+      "displayName": "gemini-pro-vision"
+    }
+  ],
+  "nextPageToken": null
+}
+```
+
+## 响应字段说明
+
+### OpenAI 格式
+
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| `success` | boolean | 请求是否成功 |
+| `data` | array | 模型列表 |
+| `data[].id` | string | 模型 ID |
+| `data[].object` | string | 对象类型，固定为 "model" |
+| `data[].created` | integer | 创建时间戳 |
+| `data[].owned_by` | string | 模型所属的渠道名称 |
+| `data[].supported_endpoint_types` | array | 支持的端点类型列表 |
+| `object` | string | 响应对象类型，固定为 "list" |
+
+### Anthropic 格式
+
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| `data` | array | 模型列表 |
+| `data[].id` | string | 模型 ID |
+| `data[].created_at` | string | 创建时间（RFC3339 格式） |
+| `data[].display_name` | string | 显示名称 |
+| `data[].type` | string | 类型，固定为 "model" |
+| `first_id` | string | 第一个模型的 ID |
+| `has_more` | boolean | 是否还有更多模型 |
+| `last_id` | string | 最后一个模型的 ID |
+
+### Gemini 格式
+
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| `models` | array | 模型列表 |
+| `models[].name` | string | 模型名称 |
+| `models[].displayName` | string | 显示名称 |
+| `nextPageToken` | string\|null | 分页令牌，通常为 null |
+
+## 常见问题
+
+### Q1: 我应该使用哪种格式？
+
+- **大多数情况**：使用默认的 OpenAI 格式（不添加额外请求头），因为大多数 SDK 和工具都兼容 OpenAI API
+- **使用 Claude SDK**：添加 `x-api-key` 和 `anthropic-version` 头，返回 Anthropic 格式
+- **使用 Gemini SDK**：添加 `x-goog-api-key` 头或 `key` 查询参数，返回 Gemini 格式
+
+### Q2: 请求头中的值应该填什么？
+
+- **Authorization**: 填写你在 One-API 中创建的 Token（格式：`Bearer sk-xxx`）
+- **x-api-key**: 通常与 Authorization 中的 token 相同（用于 Anthropic 格式识别）
+- **anthropic-version**: 填写 Anthropic API 版本，常用值：`2023-06-01`、`2024-01-01`
+- **x-goog-api-key** 或 **key 参数**: 填写 Google API Key（用于 Gemini 格式识别，实际认证仍使用 Authorization）
+
+### Q3: 为什么返回的模型列表和官方不一样？
+
+返回的模型列表会根据以下规则过滤：
+- ✅ **用户组权限**：只返回你所属用户组有权限访问的模型
+- ✅ **Token 限制**：如果 Token 配置了模型限制，只返回允许的模型
+- ✅ **渠道状态**：只返回已启用渠道的模型
+
+### Q4: 可以同时使用多个格式吗？
+
+不可以。接口会根据请求头**自动选择一种格式**返回。如果需要不同格式，请分别发起请求。
+
+## 注意事项
+
+1. **权限控制**：返回的模型列表会根据用户所属的用户组进行过滤，只返回该用户组有权限访问的模型。
+
+2. **Token 模型限制**：如果 Token 配置了模型限制，则只返回 Token 允许的模型列表。
+
+3. **自动组**：如果用户组设置为 "auto"，会合并所有自动组的模型列表。
+
+4. **格式兼容性**：该接口完全兼容 OpenAI、Anthropic 和 Google Gemini 的官方 API 格式，可以直接替换使用。
+
+5. **请求头优先级**：格式识别按以下顺序判断：
+   - 首先检查 `x-api-key` + `anthropic-version`（Anthropic 格式）
+   - 然后检查 `x-goog-api-key` 或 `key` 参数（Gemini 格式）
+   - 最后默认返回 OpenAI 格式
+
+## 相关接口
+
+- `GET /v1/models/:model` - 获取单个模型信息
+- `GET /v1beta/models` - Gemini 专用模型列表接口（始终返回 Gemini 格式）

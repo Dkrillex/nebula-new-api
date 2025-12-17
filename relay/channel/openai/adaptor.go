@@ -123,6 +123,12 @@ func (a *Adaptor) GetRequestURL(info *relaycommon.RelayInfo) (string, error) {
 		if apiVersion == "" {
 			apiVersion = constant.AzureDefaultAPIVersion
 		}
+		// 如果配置了模型特定的 API 版本，优先使用模型特定的版本（适用于普通 API 和 Responses API）
+		if len(info.ChannelOtherSettings.AzureModelApiVersions) > 0 {
+			if modelApiVersion, exists := info.ChannelOtherSettings.AzureModelApiVersions[info.UpstreamModelName]; exists && modelApiVersion != "" {
+				apiVersion = modelApiVersion
+			}
+		}
 		// 文件上传走资源级别接口，不依赖 deployment
 		if info.RelayMode == relayconstant.RelayModeFiles {
 			requestURL := "/openai/v1/files"
@@ -130,12 +136,6 @@ func (a *Adaptor) GetRequestURL(info *relaycommon.RelayInfo) (string, error) {
 				requestURL = fmt.Sprintf("%s?api-version=%s", requestURL, apiVersion)
 			}
 			return relaycommon.GetFullRequestURL(info.ChannelBaseUrl, requestURL, info.ChannelType), nil
-		}
-		// 如果配置了模型特定的 API 版本，优先使用模型特定的版本
-		if info.ChannelOtherSettings.AzureModelApiVersions != nil && len(info.ChannelOtherSettings.AzureModelApiVersions) > 0 {
-			if modelApiVersion, exists := info.ChannelOtherSettings.AzureModelApiVersions[info.UpstreamModelName]; exists && modelApiVersion != "" {
-				apiVersion = modelApiVersion
-			}
 		}
 		// https://learn.microsoft.com/en-us/azure/cognitive-services/openai/chatgpt-quickstart?pivots=rest-api&tabs=command-line#rest-api
 		requestURL := strings.Split(info.RequestURLPath, "?")[0]
@@ -151,17 +151,27 @@ func (a *Adaptor) GetRequestURL(info *relaycommon.RelayInfo) (string, error) {
 
 		// 特殊处理 responses API
 		if info.RelayMode == relayconstant.RelayModeResponses {
-			responsesApiVersion := "preview"
+			responsesApiVersion := apiVersion // 已经应用了模型特定的版本（如果有）
 
 			// 统一使用 /openai/responses（取消 /v1 前缀，兼容云策/官方 Azure）
 			subUrl := "/openai/responses"
 			// 官方 Azure 域名沿用默认 apiVersion；其他厂商若未设置，在下方用 AzureResponsesVersion 覆盖
 			if strings.Contains(info.ChannelBaseUrl, "cognitiveservices.azure.com") {
-				responsesApiVersion = apiVersion
+				// 如果模型特定版本已设置，使用它；否则使用默认版本
+				if apiVersion == constant.AzureDefaultAPIVersion {
+					responsesApiVersion = apiVersion
+				}
 			}
 
+			// 如果配置了默认 Responses API 版本且没有模型特定的版本，使用默认 Responses API 版本
 			if info.ChannelOtherSettings.AzureResponsesVersion != "" {
-				responsesApiVersion = info.ChannelOtherSettings.AzureResponsesVersion
+				// 检查是否使用了模型特定的版本，如果没有则使用默认 Responses API 版本
+				if len(info.ChannelOtherSettings.AzureModelApiVersions) == 0 {
+					responsesApiVersion = info.ChannelOtherSettings.AzureResponsesVersion
+				} else if _, exists := info.ChannelOtherSettings.AzureModelApiVersions[info.UpstreamModelName]; !exists {
+					// 如果模型不在模型特定配置中，使用默认 Responses API 版本
+					responsesApiVersion = info.ChannelOtherSettings.AzureResponsesVersion
+				}
 			}
 
 			requestURL = fmt.Sprintf("%s?api-version=%s", subUrl, responsesApiVersion)

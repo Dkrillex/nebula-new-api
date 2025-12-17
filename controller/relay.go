@@ -113,19 +113,28 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 	defer func() {
 		if newAPIError != nil {
 			newAPIError.SetMessage(common.MessageWithRequestId(newAPIError.Error(), requestId))
+			var errorResponse interface{}
 			switch relayFormat {
 			case types.RelayFormatOpenAIRealtime:
 				helper.WssError(c, ws, newAPIError.ToOpenAIError())
+				return
 			case types.RelayFormatClaude:
-				c.JSON(newAPIError.StatusCode, gin.H{
+				errorResponse = gin.H{
 					"type":  "error",
 					"error": newAPIError.ToClaudeError(),
-				})
+				}
 			default:
-				c.JSON(newAPIError.StatusCode, gin.H{
-					"error": newAPIError.ToOpenAIError(),
-				})
+				openAIErr := newAPIError.ToOpenAIError()
+				errorResponse = gin.H{
+					"error": openAIErr,
+				}
+				// 记录实际返回的错误响应内容，用于调试
+				if newAPIError.StatusCode >= 400 {
+					errorJson, _ := json.Marshal(errorResponse)
+					logger.LogError(c, fmt.Sprintf("[Relay] 返回错误响应 (status: %d): %s", newAPIError.StatusCode, string(errorJson)))
+				}
 			}
+			c.JSON(newAPIError.StatusCode, errorResponse)
 		}
 	}()
 

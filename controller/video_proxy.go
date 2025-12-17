@@ -88,6 +88,14 @@ func VideoProxy(c *gin.Context) {
 		if apiVersion == "" {
 			apiVersion = "preview"
 		}
+		// 如果配置了模型特定的 API 版本，优先使用模型特定的版本
+		otherSettings := channel.GetOtherSettings()
+		if len(otherSettings.AzureModelApiVersions) > 0 && task.ModelName != "" {
+			if modelApiVersion, exists := otherSettings.AzureModelApiVersions[task.ModelName]; exists && modelApiVersion != "" {
+				apiVersion = modelApiVersion
+				common.SysLog(fmt.Sprintf("[VideoProxy] 使用模型特定的 API 版本: %s (模型: %s)", apiVersion, task.ModelName))
+			}
+		}
 		videoURL = fmt.Sprintf("%s/openai/v1/videos/%s/content?variant=video&api-version=%s", baseURL, taskID, apiVersion)
 		authHeader = "Api-key"
 		common.SysLog(fmt.Sprintf("[VideoProxy] Azure Sora2 URL: %s", videoURL))

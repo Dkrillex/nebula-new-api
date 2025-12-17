@@ -11,6 +11,7 @@ import (
 	"one-api/common"
 	"one-api/constant"
 	"one-api/dto"
+	"one-api/logger"
 	"one-api/middleware"
 	"one-api/model"
 	"one-api/types"
@@ -693,9 +694,20 @@ func SyncPlayground(c *gin.Context) {
 
 	defer func() {
 		if newAPIError != nil {
-			c.JSON(newAPIError.StatusCode, gin.H{
-				"error": newAPIError.ToOpenAIError(),
-			})
+			// 记录错误日志
+			userId := c.GetInt("id")
+			errorMsg := fmt.Sprintf("[SyncPlayground] user_id: %d, status: %d, error: %s", userId, newAPIError.StatusCode, newAPIError.Error())
+			logger.LogError(c.Request.Context(), errorMsg)
+			openAIErr := newAPIError.ToOpenAIError()
+			errorResponse := gin.H{
+				"error": openAIErr,
+			}
+			// 记录实际返回的错误响应内容，用于调试
+			if newAPIError.StatusCode >= 400 {
+				errorJson, _ := json.Marshal(errorResponse)
+				logger.LogError(c.Request.Context(), fmt.Sprintf("[SyncPlayground] 返回错误响应 (status: %d): %s", newAPIError.StatusCode, string(errorJson)))
+			}
+			c.JSON(newAPIError.StatusCode, errorResponse)
 		}
 	}()
 
@@ -1076,7 +1088,7 @@ func SyncVideoGeneration(c *gin.Context) {
 // @Failure 500 {object} common.Response{msg=string}
 // @Router /api/sync/system/videos/generations [get]
 func SyncGetVideoTask(c *gin.Context) {
-	common.SysLog(fmt.Sprintf("[SyncGetVideoTask] 请求路径: %s", c.Request.URL.Path))
+	//common.SysLog(fmt.Sprintf("[SyncGetVideoTask] 请求路径: %s", c.Request.URL.Path))
 
 	var newAPIError *types.NewAPIError
 

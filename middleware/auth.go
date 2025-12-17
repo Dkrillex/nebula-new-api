@@ -355,6 +355,8 @@ func SystemAccessTokenAuth() func(c *gin.Context) {
 
 		// 检查用户状态
 		if user.Status == common.UserStatusDisabled {
+			errorMsg := fmt.Sprintf("[SystemAccessTokenAuth] 用户已被封禁, user_id: %d, path: %s", user.Id, c.Request.URL.Path)
+			common.SysLog(errorMsg)
 			c.JSON(http.StatusForbidden, gin.H{
 				"success": false,
 				"message": "用户已被封禁",
@@ -372,6 +374,8 @@ func SystemAccessTokenAuth() func(c *gin.Context) {
 		// 获取用户缓存
 		userCache, err := model.GetUserCache(user.Id)
 		if err != nil {
+			errorMsg := fmt.Sprintf("[SystemAccessTokenAuth] 获取用户缓存失败, user_id: %d, path: %s, error: %s", user.Id, c.Request.URL.Path, err.Error())
+			common.SysLog(errorMsg)
 			c.JSON(http.StatusInternalServerError, gin.H{
 				"success": false,
 				"message": err.Error(),

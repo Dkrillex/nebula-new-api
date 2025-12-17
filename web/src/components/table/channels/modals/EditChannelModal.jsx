@@ -159,7 +159,7 @@ const EditChannelModal = (props) => {
     allow_service_tier: false,
     disable_store: false, // false = 允许透传（默认开启）
     allow_safety_identifier: false,
-    // Azure 模型特定 API 版本配置
+    // Azure 模型特定 Responses API 版本配置
     azure_model_api_versions: '',
   };
   const [batch, setBatch] = useState(false);
@@ -360,7 +360,7 @@ const EditChannelModal = (props) => {
     handleInputChange('settings', settingsJson);
   };
 
-  // 处理模型特定 API 版本配置变更
+  // 处理模型特定 Responses API 版本配置变更
   const handleAzureModelApiVersionsChange = (value) => {
     // 更新inputs状态
     setInputs((prev) => ({ ...prev, azure_model_api_versions: value }));
@@ -543,50 +543,51 @@ const EditChannelModal = (props) => {
         data.system_prompt_override = false;
       }
 
-      if (data.settings) {
+      // 初始化其他设置相关字段
+      data.azure_responses_version = '';
+      data.azure_model_api_versions = '';
+      data.vertex_key_type = 'json';
+      data.is_enterprise_account = false;
+      data.allow_service_tier = false;
+      data.disable_store = false;
+      data.allow_safety_identifier = false;
+
+      if (data.settings && data.settings.trim()) {
         try {
           const parsedSettings = JSON.parse(data.settings);
           data.azure_responses_version =
             parsedSettings.azure_responses_version || '';
-          // 读取 Azure 模型特定 API 版本配置
+          // 读取 Azure 模型特定 Responses API 版本配置
           if (parsedSettings.azure_model_api_versions) {
             data.azure_model_api_versions = JSON.stringify(
               parsedSettings.azure_model_api_versions,
               null,
               2,
             );
-          } else {
-            data.azure_model_api_versions = '';
           }
           // 读取 Vertex 密钥格式
-          data.vertex_key_type = parsedSettings.vertex_key_type || 'json';
+          if (parsedSettings.vertex_key_type) {
+            data.vertex_key_type = parsedSettings.vertex_key_type;
+          }
           // 读取企业账户设置
-          data.is_enterprise_account =
-            parsedSettings.openrouter_enterprise === true;
+          if (parsedSettings.openrouter_enterprise !== undefined) {
+            data.is_enterprise_account =
+              parsedSettings.openrouter_enterprise === true;
+          }
           // 读取字段透传控制设置
-          data.allow_service_tier = parsedSettings.allow_service_tier || false;
-          data.disable_store = parsedSettings.disable_store || false;
-          data.allow_safety_identifier =
-            parsedSettings.allow_safety_identifier || false;
+          if (parsedSettings.allow_service_tier !== undefined) {
+            data.allow_service_tier = parsedSettings.allow_service_tier;
+          }
+          if (parsedSettings.disable_store !== undefined) {
+            data.disable_store = parsedSettings.disable_store;
+          }
+          if (parsedSettings.allow_safety_identifier !== undefined) {
+            data.allow_safety_identifier =
+              parsedSettings.allow_safety_identifier;
+          }
         } catch (error) {
           console.error('解析其他设置失败:', error);
-          data.azure_responses_version = '';
-          data.azure_model_api_versions = '';
-          data.region = '';
-          data.vertex_key_type = 'json';
-          data.is_enterprise_account = false;
-          data.allow_service_tier = false;
-          data.disable_store = false;
-          data.allow_safety_identifier = false;
         }
-      } else {
-        // 兼容历史数据：老渠道没有 settings 时，默认按 json 展示
-        data.azure_model_api_versions = '';
-        data.vertex_key_type = 'json';
-        data.is_enterprise_account = false;
-        data.allow_service_tier = false;
-        data.disable_store = false;
-        data.allow_safety_identifier = false;
       }
 
       if (
@@ -2053,15 +2054,15 @@ const EditChannelModal = (props) => {
                             <JSONEditor
                               key={`azure_model_api_versions-${isEdit ? channelId : 'new'}`}
                               field='azure_model_api_versions'
-                              label={t('模型特定 API 版本配置')}
+                              label={t('模型特定 Responses API 版本')}
                               placeholder={
                                 t(
-                                  '可选，为不同模型配置不同的 API 版本。如果模型未在此配置中，则使用上方的默认 API 版本。例如：',
+                                  '可选，为不同模型配置不同的 Responses API 版本。如果模型未在此配置中，则使用上方的默认 Responses API 版本。例如：',
                                 ) +
                                 `\n${JSON.stringify(
                                   {
-                                    'gpt-4': '2024-02-15-preview',
-                                    'gpt-3.5-turbo': '2023-05-15',
+                                    'o1': '2024-02-15-preview',
+                                    'o3-mini': '2023-05-15',
                                   },
                                   null,
                                   2,
@@ -2070,14 +2071,14 @@ const EditChannelModal = (props) => {
                               value={inputs.azure_model_api_versions || ''}
                               onChange={handleAzureModelApiVersionsChange}
                               template={{
-                                'gpt-4': '2024-02-15-preview',
-                                'gpt-3.5-turbo': '2023-05-15',
+                                'o1': '2024-02-15-preview',
+                                'o3-mini': '2023-05-15',
                               }}
                               templateLabel={t('填入模板')}
                               editorType='keyValue'
                               formApi={formApiRef.current}
                               extraText={t(
-                                '键为模型名称，值为对应的 API 版本（例如：2024-02-15-preview）',
+                                '键为模型名称，值为对应的 Responses API 版本（例如：2024-02-15-preview）',
                               )}
                             />
                           </div>
