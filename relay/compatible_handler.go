@@ -233,6 +233,18 @@ func postConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, usage 
 	completionTokens := usage.CompletionTokens
 	cachedCreationTokens := usage.PromptTokensDetails.CachedCreationTokens
 
+	// 对于 Azure OpenAI 和 OpenAI，如果 prompt_tokens 已经包含了 cache_tokens，
+	// 需要从 promptTokens 中减去 cacheTokens，以便正确记录日志
+	// 注意：OpenRouter 在 PostClaudeConsumeQuota 中已经处理了这个问题
+	if relayInfo.ChannelType == constant.ChannelTypeAzure || relayInfo.ChannelType == constant.ChannelTypeOpenAI {
+		if cacheTokens > 0 && promptTokens >= cacheTokens {
+			promptTokens -= cacheTokens
+		}
+		if cachedCreationTokens > 0 && promptTokens >= cachedCreationTokens {
+			promptTokens -= cachedCreationTokens
+		}
+	}
+
 	completionRatio := relayInfo.PriceData.CompletionRatio
 	cacheRatio := relayInfo.PriceData.CacheRatio
 	imageRatio := relayInfo.PriceData.ImageRatio
