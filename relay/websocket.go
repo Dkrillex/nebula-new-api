@@ -5,6 +5,7 @@ import (
 	"one-api/common"
 	"one-api/dto"
 	relaycommon "one-api/relay/common"
+	"one-api/relay/helper"
 	"one-api/service"
 	"one-api/types"
 
@@ -14,6 +15,14 @@ import (
 
 func WssHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *types.NewAPIError) {
 	info.InitChannelMeta(c)
+
+	// 初始化 PriceData（必须在处理请求之前）
+	meta := &types.TokenCountMeta{MaxTokens: 0}
+	_, err := helper.ModelPriceHelper(c, info, 1, meta)
+	if err != nil {
+		common.SysLog(fmt.Sprintf("[Realtime] ModelPriceHelper failed: %v, using default values", err))
+		// 不返回错误，继续处理，使用代码中的默认值保护
+	}
 
 	adaptor := GetAdaptor(info.ApiType)
 	if adaptor == nil {

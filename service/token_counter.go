@@ -474,14 +474,22 @@ func CountTokenRealtime(info *relaycommon.RelayInfo, request dto.RealtimeEvent, 
 			msgTokens := CountTextToken(request.Session.Instructions, model)
 			textToken += msgTokens
 		}
-	case dto.RealtimeEventResponseAudioDelta:
-		// count audio token
-		atk, err := CountAudioTokenOutput(request.Delta, info.OutputAudioFormat)
-		if err != nil {
-			return 0, 0, fmt.Errorf("error counting audio token: %v", err)
+	case dto.RealtimeEventResponseAudioDelta, dto.RealtimeEventResponseAudioDeltaLegacy:
+		// count audio token (支持新旧两种事件格式)
+		// 尝试从 Delta 或 Audio 字段获取音频数据
+		audioData := request.Delta
+		if audioData == "" {
+			audioData = request.Audio
 		}
-		audioToken += atk
-	case dto.RealtimeEventResponseAudioTranscriptionDelta, dto.RealtimeEventResponseFunctionCallArgumentsDelta:
+		if audioData != "" {
+			atk, err := CountAudioTokenOutput(audioData, info.OutputAudioFormat)
+			if err != nil {
+				common.SysLog(fmt.Sprintf("error counting audio token: %v, audioFormat: %s, audioDataLen: %d", err, info.OutputAudioFormat, len(audioData)))
+			} else {
+				audioToken += atk
+			}
+		}
+	case dto.RealtimeEventResponseAudioTranscriptionDelta, dto.RealtimeEventResponseAudioTranscriptionDeltaLegacy, dto.RealtimeEventResponseFunctionCallArgumentsDelta:
 		// count text token
 		tkm := CountTextToken(request.Delta, model)
 		textToken += tkm

@@ -62,6 +62,22 @@ func calculateAudioQuota(info QuotaInfo) int {
 
 	groupRatio := decimal.NewFromFloat(info.GroupRatio)
 	modelRatio := decimal.NewFromFloat(info.ModelRatio)
+
+	// 防止倍率为 0 导致计费失败，使用默认值
+	if groupRatio.IsZero() {
+		groupRatio = decimal.NewFromInt(1)
+		common.SysLog(fmt.Sprintf("[calculateAudioQuota] groupRatio is zero, using default 1.0 for model %s", info.ModelName))
+	}
+	if modelRatio.IsZero() {
+		// gpt-realtime 系列使用较高的默认倍率
+		if strings.Contains(strings.ToLower(info.ModelName), "realtime") {
+			modelRatio = decimal.NewFromFloat(15.0)
+		} else {
+			modelRatio = decimal.NewFromFloat(37.5)
+		}
+		common.SysLog(fmt.Sprintf("[calculateAudioQuota] modelRatio is zero, using default %.1f for model %s", modelRatio.InexactFloat64(), info.ModelName))
+	}
+
 	ratio := groupRatio.Mul(modelRatio)
 
 	inputTextTokens := decimal.NewFromInt(int64(info.InputDetails.TextTokens))

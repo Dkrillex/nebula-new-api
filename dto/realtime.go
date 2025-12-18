@@ -11,14 +11,16 @@ const (
 )
 
 const (
-	RealtimeEventTypeResponseDone                   = "response.done"
-	RealtimeEventTypeSessionUpdated                 = "session.updated"
-	RealtimeEventTypeSessionCreated                 = "session.created"
-	RealtimeEventResponseAudioDelta                 = "response.audio.delta"
-	RealtimeEventResponseAudioTranscriptionDelta    = "response.audio_transcript.delta"
-	RealtimeEventResponseFunctionCallArgumentsDelta = "response.function_call_arguments.delta"
-	RealtimeEventResponseFunctionCallArgumentsDone  = "response.function_call_arguments.done"
-	RealtimeEventConversationItemCreated            = "conversation.item.created"
+	RealtimeEventTypeResponseDone                      = "response.done"
+	RealtimeEventTypeSessionUpdated                    = "session.updated"
+	RealtimeEventTypeSessionCreated                    = "session.created"
+	RealtimeEventResponseAudioDelta                    = "response.output_audio.delta"
+	RealtimeEventResponseAudioDeltaLegacy              = "response.audio.delta" // Azure OpenAI 使用的旧格式
+	RealtimeEventResponseAudioTranscriptionDelta       = "response.output_audio_transcript.delta"
+	RealtimeEventResponseAudioTranscriptionDeltaLegacy = "response.audio_transcript.delta" // Azure OpenAI 使用的旧格式
+	RealtimeEventResponseFunctionCallArgumentsDelta    = "response.function_call_arguments.delta"
+	RealtimeEventResponseFunctionCallArgumentsDone     = "response.function_call_arguments.done"
+	RealtimeEventConversationItemCreated               = "conversation.item.created"
 )
 
 type RealtimeEvent struct {
