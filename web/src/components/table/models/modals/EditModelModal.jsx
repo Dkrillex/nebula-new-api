@@ -130,6 +130,8 @@ const EditModelModal = (props) => {
     name_rule: props.editingModel?.model_name ? 0 : undefined, // 通过未配置模型过来的固定为精确匹配
     status: true,
     sync_official: true,
+    flag: 1, // 默认值：1-新发布
+    sort_order: 1, // 默认值：越小优先级越高
   });
 
   const handleCancel = () => {
@@ -167,6 +169,13 @@ const EditModelModal = (props) => {
         // 处理status/sync_official，将数字转为布尔值
         data.status = data.status === 1;
         data.sync_official = (data.sync_official ?? 1) === 1;
+        // 处理flag和sort_order，如果为null/undefined，使用默认值
+        if (data.flag === null || data.flag === undefined) {
+          data.flag = 1; // 默认值：1-新发布
+        }
+        if (data.sort_order === null || data.sort_order === undefined) {
+          data.sort_order = 1; // 默认值：越小优先级越高
+        }
         if (formApiRef.current) {
           formApiRef.current.setValues({ ...getInitValues(), ...data });
         }
@@ -220,6 +229,9 @@ const EditModelModal = (props) => {
         endpoints: values.endpoints || '',
         status: values.status ? 1 : 0,
         sync_official: values.sync_official ? 1 : 0,
+        // 确保flag和sort_order有默认值（仅当为null/undefined时使用默认值，flag=0是有效值表示"无"）
+        flag: values.flag !== null && values.flag !== undefined ? values.flag : 1,
+        sort_order: values.sort_order !== null && values.sort_order !== undefined ? values.sort_order : 1,
       };
 
       if (isEdit) {
@@ -657,7 +669,7 @@ const EditModelModal = (props) => {
                       field='sync_official'
                       label={t('参与官方同步')}
                       extraText={t(
-                        '关闭后，此模型将不会被“同步官方”自动覆盖或创建',
+                        '关闭后，此模型将不会被"同步官方"自动覆盖或创建',
                       )}
                       size='large'
                     />
@@ -667,6 +679,32 @@ const EditModelModal = (props) => {
                       field='status'
                       label={t('状态')}
                       size='large'
+                    />
+                  </Col>
+                  <Col span={24}>
+                    <Form.Select
+                      field='flag'
+                      label={t('标示')}
+                      placeholder={t('选择模型标示')}
+                      optionList={[
+                        { label: t('无'), value: 0 },
+                        { label: t('新发布'), value: 1 },
+                        { label: t('最先进'), value: 2 },
+                        { label: t('火爆'), value: 3 },
+                      ]}
+                      extraText={t('用于模型广场的展示标识：1-新发布 2-最先进 3-火爆')}
+                      style={{ width: '100%' }}
+                      showClear
+                    />
+                  </Col>
+                  <Col span={24}>
+                    <Form.InputNumber
+                      field='sort_order'
+                      label={t('排序')}
+                      placeholder={t('请输入排序值')}
+                      min={0}
+                      extraText={t('数值越小优先级越高，用于模型列表排序')}
+                      style={{ width: '100%' }}
                     />
                   </Col>
                 </Row>
