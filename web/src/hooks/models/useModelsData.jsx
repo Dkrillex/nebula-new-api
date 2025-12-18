@@ -98,9 +98,9 @@ export const useModelsData = () => {
   const [syncing, setSyncing] = useState(false);
   const [previewing, setPreviewing] = useState(false);
 
-  // Status filter
+  // Status filter：默认「已启用」，若本地已存用户选择则优先使用
   const [statusFilter, setStatusFilter] = useState(
-    localStorage.getItem('model-status-filter') || 'all',
+    localStorage.getItem('model-status-filter') || 'enabled',
   );
 
   const vendorMap = useMemo(() => {
@@ -263,8 +263,9 @@ export const useModelsData = () => {
   };
 
   // Search models with keyword and vendor
-  const searchModels = async (statusF = statusFilter) => {
-    if (statusF === undefined) statusF = statusFilter;
+  // 注意: 不再通过参数传入 status, 统一使用当前的 statusFilter 状态
+  const searchModels = async () => {
+    const statusF = statusFilter;
 
     const { searchKeyword = '', searchVendor = '' } = getFormValues();
 
@@ -366,14 +367,14 @@ export const useModelsData = () => {
     localStorage.setItem('model-status-filter', newStatusFilter);
     setStatusFilter(newStatusFilter);
     setActivePage(1);
-    
+
     const { searchKeyword = '', searchVendor = '' } = getFormValues();
     if (searchKeyword === '' && searchVendor === '') {
       // No search conditions, use loadModels
       await loadModels(1, pageSize, activeVendorKey, newStatusFilter);
     } else {
-      // Has search conditions, use searchModels
-      await searchModels(newStatusFilter);
+      // Has search conditions, use searchModels（内部会读取最新的 statusFilter）
+      await searchModels();
     }
   };
 
