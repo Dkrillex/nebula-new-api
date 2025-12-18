@@ -112,6 +112,8 @@ const ModelsPage = () => {
               applyUpstreamOverwrite={modelsData.applyUpstreamOverwrite}
               compactMode={compactMode}
               setCompactMode={setCompactMode}
+              statusFilter={modelsData.statusFilter}
+              handleStatusFilterChange={modelsData.handleStatusFilterChange}
               t={t}
             />
 

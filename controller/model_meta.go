@@ -17,15 +17,30 @@ import (
 func GetAllModelsMeta(c *gin.Context) {
 
 	pageInfo := common.GetPageQuery(c)
-	modelsMeta, err := model.GetAllModels(pageInfo.GetStartIdx(), pageInfo.GetPageSize())
+
+	// 处理status参数
+	var status *int
+	if statusStr := c.Query("status"); statusStr != "" {
+		if s, err := strconv.Atoi(statusStr); err == nil {
+			status = &s
+		}
+	}
+
+	modelsMeta, err := model.GetAllModels(pageInfo.GetStartIdx(), pageInfo.GetPageSize(), status)
 	if err != nil {
 		common.ApiError(c, err)
 		return
 	}
 	// 批量填充附加字段，提升列表接口性能
 	enrichModels(modelsMeta)
+
+	// 统计总数（根据status过滤）
 	var total int64
-	model.DB.Model(&model.Model{}).Count(&total)
+	db := model.DB.Model(&model.Model{})
+	if status != nil {
+		db = db.Where("status = ?", *status)
+	}
+	db.Count(&total)
 
 	// 统计供应商计数（全部数据，不受分页影响）
 	vendorCounts, _ := model.GetVendorModelCounts()
@@ -48,7 +63,15 @@ func SearchModelsMeta(c *gin.Context) {
 	vendor := c.Query("vendor")
 	pageInfo := common.GetPageQuery(c)
 
-	modelsMeta, total, err := model.SearchModels(keyword, vendor, pageInfo.GetStartIdx(), pageInfo.GetPageSize())
+	// 处理status参数
+	var status *int
+	if statusStr := c.Query("status"); statusStr != "" {
+		if s, err := strconv.Atoi(statusStr); err == nil {
+			status = &s
+		}
+	}
+
+	modelsMeta, total, err := model.SearchModels(keyword, vendor, pageInfo.GetStartIdx(), pageInfo.GetPageSize(), status)
 	if err != nil {
 		common.ApiError(c, err)
 		return

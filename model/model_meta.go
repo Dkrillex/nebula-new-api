@@ -22,12 +22,17 @@ type BoundChannel struct {
 type Model struct {
 	Id            int            `json:"id"`
 	ModelName     string         `json:"model_name" gorm:"size:128;not null;uniqueIndex:uk_model_name_delete_at,priority:1"`
+	ModelNickName string         `json:"model_nick_name,omitempty" gorm:"type:varchar(128)"`
 	Description   string         `json:"description,omitempty" gorm:"type:text"`
 	DescriptionEn string         `json:"description_en,omitempty" gorm:"type:text"`
+	DescriptionId string         `json:"description_id,omitempty" gorm:"type:text"`
 	Icon          string         `json:"icon,omitempty" gorm:"type:varchar(128)"`
 	IconURL       string         `json:"icon_url,omitempty" gorm:"type:varchar(128)"`
 	Tags          string         `json:"tags,omitempty" gorm:"type:varchar(255)"`
 	TagsEn        string         `json:"tags_en,omitempty" gorm:"type:varchar(255)"`
+	TagsId        string         `json:"tags_id,omitempty" gorm:"type:varchar(255)"`
+	ShowTab       *int           `json:"show_tab,omitempty" gorm:"type:int"`
+	ModelLimit    string         `json:"model_limit,omitempty" gorm:"type:text"`
 	VendorID      int            `json:"vendor_id,omitempty" gorm:"index"`
 	Endpoints     string         `json:"endpoints,omitempty" gorm:"type:text"`
 	Status        int            `json:"status" gorm:"default:1"`
@@ -93,9 +98,13 @@ func GetVendorModelCounts() (map[int64]int64, error) {
 	return m, nil
 }
 
-func GetAllModels(offset int, limit int) ([]*Model, error) {
+func GetAllModels(offset int, limit int, status *int) ([]*Model, error) {
 	var models []*Model
-	err := DB.Order("id DESC").Offset(offset).Limit(limit).Find(&models).Error
+	db := DB.Model(&Model{})
+	if status != nil {
+		db = db.Where("status = ?", *status)
+	}
+	err := db.Order("id DESC").Offset(offset).Limit(limit).Find(&models).Error
 	return models, err
 }
 
@@ -125,12 +134,12 @@ func GetBoundChannelsByModelsMap(modelNames []string) (map[string][]BoundChannel
 	return result, nil
 }
 
-func SearchModels(keyword string, vendor string, offset int, limit int) ([]*Model, int64, error) {
+func SearchModels(keyword string, vendor string, offset int, limit int, status *int) ([]*Model, int64, error) {
 	var models []*Model
 	db := DB.Model(&Model{})
 	if keyword != "" {
 		like := "%" + keyword + "%"
-		db = db.Where("model_name LIKE ? OR description LIKE ? OR description_en LIKE ? OR tags LIKE ? OR tags_en LIKE ?", like, like, like, like, like)
+		db = db.Where("model_name LIKE ? OR description LIKE ? OR description_en LIKE ? OR description_id LIKE ? OR tags LIKE ? OR tags_en LIKE ? OR tags_id LIKE ?", like, like, like, like, like, like, like)
 	}
 	if vendor != "" {
 		if vid, err := strconv.Atoi(vendor); err == nil {
@@ -138,6 +147,9 @@ func SearchModels(keyword string, vendor string, offset int, limit int) ([]*Mode
 		} else {
 			db = db.Joins("JOIN vendors ON vendors.id = models.vendor_id").Where("vendors.name LIKE ?", "%"+vendor+"%")
 		}
+	}
+	if status != nil {
+		db = db.Where("models.status = ?", *status)
 	}
 	var total int64
 	if err := db.Count(&total).Error; err != nil {

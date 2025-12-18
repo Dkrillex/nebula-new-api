@@ -112,11 +112,17 @@ const EditModelModal = (props) => {
 
   const getInitValues = () => ({
     model_name: props.editingModel?.model_name || '',
+    model_nick_name: '',
     description: '',
     description_en: '',
+    description_id: '',
     icon: '',
+    icon_url: '',
     tags: [],
     tags_en: [],
+    tags_id: [],
+    show_tab: undefined,
+    model_limit: '',
     vendor_id: undefined,
     vendor: '',
     vendor_icon: '',
@@ -148,6 +154,11 @@ const EditModelModal = (props) => {
           data.tags_en = data.tags_en.split(',').filter(Boolean);
         } else {
           data.tags_en = [];
+        }
+        if (data.tags_id) {
+          data.tags_id = data.tags_id.split(',').filter(Boolean);
+        } else {
+          data.tags_id = [];
         }
         // endpoints 保持原始 JSON 字符串，若为空设为空串
         if (!data.endpoints) {
@@ -203,6 +214,9 @@ const EditModelModal = (props) => {
         tags_en: Array.isArray(values.tags_en)
           ? values.tags_en.join(',')
           : values.tags_en,
+        tags_id: Array.isArray(values.tags_id)
+          ? values.tags_id.join(',')
+          : values.tags_id,
         endpoints: values.endpoints || '',
         status: values.status ? 1 : 0,
         sync_official: values.sync_official ? 1 : 0,
@@ -320,6 +334,15 @@ const EditModelModal = (props) => {
                   </Col>
 
                   <Col span={24}>
+                    <Form.Input
+                      field='model_nick_name'
+                      label={t('模型昵称')}
+                      placeholder={t('请输入模型昵称（用于前端显示）')}
+                      showClear
+                    />
+                  </Col>
+
+                  <Col span={24}>
                     <Form.Select
                       field='name_rule'
                       label={t('名称匹配类型')}
@@ -365,6 +388,15 @@ const EditModelModal = (props) => {
                   </Col>
 
                   <Col span={24}>
+                    <Form.Input
+                      field='icon_url'
+                      label={t('模型图标URL')}
+                      placeholder={t('请输入图标URL（优先级低于图标名称）')}
+                      showClear
+                    />
+                  </Col>
+
+                  <Col span={24}>
                     <Form.TextArea
                       field='description'
                       label={t('描述')}
@@ -378,6 +410,15 @@ const EditModelModal = (props) => {
                       field='description_en'
                       label={t('英文描述')}
                       placeholder={t('请输入英文描述（用于英文界面展示）')}
+                      rows={3}
+                      showClear
+                    />
+                  </Col>
+                  <Col span={24}>
+                    <Form.TextArea
+                      field='description_id'
+                      label={t('印尼语描述')}
+                      placeholder={t('请输入印尼语描述（用于印尼语界面展示）')}
                       rows={3}
                       showClear
                     />
@@ -468,6 +509,49 @@ const EditModelModal = (props) => {
                     />
                   </Col>
                   <Col span={24}>
+                    <Form.TagInput
+                      field='tags_id'
+                      label={t('印尼语标签')}
+                      placeholder={t('输入印尼语标签或使用","分隔多个标签')}
+                      addOnBlur
+                      showClear
+                      onChange={(newTags) => {
+                        if (!formApiRef.current) return;
+                        const normalize = (tags) => {
+                          if (!Array.isArray(tags)) return [];
+                          return [
+                            ...new Set(
+                              tags.flatMap((tag) =>
+                                tag
+                                  .split(',')
+                                  .map((t) => t.trim())
+                                  .filter(Boolean),
+                              ),
+                            ),
+                          ];
+                        };
+                        const normalized = normalize(newTags);
+                        formApiRef.current.setValue('tags_id', normalized);
+                      }}
+                    />
+                  </Col>
+                  <Col span={24}>
+                    <Form.Select
+                      field='show_tab'
+                      label={t('展示标签')}
+                      placeholder={t('选择模型在体验中心的展示位置')}
+                      optionList={[
+                        { label: t('不展示'), value: 0 },
+                        { label: t('对话'), value: 1 },
+                        { label: t('图片生成'), value: 2 },
+                        { label: t('视频生成'), value: 3 },
+                      ]}
+                      showClear
+                      extraText={t('控制模型在体验中心的哪个标签页显示')}
+                      style={{ width: '100%' }}
+                    />
+                  </Col>
+                  <Col span={24}>
                     <Form.Select
                       field='vendor_id'
                       label={t('供应商')}
@@ -488,6 +572,20 @@ const EditModelModal = (props) => {
                         }
                       }}
                       style={{ width: '100%' }}
+                    />
+                  </Col>
+                  <Col span={24}>
+                    <JSONEditor
+                      field='model_limit'
+                      label={t('模型限制配置')}
+                      placeholder={'{\n  "maxTokens": 4096\n}'}
+                      value={values.model_limit}
+                      onChange={(val) =>
+                        formApiRef.current?.setValue('model_limit', val)
+                      }
+                      formApi={formApiRef.current}
+                      editorType='object'
+                      extraText={t('预留字段，存储JSON格式的模型限制配置')}
                     />
                   </Col>
                   <Col span={24}>

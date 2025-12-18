@@ -98,6 +98,11 @@ export const useModelsData = () => {
   const [syncing, setSyncing] = useState(false);
   const [previewing, setPreviewing] = useState(false);
 
+  // Status filter
+  const [statusFilter, setStatusFilter] = useState(
+    localStorage.getItem('model-status-filter') || 'all',
+  );
+
   const vendorMap = useMemo(() => {
     const map = {};
     vendors.forEach((v) => {
@@ -124,13 +129,20 @@ export const useModelsData = () => {
     page = 1,
     size = pageSize,
     vendorKey = activeVendorKey,
+    statusF = statusFilter,
   ) => {
+    if (statusF === undefined) statusF = statusFilter;
+
     setLoading(true);
     try {
       let url = `/api/models/?p=${page}&page_size=${size}`;
+      const statusParam = statusF !== 'all' ? `&status=${statusF === 'enabled' ? '1' : '0'}` : '';
+      
       if (vendorKey && vendorKey !== 'all') {
         // Filter by vendor ID
-        url = `/api/models/search?vendor=${vendorKey}&p=${page}&page_size=${size}`;
+        url = `/api/models/search?vendor=${vendorKey}&p=${page}&page_size=${size}${statusParam}`;
+      } else {
+        url += statusParam;
       }
 
       const res = await API.get(url);
@@ -162,7 +174,7 @@ export const useModelsData = () => {
 
   // Refresh data
   const refresh = async (page = activePage) => {
-    await loadModels(page, pageSize);
+    await loadModels(page, pageSize, activeVendorKey, statusFilter);
   };
 
   // Sync upstream models/vendors for missing models only
@@ -251,19 +263,22 @@ export const useModelsData = () => {
   };
 
   // Search models with keyword and vendor
-  const searchModels = async () => {
+  const searchModels = async (statusF = statusFilter) => {
+    if (statusF === undefined) statusF = statusFilter;
+
     const { searchKeyword = '', searchVendor = '' } = getFormValues();
 
     if (searchKeyword === '' && searchVendor === '') {
       // If keyword is blank, load models instead
-      await loadModels(1, pageSize);
+      await loadModels(1, pageSize, activeVendorKey, statusF);
       return;
     }
 
     setSearching(true);
     try {
+      const statusParam = statusF !== 'all' ? `&status=${statusF === 'enabled' ? '1' : '0'}` : '';
       const res = await API.get(
-        `/api/models/search?keyword=${searchKeyword}&vendor=${searchVendor}&p=1&page_size=${pageSize}`,
+        `/api/models/search?keyword=${searchKeyword}&vendor=${searchVendor}&p=1&page_size=${pageSize}${statusParam}`,
       );
       const { success, message, data } = res.data;
       if (success) {
@@ -330,19 +345,36 @@ export const useModelsData = () => {
   // Handle page change
   const handlePageChange = (page) => {
     setActivePage(page);
-    loadModels(page, pageSize, activeVendorKey);
+    loadModels(page, pageSize, activeVendorKey, statusFilter);
   };
 
   // Reload models when activeVendorKey changes
   useEffect(() => {
-    loadModels(1, pageSize, activeVendorKey);
+    loadModels(1, pageSize, activeVendorKey, statusFilter);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeVendorKey]);
 
   // Handle page size change
   const handlePageSizeChange = async (size) => {
     setPageSize(size);
     setActivePage(1);
-    await loadModels(1, size, activeVendorKey);
+    await loadModels(1, size, activeVendorKey, statusFilter);
+  };
+
+  // Handle status filter change
+  const handleStatusFilterChange = async (newStatusFilter) => {
+    localStorage.setItem('model-status-filter', newStatusFilter);
+    setStatusFilter(newStatusFilter);
+    setActivePage(1);
+    
+    const { searchKeyword = '', searchVendor = '' } = getFormValues();
+    if (searchKeyword === '' && searchVendor === '') {
+      // No search conditions, use loadModels
+      await loadModels(1, pageSize, activeVendorKey, newStatusFilter);
+    } else {
+      // Has search conditions, use searchModels
+      await searchModels(newStatusFilter);
+    }
   };
 
   // Handle row click and styling
@@ -483,6 +515,11 @@ export const useModelsData = () => {
     editingVendor,
     setEditingVendor,
     loadVendors,
+
+    // Status filter
+    statusFilter,
+    setStatusFilter,
+    handleStatusFilterChange,
 
     // Translation
     t,

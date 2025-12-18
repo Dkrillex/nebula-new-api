@@ -36,12 +36,13 @@ const ModelsTabs = ({
   setShowEditVendor,
   setEditingVendor,
   loadVendors,
+  statusFilter,
   t,
 }) => {
   const handleTabChange = (key) => {
     setActiveVendorKey(key);
     setActivePage(1);
-    loadModels(1, pageSize, key);
+    loadModels(1, pageSize, key, statusFilter);
   };
 
   const handleEditVendor = (vendor, e) => {
@@ -59,9 +60,9 @@ const ModelsTabs = ({
         // 如果删除的是当前选中的供应商，切换到"全部"
         if (activeVendorKey === String(vendor.id)) {
           setActiveVendorKey('all');
-          loadModels(1, pageSize, 'all');
+          loadModels(1, pageSize, 'all', statusFilter);
         } else {
-          loadModels(activePage, pageSize, activeVendorKey);
+          loadModels(activePage, pageSize, activeVendorKey, statusFilter);
         }
         loadVendors(); // 重新加载供应商列表
       } else {

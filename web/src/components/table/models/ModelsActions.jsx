@@ -21,7 +21,7 @@ import React, { useState } from 'react';
 import MissingModelsModal from './modals/MissingModelsModal';
 import PrefillGroupManagement from './modals/PrefillGroupManagement';
 import EditPrefillGroupModal from './modals/EditPrefillGroupModal';
-import { Button, Modal, Popover, RadioGroup, Radio } from '@douyinfe/semi-ui';
+import { Button, Modal, Popover, RadioGroup, Radio, Select, Typography } from '@douyinfe/semi-ui';
 import { showSuccess, showError, copy } from '../../../helpers';
 import CompactModeToggle from '../../common/ui/CompactModeToggle';
 import SelectionNotification from './components/SelectionNotification';
@@ -41,6 +41,8 @@ const ModelsActions = ({
   applyUpstreamOverwrite,
   compactMode,
   setCompactMode,
+  statusFilter,
+  handleStatusFilterChange,
   t,
 }) => {
   // Modal states
@@ -177,6 +179,24 @@ const ModelsActions = ({
           setCompactMode={setCompactMode}
           t={t}
         />
+
+        <div className='flex items-center justify-between w-full md:w-auto'>
+          <Typography.Text strong className='mr-2'>
+            {t('状态筛选')}
+          </Typography.Text>
+          <Select
+            size='small'
+            value={statusFilter}
+            onChange={(v) => {
+              handleStatusFilterChange(v);
+            }}
+            style={{ width: 100 }}
+          >
+            <Select.Option value='all'>{t('全部')}</Select.Option>
+            <Select.Option value='enabled'>{t('已启用')}</Select.Option>
+            <Select.Option value='disabled'>{t('已禁用')}</Select.Option>
+          </Select>
+        </div>
       </div>
 
       <SelectionNotification
