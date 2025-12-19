@@ -233,8 +233,9 @@ func postConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, usage 
 	completionTokens := usage.CompletionTokens
 	cachedCreationTokens := usage.PromptTokensDetails.CachedCreationTokens
 
-	// 对于 Azure OpenAI 和 OpenAI，如果 prompt_tokens 已经包含了 cache_tokens，
-	// 需要从 promptTokens 中减去 cacheTokens，以便正确记录日志
+	// 注意：上游返回的 prompt_tokens 包含了 cache_tokens、image_tokens、audio_tokens 等所有输入tokens
+	// 为了正确记录日志和计费，需要从 promptTokens 中减去这些详细分类的tokens，避免重复计算
+	// 对于 Azure OpenAI 和 OpenAI，prompt_tokens 已经包含了 cache_tokens，需要减去以便分开记录
 	// 注意：OpenRouter 在 PostClaudeConsumeQuota 中已经处理了这个问题
 	if relayInfo.ChannelType == constant.ChannelTypeAzure || relayInfo.ChannelType == constant.ChannelTypeOpenAI {
 		if cacheTokens > 0 && promptTokens >= cacheTokens {
@@ -334,31 +335,28 @@ func postConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, usage 
 	var audioInputPrice float64
 	if !relayInfo.PriceData.UsePrice {
 		baseTokens := dPromptTokens
-		// 减去 cached tokens
+		// 注意：promptTokens 经过上面处理后，已经减去了 cache/image/audio tokens
+		// 所以这里的 promptTokens 是纯文本输入tokens
+		// 下面需要把各种特殊类型的tokens按倍率加回来
 		var cachedTokensWithRatio decimal.Decimal
 		if !dCacheTokens.IsZero() {
-			baseTokens = baseTokens.Sub(dCacheTokens)
 			cachedTokensWithRatio = dCacheTokens.Mul(dCacheRatio)
 		}
 		var dCachedCreationTokensWithRatio decimal.Decimal
 		if !dCachedCreationTokens.IsZero() {
-			baseTokens = baseTokens.Sub(dCachedCreationTokens)
 			dCachedCreationTokensWithRatio = dCachedCreationTokens.Mul(dCachedCreationRatio)
 		}
 
-		// 减去 image tokens
+		// image tokens 按倍率计算
 		var imageTokensWithRatio decimal.Decimal
 		if !dImageTokens.IsZero() {
-			baseTokens = baseTokens.Sub(dImageTokens)
 			imageTokensWithRatio = dImageTokens.Mul(dImageRatio)
 		}
 
-		// 减去 Gemini audio tokens
+		// Gemini audio tokens 特殊价格计算
 		if !dAudioTokens.IsZero() {
 			audioInputPrice = operation_setting.GetGeminiInputAudioPricePerMillionTokens(modelName)
 			if audioInputPrice > 0 {
-				// 重新计算 base tokens
-				baseTokens = baseTokens.Sub(dAudioTokens)
 				audioInputQuota = decimal.NewFromFloat(audioInputPrice).Div(decimal.NewFromInt(1000000)).Mul(dAudioTokens).Mul(dGroupRatio).Mul(dQuotaPerUnit)
 				extraContent += fmt.Sprintf("Audio Input 花费 %s", audioInputQuota.String())
 			}

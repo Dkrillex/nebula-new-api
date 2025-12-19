@@ -1172,8 +1172,9 @@ export function renderModelPrice(
     let imageRatioPrice = modelRatio * 2.0 * imageRatio;
 
     // Calculate effective input tokens (non-cached + cached with ratio applied)
+    // Note: inputTokens no longer includes cache tokens, so we don't subtract cacheTokens
     let effectiveInputTokens =
-      inputTokens - cacheTokens + cacheTokens * cacheRatio;
+      inputTokens + cacheTokens * cacheRatio;
     // Handle image tokens if present
     if (image && imageOutputTokens > 0) {
       effectiveInputTokens =
@@ -1286,7 +1287,7 @@ export function renderModelPrice(
                 inputDesc = i18next.t(
                   '(输入 {{nonCacheInput}} tokens / 1M tokens * {{symbol}}{{price}} + 缓存 {{cacheInput}} tokens / 1M tokens * {{symbol}}{{cachePrice}}',
                   {
-                    nonCacheInput: inputTokens - cacheTokens,
+                    nonCacheInput: inputTokens,
                     cacheInput: cacheTokens,
                     symbol: symbol,
                     price: (inputRatioPrice * rate).toFixed(6),
@@ -1600,8 +1601,9 @@ export function renderAudioModelPrice(
     let cacheRatioPrice = modelRatio * 2.0 * cacheRatio;
 
     // Calculate effective input tokens (non-cached + cached with ratio applied)
+    // Note: inputTokens no longer includes cache tokens, so we don't subtract cacheTokens
     const effectiveInputTokens =
-      inputTokens - cacheTokens + cacheTokens * cacheRatio;
+      inputTokens + cacheTokens * cacheRatio;
 
     let textPrice =
       (effectiveInputTokens / 1000000) * inputRatioPrice * groupRatio +
@@ -1680,7 +1682,7 @@ export function renderAudioModelPrice(
               ? i18next.t(
                   '文字提示 {{nonCacheInput}} tokens / 1M tokens * {{symbol}}{{price}} + 缓存 {{cacheInput}} tokens / 1M tokens * {{symbol}}{{cachePrice}} + 文字补全 {{completion}} tokens / 1M tokens * {{symbol}}{{compPrice}} = {{symbol}}{{total}}',
                   {
-                    nonCacheInput: inputTokens - cacheTokens,
+                    nonCacheInput: inputTokens,
                     cacheInput: cacheTokens,
                     symbol: symbol,
                     cachePrice: (inputRatioPrice * cacheRatio * rate).toFixed(
