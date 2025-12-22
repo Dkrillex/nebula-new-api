@@ -82,7 +82,7 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 		ws          *websocket.Conn
 	)
 
-	if relayFormat == types.RelayFormatOpenAIRealtime {
+	if relayFormat == types.RelayFormatOpenAIRealtime || relayFormat == types.RelayFormatGeminiLive {
 		// 检查 WebSocket 升级请求头
 		connection := c.Request.Header.Get("Connection")
 		upgrade := c.Request.Header.Get("Upgrade")
@@ -116,6 +116,9 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 			var errorResponse interface{}
 			switch relayFormat {
 			case types.RelayFormatOpenAIRealtime:
+				helper.WssError(c, ws, newAPIError.ToOpenAIError())
+				return
+			case types.RelayFormatGeminiLive:
 				helper.WssError(c, ws, newAPIError.ToOpenAIError())
 				return
 			case types.RelayFormatClaude:
@@ -243,7 +246,7 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 	relayInfo.SetPromptTokens(tokens)
 
 	// 实时对话不进行预扣费，使用后扣费（通过 PostWssConsumeQuota）
-	if relayFormat != types.RelayFormatOpenAIRealtime {
+	if relayFormat != types.RelayFormatOpenAIRealtime && relayFormat != types.RelayFormatGeminiLive {
 		priceData, err := helper.ModelPriceHelper(c, relayInfo, tokens, meta)
 		if err != nil {
 			newAPIError = types.NewError(err, types.ErrorCodeModelPriceError)
@@ -280,6 +283,8 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 
 		switch relayFormat {
 		case types.RelayFormatOpenAIRealtime:
+			newAPIError = relay.WssHelper(c, relayInfo)
+		case types.RelayFormatGeminiLive:
 			newAPIError = relay.WssHelper(c, relayInfo)
 		case types.RelayFormatClaude:
 			newAPIError = relay.ClaudeHelper(c, relayInfo)

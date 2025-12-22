@@ -78,23 +78,26 @@ func calculateAudioQuota(info QuotaInfo) int {
 		common.SysLog(fmt.Sprintf("[calculateAudioQuota] modelRatio is zero, using default %.1f for model %s", modelRatio.InexactFloat64(), info.ModelName))
 	}
 
-	ratio := groupRatio.Mul(modelRatio)
-
 	inputTextTokens := decimal.NewFromInt(int64(info.InputDetails.TextTokens))
 	outputTextTokens := decimal.NewFromInt(int64(info.OutputDetails.TextTokens))
 	inputAudioTokens := decimal.NewFromInt(int64(info.InputDetails.AudioTokens))
 	outputAudioTokens := decimal.NewFromInt(int64(info.OutputDetails.AudioTokens))
 
 	quota := decimal.Zero
-	quota = quota.Add(inputTextTokens)
-	quota = quota.Add(outputTextTokens.Mul(completionRatio))
-	quota = quota.Add(inputAudioTokens.Mul(audioRatio))
-	quota = quota.Add(outputAudioTokens.Mul(audioRatio).Mul(audioCompletionRatio))
 
-	quota = quota.Mul(ratio)
+	// 文本输入和输出使用 modelRatio 作为基础
+	textRatio := groupRatio.Mul(modelRatio)
+	quota = quota.Add(inputTextTokens.Mul(textRatio))
+	quota = quota.Add(outputTextTokens.Mul(completionRatio).Mul(textRatio))
 
-	// If ratio is not zero and quota is less than or equal to zero, set quota to 1
-	if !ratio.IsZero() && quota.LessThanOrEqual(decimal.Zero) {
+	// 音频输入和输出使用独立的绝对倍率（不乘以 modelRatio）
+	// audioRatio 是音频输入的绝对倍率
+	// audioCompletionRatio 是音频输出相对于音频输入的倍率
+	quota = quota.Add(inputAudioTokens.Mul(audioRatio).Mul(groupRatio))
+	quota = quota.Add(outputAudioTokens.Mul(audioRatio).Mul(audioCompletionRatio).Mul(groupRatio))
+
+	// If quota is less than or equal to zero, set quota to 1
+	if quota.LessThanOrEqual(decimal.Zero) {
 		quota = decimal.NewFromInt(1)
 	}
 
@@ -223,6 +226,8 @@ func PostWssConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, mod
 		logContent += fmt.Sprintf("（可能是上游超时）")
 		logger.LogError(ctx, fmt.Sprintf("total tokens is 0, cannot consume quota, userId %d, channelId %d, "+
 			"tokenId %d, model %s， pre-consumed quota %d", relayInfo.UserId, relayInfo.ChannelId, relayInfo.TokenId, modelName, relayInfo.FinalPreConsumedQuota))
+		// 如果没有使用量，不记录日志
+		return
 	} else {
 		model.UpdateUserUsedQuotaAndRequestCount(relayInfo.UserId, quota)
 		model.UpdateChannelUsedQuota(relayInfo.ChannelId, quota)

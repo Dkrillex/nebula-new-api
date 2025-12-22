@@ -1599,6 +1599,10 @@ export function renderAudioModelPrice(
     let inputRatioPrice = modelRatio * 2.0;
     let completionRatioPrice = modelRatio * 2.0 * completionRatio;
     let cacheRatioPrice = modelRatio * 2.0 * cacheRatio;
+    
+    // 音频价格基于系统基准倍率（2），而不是基于文本提示价格
+    let audioInputRatioPrice = audioRatio * 2.0;
+    let audioCompletionRatioPrice = audioRatio * 2.0 * audioCompletionRatio;
 
     // Calculate effective input tokens (non-cached + cached with ratio applied)
     // Note: inputTokens no longer includes cache tokens, so we don't subtract cacheTokens
@@ -1609,12 +1613,8 @@ export function renderAudioModelPrice(
       (effectiveInputTokens / 1000000) * inputRatioPrice * groupRatio +
       (completionTokens / 1000000) * completionRatioPrice * groupRatio;
     let audioPrice =
-      (audioInputTokens / 1000000) * inputRatioPrice * audioRatio * groupRatio +
-      (audioCompletionTokens / 1000000) *
-        inputRatioPrice *
-        audioRatio *
-        audioCompletionRatio *
-        groupRatio;
+      (audioInputTokens / 1000000) * audioInputRatioPrice * groupRatio +
+      (audioCompletionTokens / 1000000) * audioCompletionRatioPrice * groupRatio;
     let price = textPrice + audioPrice;
     return (
       <>
@@ -1651,27 +1651,19 @@ export function renderAudioModelPrice(
           )}
           <p>
             {i18next.t(
-              '音频提示价格：{{symbol}}{{price}} * {{audioRatio}} = {{symbol}}{{total}} / 1M tokens (音频倍率: {{audioRatio}})',
+              '音频提示价格：{{symbol}}{{total}} / 1M tokens',
               {
                 symbol: symbol,
-                price: (inputRatioPrice * rate).toFixed(6),
-                total: (inputRatioPrice * audioRatio * rate).toFixed(6),
-                audioRatio: audioRatio,
+                total: (audioInputRatioPrice * rate).toFixed(6),
               },
             )}
           </p>
           <p>
             {i18next.t(
-              '音频补全价格：{{symbol}}{{price}} * {{audioRatio}} * {{audioCompRatio}} = {{symbol}}{{total}} / 1M tokens (音频补全倍率: {{audioCompRatio}})',
+              '音频补全价格：{{audioRatio}} * {{audioCompRatio}} = {{symbol}}{{total}} / 1M tokens',
               {
                 symbol: symbol,
-                price: (inputRatioPrice * rate).toFixed(6),
-                total: (
-                  inputRatioPrice *
-                  audioRatio *
-                  audioCompletionRatio *
-                  rate
-                ).toFixed(6),
+                total: (audioCompletionRatioPrice * rate).toFixed(6),
                 audioRatio: audioRatio,
                 audioCompRatio: audioCompletionRatio,
               },

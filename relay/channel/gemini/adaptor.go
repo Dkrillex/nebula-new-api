@@ -459,6 +459,43 @@ func (a *Adaptor) GetRequestURL(info *relaycommon.RelayInfo) (string, error) {
 		}
 	}
 
+	// 检查是否为 Gemini Live API 模型
+	if IsGeminiLiveModel(info.UpstreamModelName) {
+		// 转换为 WebSocket URL
+		baseURL := strings.TrimSpace(info.ChannelBaseUrl)
+
+		// If baseURL is empty, use default endpoint based on API type
+		if baseURL == "" || baseURL == "/" {
+			// Default to Google AI Studio endpoint
+			baseURL = "https://generativelanguage.googleapis.com"
+		}
+
+		// Ensure baseURL has a scheme
+		if !strings.HasPrefix(baseURL, "http://") && !strings.HasPrefix(baseURL, "https://") && !strings.HasPrefix(baseURL, "ws://") && !strings.HasPrefix(baseURL, "wss://") {
+			// Default to https if no scheme
+			baseURL = "https://" + baseURL
+		}
+
+		if strings.HasPrefix(baseURL, "https://") {
+			baseURL = "wss://" + strings.TrimPrefix(baseURL, "https://")
+		} else if strings.HasPrefix(baseURL, "http://") {
+			baseURL = "ws://" + strings.TrimPrefix(baseURL, "http://")
+		}
+
+		// Gemini Live API WebSocket 端点
+		// 格式: wss://{region}-aiplatform.googleapis.com/ws/google.cloud.aiplatform.v1beta1.LlmBidiService/BidiGenerateContent
+		// 或: wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContent
+		var wsURL string
+		if strings.Contains(baseURL, "generativelanguage.googleapis.com") {
+			// Google AI Studio: 使用 API Key 查询参数
+			wsURL = fmt.Sprintf("%s/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContent?key=%s", baseURL, info.ApiKey)
+		} else {
+			// Vertex AI 格式: 使用 OAuth2 token（在 header 中设置）
+			wsURL = fmt.Sprintf("%s/ws/google.cloud.aiplatform.v1beta1.LlmBidiService/BidiGenerateContent", baseURL)
+		}
+		return wsURL, nil
+	}
+
 	version := model_setting.GetGeminiVersionSetting(info.UpstreamModelName)
 
 	if strings.HasPrefix(info.UpstreamModelName, "imagen") {
@@ -487,7 +524,20 @@ func (a *Adaptor) GetRequestURL(info *relaycommon.RelayInfo) (string, error) {
 
 func (a *Adaptor) SetupRequestHeader(c *gin.Context, req *http.Header, info *relaycommon.RelayInfo) error {
 	channel.SetupApiRequestHeader(info, c, req)
-	req.Set("x-goog-api-key", info.ApiKey)
+
+	// Gemini Live API 使用 WebSocket，需要特殊处理
+	if IsGeminiLiveModel(info.UpstreamModelName) {
+		// Google AI Studio 使用 API Key 查询参数，Vertex AI 使用 OAuth2
+		// 对于 WebSocket，我们可以在 URL 中添加 key 参数，或者在 header 中设置
+		// 这里先设置 header，如果 URL 中已经有 key 参数则不需要
+		if !strings.Contains(info.ChannelBaseUrl, "generativelanguage.googleapis.com") {
+			// Vertex AI 可能需要 OAuth2 token
+			req.Set("Authorization", "Bearer "+info.ApiKey)
+		}
+		// 注意：Google AI Studio 的 API Key 会在 URL 查询参数中传递（在 GetRequestURL 中处理）
+	} else {
+		req.Set("x-goog-api-key", info.ApiKey)
+	}
 	return nil
 }
 
@@ -557,10 +607,20 @@ func (a *Adaptor) ConvertOpenAIResponsesRequest(c *gin.Context, info *relaycommo
 }
 
 func (a *Adaptor) DoRequest(c *gin.Context, info *relaycommon.RelayInfo, requestBody io.Reader) (any, error) {
+	// 检查是否为 Gemini Live API (WebSocket)
+	if IsGeminiLiveModel(info.UpstreamModelName) {
+		return channel.DoWssRequest(a, c, info, requestBody)
+	}
 	return channel.DoApiRequest(a, c, info, requestBody)
 }
 
 func (a *Adaptor) DoResponse(c *gin.Context, resp *http.Response, info *relaycommon.RelayInfo) (usage any, err *types.NewAPIError) {
+	// 检查是否为 Gemini Live API (WebSocket)
+	if IsGeminiLiveModel(info.UpstreamModelName) && info.TargetWs != nil {
+		newErr, realtimeUsage := GeminiLiveHandler(c, info)
+		return realtimeUsage, newErr
+	}
+
 	if info.RelayMode == constant.RelayModeGemini {
 		if strings.Contains(info.RequestURLPath, ":embedContent") ||
 			strings.Contains(info.RequestURLPath, ":batchEmbedContents") {

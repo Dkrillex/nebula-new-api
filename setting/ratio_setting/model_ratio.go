@@ -194,38 +194,42 @@ var defaultModelRatio = map[string]float64{
 	"gemini-robotics-er-1.5-preview":            0.15,
 	"gemini-embedding-001":                      0.075,
 	"text-embedding-004":                        0.001,
-	"chatglm_turbo":                             0.3572,     // ￥0.005 / 1k tokens
-	"chatglm_pro":                               0.7143,     // ￥0.01 / 1k tokens
-	"chatglm_std":                               0.3572,     // ￥0.005 / 1k tokens
-	"chatglm_lite":                              0.1429,     // ￥0.002 / 1k tokens
-	"glm-4":                                     7.143,      // ￥0.1 / 1k tokens
-	"glm-4v":                                    0.05 * RMB, // ￥0.05 / 1k tokens
-	"glm-4-alltools":                            0.1 * RMB,  // ￥0.1 / 1k tokens
-	"glm-3-turbo":                               0.3572,
-	"glm-4-plus":                                0.05 * RMB,
-	"glm-4-0520":                                0.1 * RMB,
-	"glm-4-air":                                 0.001 * RMB,
-	"glm-4-airx":                                0.01 * RMB,
-	"glm-4-long":                                0.001 * RMB,
-	"glm-4-flash":                               0,
-	"glm-4v-plus":                               0.01 * RMB,
-	"qwen-turbo":                                0.8572, // ￥0.012 / 1k tokens
-	"qwen-plus":                                 10,     // ￥0.14 / 1k tokens
-	"text-embedding-v1":                         0.05,   // ￥0.0007 / 1k tokens
-	"SparkDesk-v1.1":                            1.2858, // ￥0.018 / 1k tokens
-	"SparkDesk-v2.1":                            1.2858, // ￥0.018 / 1k tokens
-	"SparkDesk-v3.1":                            1.2858, // ￥0.018 / 1k tokens
-	"SparkDesk-v3.5":                            1.2858, // ￥0.018 / 1k tokens
-	"SparkDesk-v4.0":                            1.2858,
-	"360GPT_S2_V9":                              0.8572, // ¥0.012 / 1k tokens
-	"360gpt-turbo":                              0.0858, // ¥0.0012 / 1k tokens
-	"360gpt-turbo-responsibility-8k":            0.8572, // ¥0.012 / 1k tokens
-	"360gpt-pro":                                0.8572, // ¥0.012 / 1k tokens
-	"360gpt2-pro":                               0.8572, // ¥0.012 / 1k tokens
-	"embedding-bert-512-v1":                     0.0715, // ¥0.001 / 1k tokens
-	"embedding_s1_v1":                           0.0715, // ¥0.001 / 1k tokens
-	"semantic_similarity_s1_v1":                 0.0715, // ¥0.001 / 1k tokens
-	"hunyuan":                                   7.143,  // ¥0.1 / 1k tokens  // https://cloud.tencent.com/document/product/1729/97731#e0e6be58-60c8-469f-bdeb-6c264ce3b4d0
+	// Gemini Live API models
+	"gemini-live-2.5-flash-native-audio":                 0.15,  // 基于 gemini-2.5-flash 价格
+	"gemini-live-2.5-flash-preview-native-audio-09-2025": 0.075, // 预览版价格
+	"gemini-2.5-flash-native-audio-preview-12-2025":      0.075, // 预览版价格
+	"chatglm_turbo":                  0.3572,     // ￥0.005 / 1k tokens
+	"chatglm_pro":                    0.7143,     // ￥0.01 / 1k tokens
+	"chatglm_std":                    0.3572,     // ￥0.005 / 1k tokens
+	"chatglm_lite":                   0.1429,     // ￥0.002 / 1k tokens
+	"glm-4":                          7.143,      // ￥0.1 / 1k tokens
+	"glm-4v":                         0.05 * RMB, // ￥0.05 / 1k tokens
+	"glm-4-alltools":                 0.1 * RMB,  // ￥0.1 / 1k tokens
+	"glm-3-turbo":                    0.3572,
+	"glm-4-plus":                     0.05 * RMB,
+	"glm-4-0520":                     0.1 * RMB,
+	"glm-4-air":                      0.001 * RMB,
+	"glm-4-airx":                     0.01 * RMB,
+	"glm-4-long":                     0.001 * RMB,
+	"glm-4-flash":                    0,
+	"glm-4v-plus":                    0.01 * RMB,
+	"qwen-turbo":                     0.8572, // ￥0.012 / 1k tokens
+	"qwen-plus":                      10,     // ￥0.14 / 1k tokens
+	"text-embedding-v1":              0.05,   // ￥0.0007 / 1k tokens
+	"SparkDesk-v1.1":                 1.2858, // ￥0.018 / 1k tokens
+	"SparkDesk-v2.1":                 1.2858, // ￥0.018 / 1k tokens
+	"SparkDesk-v3.1":                 1.2858, // ￥0.018 / 1k tokens
+	"SparkDesk-v3.5":                 1.2858, // ￥0.018 / 1k tokens
+	"SparkDesk-v4.0":                 1.2858,
+	"360GPT_S2_V9":                   0.8572, // ¥0.012 / 1k tokens
+	"360gpt-turbo":                   0.0858, // ¥0.0012 / 1k tokens
+	"360gpt-turbo-responsibility-8k": 0.8572, // ¥0.012 / 1k tokens
+	"360gpt-pro":                     0.8572, // ¥0.012 / 1k tokens
+	"360gpt2-pro":                    0.8572, // ¥0.012 / 1k tokens
+	"embedding-bert-512-v1":          0.0715, // ¥0.001 / 1k tokens
+	"embedding_s1_v1":                0.0715, // ¥0.001 / 1k tokens
+	"semantic_similarity_s1_v1":      0.0715, // ¥0.001 / 1k tokens
+	"hunyuan":                        7.143,  // ¥0.1 / 1k tokens  // https://cloud.tencent.com/document/product/1729/97731#e0e6be58-60c8-469f-bdeb-6c264ce3b4d0
 	// https://platform.lingyiwanwu.com/docs#-计费单元
 	// 已经按照 7.2 来换算美元价格
 	"yi-34b-chat-0205":       0.18,
@@ -254,8 +258,8 @@ var defaultModelRatio = map[string]float64{
 	// Perplexity online 模型对搜索额外收费，有需要应自行调整，此处不计入搜索费用
 	"llama-3-sonar-small-32k-chat":   0.2 / 1000 * USD,
 	"llama-3-sonar-small-32k-online": 0.2 / 1000 * USD,
-	"llama-3-sonar-large-32k-chat":   1 / 1000 * USD,
-	"llama-3-sonar-large-32k-online": 1 / 1000 * USD,
+	"llama-3-sonar-large-32k-chat":   1.0 / 1000 * USD,
+	"llama-3-sonar-large-32k-online": 1.0 / 1000 * USD,
 	// grok
 	"grok-3-beta":           1.5,
 	"grok-3-mini-beta":      0.15,
@@ -350,15 +354,21 @@ var defaultVideoAudioPricing = map[string]VideoAudioPricing{
 }
 
 var defaultAudioRatio = map[string]float64{
-	"gpt-4o-audio-preview":         16,
-	"gpt-4o-mini-audio-preview":    66.67,
-	"gpt-4o-realtime-preview":      8,
-	"gpt-4o-mini-realtime-preview": 16.67,
+	"gpt-4o-audio-preview":                               16,
+	"gpt-4o-mini-audio-preview":                          66.67,
+	"gpt-4o-realtime-preview":                            8,
+	"gpt-4o-mini-realtime-preview":                       16.67,
+	"gemini-live-2.5-flash-native-audio":                 4, // $0.20/百万tokens / $0.05基准价格 = 4倍
+	"gemini-live-2.5-flash-preview-native-audio-09-2025": 4, // 与正式版相同
+	"gemini-2.5-flash-native-audio-preview-12-2025":      4, // 与正式版相同
 }
 
 var defaultAudioCompletionRatio = map[string]float64{
-	"gpt-4o-realtime":      2,
-	"gpt-4o-mini-realtime": 2,
+	"gpt-4o-realtime":                                    2,
+	"gpt-4o-mini-realtime":                               2,
+	"gemini-live-2.5-flash-native-audio":                 4, // $0.80/百万tokens / $0.20基准价格 = 4倍
+	"gemini-live-2.5-flash-preview-native-audio-09-2025": 4, // 与正式版相同
+	"gemini-2.5-flash-native-audio-preview-12-2025":      4, // 与正式版相同
 }
 
 // MultiModalPricing 多模态模型定价结构
@@ -461,15 +471,12 @@ func InitRatioSettings() {
 	// Load multiModalPricingMap from database
 	loadMultiModalPricingFromDatabase()
 
-	// initialize audioRatioMap
-	audioRatioMapMutex.Lock()
-	audioRatioMap = defaultAudioRatio
-	audioRatioMapMutex.Unlock()
+	// Load audioRatioMap from database
+	loadAudioRatioFromDatabase()
 
-	// initialize audioCompletionRatioMap
-	audioCompletionRatioMapMutex.Lock()
-	audioCompletionRatioMap = defaultAudioCompletionRatio
-	audioCompletionRatioMapMutex.Unlock()
+	// Load audioCompletionRatioMap from database
+	loadAudioCompletionRatioFromDatabase()
+
 	// Print loaded configuration
 	printLoadedConfiguration()
 }
@@ -1367,6 +1374,46 @@ func loadCacheRatioFromDatabase() {
 	// Fallback to default if database load fails
 	cacheRatioMap = defaultCacheRatio
 	common.SysLog("Using default cache ratio configuration")
+}
+
+// loadAudioRatioFromDatabase loads audio ratio configuration from database
+func loadAudioRatioFromDatabase() {
+	audioRatioMapMutex.Lock()
+	defer audioRatioMapMutex.Unlock()
+
+	// Try to get from database first
+	if audioStr, exists := common.OptionMap["AudioRatio"]; exists && audioStr != "" {
+		var audioMap map[string]float64
+		if err := common.Unmarshal([]byte(audioStr), &audioMap); err == nil {
+			audioRatioMap = audioMap
+			common.SysLog("Loaded audio ratio configuration from database")
+			return
+		}
+	}
+
+	// Fallback to default if database load fails
+	audioRatioMap = defaultAudioRatio
+	common.SysLog("Using default audio ratio configuration")
+}
+
+// loadAudioCompletionRatioFromDatabase loads audio completion ratio configuration from database
+func loadAudioCompletionRatioFromDatabase() {
+	audioCompletionRatioMapMutex.Lock()
+	defer audioCompletionRatioMapMutex.Unlock()
+
+	// Try to get from database first
+	if audioCompletionStr, exists := common.OptionMap["AudioCompletionRatio"]; exists && audioCompletionStr != "" {
+		var audioCompletionMap map[string]float64
+		if err := common.Unmarshal([]byte(audioCompletionStr), &audioCompletionMap); err == nil {
+			audioCompletionRatioMap = audioCompletionMap
+			common.SysLog("Loaded audio completion ratio configuration from database")
+			return
+		}
+	}
+
+	// Fallback to default if database load fails
+	audioCompletionRatioMap = defaultAudioCompletionRatio
+	common.SysLog("Using default audio completion ratio configuration")
 }
 
 // loadImageRatioFromDatabase loads image ratio configuration from database

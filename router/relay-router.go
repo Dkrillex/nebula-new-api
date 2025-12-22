@@ -6,6 +6,7 @@ import (
 	"one-api/middleware"
 	"one-api/relay"
 	"one-api/types"
+	"strings"
 
 	"github.com/gin-gonic/gin"
 )
@@ -68,7 +69,13 @@ func SetRelayRouter(router *gin.Engine) {
 		wsRouter := relayV1Router.Group("")
 		wsRouter.Use(middleware.Distribute())
 		wsRouter.GET("/realtime", func(c *gin.Context) {
-			controller.Relay(c, types.RelayFormatOpenAIRealtime)
+			// 根据模型名称判断使用哪种格式
+			model := c.Query("model")
+			if model != "" && (strings.HasPrefix(model, "gemini-live-") || strings.Contains(model, "native-audio")) {
+				controller.Relay(c, types.RelayFormatGeminiLive)
+			} else {
+				controller.Relay(c, types.RelayFormatOpenAIRealtime)
+			}
 		})
 	}
 	{
@@ -177,6 +184,14 @@ func SetRelayRouter(router *gin.Engine) {
 	relayGeminiRouter.Use(middleware.ModelRequestRateLimit())
 	relayGeminiRouter.Use(middleware.Distribute())
 	{
+		// Gemini Live API WebSocket 路由
+		relayGeminiRouter.GET("/models/:model/liveStream", func(c *gin.Context) {
+			// 从路径参数中提取模型名
+			model := c.Param("model")
+			c.Set("model", model)
+			controller.Relay(c, types.RelayFormatGeminiLive)
+		})
+
 		// Gemini API 路径格式: /v1beta/models/{model_name}:{action}
 		relayGeminiRouter.POST("/models/*path", func(c *gin.Context) {
 			controller.Relay(c, types.RelayFormatGemini)

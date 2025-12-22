@@ -453,6 +453,10 @@ func GenRelayInfo(c *gin.Context, relayFormat types.RelayFormat, request dto.Req
 		return GenRelayInfoImage(c, request), nil
 	case types.RelayFormatOpenAIRealtime:
 		return GenRelayInfoWs(c, ws), nil
+	case types.RelayFormatGeminiLive:
+		info := GenRelayInfoWs(c, ws)
+		info.RelayFormat = types.RelayFormatGeminiLive
+		return info, nil
 	case types.RelayFormatClaude:
 		return GenRelayInfoClaude(c, request), nil
 	case types.RelayFormatRerank:

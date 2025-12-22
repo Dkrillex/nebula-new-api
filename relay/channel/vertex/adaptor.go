@@ -168,6 +168,67 @@ func (a *Adaptor) getRequestUrl(info *relaycommon.RelayInfo, modelName, suffix s
 func (a *Adaptor) GetRequestURL(info *relaycommon.RelayInfo) (string, error) {
 	suffix := ""
 	if a.RequestMode == RequestModeGemini {
+		// Check if this is a Gemini Live API request (WebSocket)
+		if gemini.IsGeminiLiveModel(info.UpstreamModelName) {
+			// H15: WebSocket URL 应该包含项目和区域信息，类似于 REST API
+			// 从 Service Account JSON 中提取 project_id
+			if info.ChannelOtherSettings.VertexKeyType != dto.VertexKeyTypeAPIKey {
+				adc := &Credentials{}
+				if err := common.Unmarshal([]byte(info.ApiKey), adc); err != nil {
+					return "", fmt.Errorf("failed to decode credentials file: %w", err)
+				}
+				a.AccountCredentials = *adc
+			}
+
+			projectID := a.AccountCredentials.ProjectID
+			if projectID == "" {
+				return "", fmt.Errorf("project_id not found in service account credentials")
+			}
+
+			// 使用 us-central1 作为默认区域
+			location := "us-central1"
+
+			baseURL := strings.TrimSpace(info.ChannelBaseUrl)
+
+			// If baseURL is empty, use default Vertex AI endpoint
+			if baseURL == "" || baseURL == "/" {
+				baseURL = "https://aiplatform.googleapis.com"
+			}
+
+			// Ensure baseURL has a scheme
+			if !strings.HasPrefix(baseURL, "http://") && !strings.HasPrefix(baseURL, "https://") && !strings.HasPrefix(baseURL, "ws://") && !strings.HasPrefix(baseURL, "wss://") {
+				// Default to https if no scheme
+				baseURL = "https://" + baseURL
+			}
+
+			// Convert https:// to wss:// or http:// to ws://
+			if strings.HasPrefix(baseURL, "https://") {
+				baseURL = "wss://" + strings.TrimPrefix(baseURL, "https://")
+			} else if strings.HasPrefix(baseURL, "http://") {
+				baseURL = "ws://" + strings.TrimPrefix(baseURL, "http://")
+			}
+
+			// H16: 尝试不同的 URL 路径格式
+			// 可能的格式：
+			// 1. /v1/projects/{project}/locations/{location}/publishers/google/models/{model}:streamGenerateContent
+			// 2. /ws/google.cloud.aiplatform.v1beta1.LlmBidiService/BidiGenerateContent (不带项目路径)
+			// 3. 使用区域特定的域名: {region}-aiplatform.googleapis.com
+
+			// 尝试使用区域特定的域名
+			regionHost := fmt.Sprintf("%s-aiplatform.googleapis.com", location)
+			baseURL = "wss://" + regionHost
+
+			// 使用标准的 gRPC-Web 路径格式
+			wsURL := fmt.Sprintf("%s/ws/google.cloud.aiplatform.v1beta1.LlmBidiService/BidiGenerateContent", baseURL)
+
+			// #region agent log
+			common.SysLog(fmt.Sprintf("[Vertex][H16][DEBUG] Using region-specific host: %s", regionHost))
+			common.SysLog(fmt.Sprintf("[Vertex][H16][DEBUG] Built WebSocket URL: %s", wsURL))
+			common.SysLog(fmt.Sprintf("[Vertex][H16][INFO] Project info will be sent in setup message, not in URL"))
+			// #endregion
+			return wsURL, nil
+		}
+
 		if model_setting.GetGeminiSettings().ThinkingAdapterEnabled {
 			// 新增逻辑：处理 -thinking-<budget> 格式
 			if strings.Contains(info.UpstreamModelName, "-thinking-") {
@@ -209,13 +270,47 @@ func (a *Adaptor) GetRequestURL(info *relaycommon.RelayInfo) (string, error) {
 
 func (a *Adaptor) SetupRequestHeader(c *gin.Context, req *http.Header, info *relaycommon.RelayInfo) error {
 	channel.SetupApiRequestHeader(info, c, req)
-	if info.ChannelOtherSettings.VertexKeyType != dto.VertexKeyTypeAPIKey {
-		accessToken, err := getAccessToken(a, info)
-		if err != nil {
-			return err
+
+	// #region agent log
+	common.SysLog(fmt.Sprintf("[Vertex][DEBUG] SetupRequestHeader - VertexKeyType: %s, IsGeminiLiveModel: %v, UpstreamModelName: %s", info.ChannelOtherSettings.VertexKeyType, gemini.IsGeminiLiveModel(info.UpstreamModelName), info.UpstreamModelName))
+	// #endregion
+
+	// Initialize AccountCredentials if using Service Account mode
+	if info.ChannelOtherSettings.VertexKeyType != dto.VertexKeyTypeAPIKey && a.AccountCredentials.ClientEmail == "" {
+		adc := &Credentials{}
+		if err := common.Unmarshal([]byte(info.ApiKey), adc); err != nil {
+			return fmt.Errorf("failed to decode credentials file: %w", err)
 		}
-		req.Set("Authorization", "Bearer "+accessToken)
+		a.AccountCredentials = *adc
+		// #region agent log
+		common.SysLog(fmt.Sprintf("[Vertex][DEBUG] Initialized AccountCredentials - ProjectID: %s, ClientEmail: %s", a.AccountCredentials.ProjectID, a.AccountCredentials.ClientEmail))
+		// #endregion
 	}
+
+	// Handle Gemini Live API (WebSocket) authentication
+	if gemini.IsGeminiLiveModel(info.UpstreamModelName) {
+		if info.ChannelOtherSettings.VertexKeyType == dto.VertexKeyTypeAPIKey {
+			// For API Key mode with Gemini Live, use API Key directly
+			req.Set("Authorization", "Bearer "+info.ApiKey)
+		} else {
+			// For Service Account mode, get OAuth2 token
+			accessToken, err := getAccessToken(a, info)
+			if err != nil {
+				return err
+			}
+			req.Set("Authorization", "Bearer "+accessToken)
+		}
+	} else {
+		// For non-Live API requests, use existing logic
+		if info.ChannelOtherSettings.VertexKeyType != dto.VertexKeyTypeAPIKey {
+			accessToken, err := getAccessToken(a, info)
+			if err != nil {
+				return err
+			}
+			req.Set("Authorization", "Bearer "+accessToken)
+		}
+	}
+
 	if a.AccountCredentials.ProjectID != "" {
 		req.Set("x-goog-user-project", a.AccountCredentials.ProjectID)
 	}
@@ -317,10 +412,20 @@ func (a *Adaptor) ConvertOpenAIResponsesRequest(c *gin.Context, info *relaycommo
 }
 
 func (a *Adaptor) DoRequest(c *gin.Context, info *relaycommon.RelayInfo, requestBody io.Reader) (any, error) {
+	// Check if this is a Gemini Live API request (WebSocket)
+	if gemini.IsGeminiLiveModel(info.UpstreamModelName) {
+		return channel.DoWssRequest(a, c, info, requestBody)
+	}
 	return channel.DoApiRequest(a, c, info, requestBody)
 }
 
 func (a *Adaptor) DoResponse(c *gin.Context, resp *http.Response, info *relaycommon.RelayInfo) (usage any, err *types.NewAPIError) {
+	// Handle Gemini Live API (WebSocket)
+	if gemini.IsGeminiLiveModel(info.UpstreamModelName) && info.TargetWs != nil {
+		newErr, realtimeUsage := gemini.GeminiLiveHandler(c, info)
+		return realtimeUsage, newErr
+	}
+
 	if info.IsStream {
 		switch a.RequestMode {
 		case RequestModeClaude:

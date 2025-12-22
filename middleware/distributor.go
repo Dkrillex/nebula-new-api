@@ -378,8 +378,16 @@ func extractModelNameFromGeminiPath(path string) string {
 	// 查找 ":" 的位置，模型名在 ":" 之前
 	colonIndex := strings.Index(path[startIndex:], ":")
 	if colonIndex == -1 {
-		// 如果没有找到 ":"，返回从 "/models/" 到路径结尾的部分
-		return path[startIndex:]
+		// 如果没有找到 ":"，可能是 /liveStream 或其他路径
+		modelPart := path[startIndex:]
+
+		// 处理 Gemini Live API 路径: /models/MODEL_NAME/liveStream
+		if slashIndex := strings.Index(modelPart, "/"); slashIndex != -1 {
+			return modelPart[:slashIndex]
+		}
+
+		// 返回从 "/models/" 到路径结尾的部分
+		return modelPart
 	}
 
 	// 返回模型名部分

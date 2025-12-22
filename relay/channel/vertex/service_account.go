@@ -63,14 +63,42 @@ func getAccessToken(a *Adaptor, info *relaycommon.RelayInfo) (string, error) {
 }
 
 func createSignedJWT(email, privateKeyPEM string) (string, error) {
+	// Normalize the private key: remove header/footer and normalize whitespace
+	privateKeyPEM = strings.TrimSpace(privateKeyPEM)
 
+	// Remove BEGIN/END markers if present
 	privateKeyPEM = strings.ReplaceAll(privateKeyPEM, "-----BEGIN PRIVATE KEY-----", "")
 	privateKeyPEM = strings.ReplaceAll(privateKeyPEM, "-----END PRIVATE KEY-----", "")
+	privateKeyPEM = strings.ReplaceAll(privateKeyPEM, "-----BEGIN RSA PRIVATE KEY-----", "")
+	privateKeyPEM = strings.ReplaceAll(privateKeyPEM, "-----END RSA PRIVATE KEY-----", "")
+
+	// Remove all whitespace (including \r, \n, spaces, tabs)
 	privateKeyPEM = strings.ReplaceAll(privateKeyPEM, "\r", "")
 	privateKeyPEM = strings.ReplaceAll(privateKeyPEM, "\n", "")
+	privateKeyPEM = strings.ReplaceAll(privateKeyPEM, "\t", "")
+	privateKeyPEM = strings.ReplaceAll(privateKeyPEM, " ", "")
+
+	// Handle escaped newlines in JSON strings (e.g., "\\n" in JSON becomes "\n" when parsed)
 	privateKeyPEM = strings.ReplaceAll(privateKeyPEM, "\\n", "")
 
-	block, _ := pem.Decode([]byte("-----BEGIN PRIVATE KEY-----\n" + privateKeyPEM + "\n-----END PRIVATE KEY-----"))
+	privateKeyPEM = strings.TrimSpace(privateKeyPEM)
+	if privateKeyPEM == "" {
+		return "", fmt.Errorf("private key is empty after normalization")
+	}
+
+	// Reconstruct PEM format with proper line breaks (64 chars per line for PEM)
+	pemContent := "-----BEGIN PRIVATE KEY-----\n"
+	// Add line breaks every 64 characters for proper PEM formatting
+	for i := 0; i < len(privateKeyPEM); i += 64 {
+		end := i + 64
+		if end > len(privateKeyPEM) {
+			end = len(privateKeyPEM)
+		}
+		pemContent += privateKeyPEM[i:end] + "\n"
+	}
+	pemContent += "-----END PRIVATE KEY-----\n"
+
+	block, _ := pem.Decode([]byte(pemContent))
 	if block == nil {
 		return "", fmt.Errorf("failed to parse PEM block containing the private key")
 	}
