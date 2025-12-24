@@ -461,11 +461,6 @@ Gemini Live API 按 token 计费，音频和文本分别计价：
 3. 使用 `proactive_audio=true` 过滤无关音频输入
 4. 对于仅需文本的场景，设置 `modalities=["text"]` 可大幅降低成本
 
-## 相关资源
-
-- [测试脚本](../scripts/gemini_live.py)
-- [OpenAI Realtime API 文档](./realtime.md)
-- [Gemini Live API 官方文档](https://docs.cloud.google.com/vertex-ai/generative-ai/docs/live-api)
 
 ---
 

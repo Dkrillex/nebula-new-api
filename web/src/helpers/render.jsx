@@ -1660,11 +1660,11 @@ export function renderAudioModelPrice(
           </p>
           <p>
             {i18next.t(
-              '音频补全价格：{{audioRatio}} * {{audioCompRatio}} = {{symbol}}{{total}} / 1M tokens',
+              '音频补全价格：{{symbol}}{{audioInputPrice}} * {{audioCompRatio}} = {{symbol}}{{total}} / 1M tokens (补全倍率: {{audioCompRatio}})',
               {
                 symbol: symbol,
                 total: (audioCompletionRatioPrice * rate).toFixed(6),
-                audioRatio: audioRatio,
+                audioInputPrice: (audioInputRatioPrice * rate).toFixed(6),
                 audioCompRatio: audioCompletionRatio,
               },
             )}
@@ -1705,15 +1705,8 @@ export function renderAudioModelPrice(
                 input: audioInputTokens,
                 completion: audioCompletionTokens,
                 symbol: symbol,
-                audioInputPrice: (audioRatio * inputRatioPrice * rate).toFixed(
-                  6,
-                ),
-                audioCompPrice: (
-                  audioRatio *
-                  audioCompletionRatio *
-                  inputRatioPrice *
-                  rate
-                ).toFixed(6),
+                audioInputPrice: (audioInputRatioPrice * rate).toFixed(6),
+                audioCompPrice: (audioCompletionRatioPrice * rate).toFixed(6),
                 total: (audioPrice * rate).toFixed(6),
               },
             )}

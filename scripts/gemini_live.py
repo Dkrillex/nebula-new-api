@@ -16,55 +16,54 @@ from io import BytesIO
 
 try:
     import sounddevice as sd
+
     HAS_SD = True
 except Exception:
     HAS_SD = False
 
 # ========== 配置区域 ==========
-API_BASE = "ws://localhost:3003"  # 本地测试地址
+API_BASE = "ws://llm.ai-nebula.com"  # 本地测试地址
 API_KEY = "sk-uQQ76mqGcyfwEqfYp1LL4fRyCvHA7oSRJCgZQq697tbYsmpD"
 
 # 模型选择（Gemini Live API 模型）
 MODEL = "gemini-live-2.5-flash-native-audio"
 # MODEL = "gemini-live-2.5-flash-preview-native-audio-09-2025"
-# MODEL = "gemini-2.5-flash-native-audio-preview-12-2025"
-
-# 使用模式：'openai' 使用 OpenAI 兼容接口，'gemini' 使用 Gemini 原生接口
-MODE = "gemini"  # 或 "openai"
+MODE = "gemini"
 
 # ========== 高级配置 ==========
 # 音色配置（30种可选音色之一）
-VOICE = "Zephyr"  # 默认音色：明快
+VOICE = "Leda"  # 默认音色：明快
 # 其他音色: Kore, Orus, Autonoe, Umbriel, Erinome, Laomedeia, Schedar, Achird, Sadachbia,
-#          Puck, Fenrir, Aoede, Enceladus, Algieba, Algenib, Achernar, Gacrux, 
+#          Puck, Fenrir, Aoede, Enceladus, Algieba, Algenib, Achernar, Gacrux,
 #          Zubenelgenubi, Sadaltager, Charon, Leda, Callirrhoe, Iapetus, Despina,
 #          Rasalgethi, Alnilam, Pulcherrima, Vindemiatrix, Sulafat
 
 # 语言配置（24种可选语言之一）
 LANGUAGE = "zh-CN"  # 默认中文
-# 其他语言: en-US, ja-JP, ko-KR, fr-FR, de-DE, es-US, pt-BR, it-IT, ru-RU, 
+# 其他语言: en-US, ja-JP, ko-KR, fr-FR, de-DE, es-US, pt-BR, it-IT, ru-RU,
 #          ar-EG, hi-IN, id-ID, nl-NL, pl-PL, th-TH, tr-TR, vi-VN, ro-RO,
 #          uk-UA, bn-BD, en-IN, mr-IN, ta-IN, te-IN
 
 # 输出模式
-OUTPUT_MODE = "audio_only"  # "audio_only" 或 "audio_with_text"（音频+文本转录）
+OUTPUT_MODE = "audio_with_text"  # "audio_only" 或 "audio_with_text"（音频+文本转录）
 
 # 功能开关
-GOOGLE_SEARCH = False      # 是否启用 Google 搜索（接地）
-PROACTIVE_AUDIO = False    # 主动音频：模型可以选择不回应与当前对话无关的音频
-EMPATHETIC_MODE = False    # 共情对话：根据输入内容的情绪表达和语气调整回答风格
+GOOGLE_SEARCH = True  # 是否启用 Google 搜索（接地）
+PROACTIVE_AUDIO = False  # 主动音频：模型可以选择不回应与当前对话无关的音频
+EMPATHETIC_MODE = False  # 共情对话：根据输入内容的情绪表达和语气调整回答风格
 
 # 语音识别灵敏度（使用用户友好的值，服务器会自动转换）
-START_SENSITIVITY = "low"   # 开始识别灵敏度："low" 或 "high"
-END_SENSITIVITY = "high"    # 结束识别灵敏度："low" 或 "high"
+START_SENSITIVITY = "low"  # 开始识别灵敏度："low" 或 "high"
+END_SENSITIVITY = "high"  # 结束识别灵敏度："low" 或 "high"
 
 # 音频配置
-PREFIX_PADDING_MS = 0       # 前缀内边距（0-1000ms）
-SILENCE_DURATION_MS = 0     # 静默时长（0-2000ms）
+PREFIX_PADDING_MS = 0  # 前缀内边距（0-1000ms）
+SILENCE_DURATION_MS = 0  # 静默时长（0-2000ms）
 
 # 上下文管理
-CONTEXT_WINDOW = 128000     # 上下文大小上限（5000-128000）
-TARGET_CONTEXT = 102400     # 目标上下文大小（0-128000）
+CONTEXT_WINDOW = 128000  # 上下文大小上限（5000-128000）
+TARGET_CONTEXT = 102400  # 目标上下文大小（0-128000）
+
 
 # ==============================
 
@@ -90,12 +89,12 @@ class GeminiLiveClient:
     def _on_message(self, ws, message):
         try:
             event = json.loads(message)
-            
+
             if self.mode == "openai":
                 self._handle_openai_message(event)
             else:
                 self._handle_gemini_message(event)
-                
+
         except Exception as e:
             print(f"\n解析消息错误: {e}")
             print(f"原始消息: {message[:200]}")
@@ -163,22 +162,22 @@ class GeminiLiveClient:
             self.setup_complete = True
         elif "serverContent" in event:
             server_content = event["serverContent"]
-            
+
             # 处理输出转录（音频转文本）
             if "outputTranscription" in server_content:
                 transcription = server_content["outputTranscription"]
                 text = transcription.get("text", "")
                 if text:
                     self.output_text_buffer.append(text)
-                    print(f"[转录] {text}", end="", flush=True)
-            
+                    print(f"{text}", end="", flush=True)
+
             # 处理输入转录（用户音频转文本）
             if "inputTranscription" in server_content:
                 transcription = server_content["inputTranscription"]
                 text = transcription.get("text", "")
                 if text:
                     print(f"\n[输入转录] {text}")
-            
+
             if server_content.get("turnComplete"):
                 self._stop_audio_playback()
                 print("\n✓ 回合完成")
@@ -186,10 +185,10 @@ class GeminiLiveClient:
                 if self.output_text_buffer:
                     print(f"  完整文本: {''.join(self.output_text_buffer)}")
                     self.output_text_buffer = []
-            
+
             if server_content.get("interrupted"):
                 print("\n⚠️ 响应被中断")
-            
+
             if "modelTurn" in server_content:
                 model_turn = server_content["modelTurn"]
                 if "parts" in model_turn:
@@ -238,7 +237,7 @@ class GeminiLiveClient:
         else:
             # Gemini 原生模式：发送 setup
             self.send_gemini_setup()
-        
+
         time.sleep(0.5)
 
     def send_openai_session_update(self):
@@ -268,21 +267,21 @@ class GeminiLiveClient:
                 }
             }
         }
-        
+
         # 添加语言配置
         if self.config.get("language"):
             speech_config["language_code"] = self.config["language"]
-        
+
         # 构建生成配置
         generation_config = {
             "temperature": 0.7,
             "response_modalities": ["AUDIO"],  # Gemini 只能有一个，优先音频
             "speech_config": speech_config
         }
-        
+
         # 注意：Gemini Live API 目前不支持上下文配置字段
         # 这些字段被保留在 URL 参数中，但不会在 setup 消息中发送
-        
+
         message = {
             "setup": {
                 "model": self.model,
@@ -296,29 +295,29 @@ class GeminiLiveClient:
                 }
             }
         }
-        
+
         # 添加 Google 搜索
         if self.config.get("google_search"):
             message["setup"]["tools"] = {
                 "google_search": {}
             }
-        
+
         # 添加主动音频和共情模式
         if self.config.get("proactive_audio") or self.config.get("empathetic_mode"):
             message["setup"]["proactivity"] = {
                 "proactive_audio": self.config.get("proactive_audio", False),
                 "empathetic_mode": self.config.get("empathetic_mode", False)
             }
-        
+
         # 添加输出转录
         if self.config.get("output_mode") == "audio_with_text":
             message["setup"]["output_audio_transcription"] = {}
-        
+
         # 添加语音识别配置
         # 将用户友好的值转换为 Gemini API 格式
         start_sens = self.config.get("start_sensitivity", "low")
         end_sens = self.config.get("end_sensitivity", "high")
-        
+
         # 转换为 Gemini API 要求的大写常量格式
         start_sens_map = {
             "low": "START_SENSITIVITY_LOW",
@@ -328,7 +327,7 @@ class GeminiLiveClient:
             "low": "END_SENSITIVITY_LOW",
             "high": "END_SENSITIVITY_HIGH"
         }
-        
+
         message["setup"]["realtime_input_config"] = {
             "automatic_activity_detection": {
                 "disabled": False,
@@ -338,7 +337,7 @@ class GeminiLiveClient:
                 "silence_duration_ms": self.config.get("silence_duration_ms", 0)
             }
         }
-        
+
         self.ws.send(json.dumps(message))
 
     def send_openai_text(self, text):
@@ -418,7 +417,7 @@ class GeminiLiveClient:
         if self.mode == "openai":
             # OpenAI 兼容接口，支持 URL 参数配置
             params = [f"model={self.model}"]
-            
+
             # 添加高级配置参数
             if self.config.get("voice"):
                 params.append(f"voice={self.config['voice']}")
@@ -444,12 +443,12 @@ class GeminiLiveClient:
                 params.append(f"context_window_threshold={self.config['context_window']}")
             if self.config.get("target_context"):
                 params.append(f"target_context_size={self.config['target_context']}")
-            
+
             url = f"{self.api_base}/v1/realtime?{'&'.join(params)}"
         else:
             # Gemini 原生接口
             url = f"{self.api_base}/v1beta/models/{self.model}/liveStream"
-        
+
         headers = {"Authorization": f"Bearer {self.api_key}"}
 
         self.ws = websocket.WebSocketApp(
@@ -529,7 +528,8 @@ class GeminiLiveClient:
             self.output_audio_buffer.seek(0)
             with open(filename, "wb") as f:
                 f.write(self.output_audio_buffer.read())
-            print(f"  [{tag}] 音频已保存: {filename} (播放: ffplay -f s16le -ar {self.output_sample_rate} -ac 1 {filename})")
+            print(
+                f"  [{tag}] 音频已保存: {filename} (播放: ffplay -f s16le -ar {self.output_sample_rate} -ac 1 {filename})")
             self.audio_saved = True
         except Exception as e:
             print(f"  [{tag}] 保存音频失败: {e}")
@@ -599,10 +599,10 @@ def main():
         print("  - 输入 /a 录音5秒并发送语音（16kHz）")
         print("  - 输入 /mode 切换模式（openai/gemini）")
         print("  - 输入 /q 退出")
-        
+
         while True:
             user_input = input("\n输入内容(/a 录音, /mode 切换, /q 退出，回车默认问好): ").strip()
-            
+
             if user_input in ("/q", "q", "quit", "exit"):
                 print("退出会话")
                 break
@@ -631,7 +631,7 @@ def main():
             # 等待响应
             time.sleep(0.2)
             print("[等待响应...]\n")
-            
+
             # 简单等待一轮完成
             time.sleep(20)
 
