@@ -37,6 +37,40 @@ func GeminiTextGenerationHandler(c *gin.Context, info *relaycommon.RelayInfo, re
 		return nil, types.NewOpenAIError(err, types.ErrorCodeBadResponseBody, http.StatusInternalServerError)
 	}
 
+	// 从 CandidatesTokensDetails 中提取图片和文本输出 tokens
+	var imageOutputTokens int
+	var textOutputTokens int
+	for _, detail := range geminiResponse.UsageMetadata.CandidatesTokensDetails {
+		if detail.Modality == "IMAGE" {
+			imageOutputTokens += detail.TokenCount
+		} else if detail.Modality == "TEXT" {
+			textOutputTokens += detail.TokenCount
+		}
+	}
+
+	// 如果没有 CandidatesTokensDetails，尝试从内容中统计图片数量（作为后备）
+	var imageCount int
+	if imageOutputTokens == 0 {
+		for _, candidate := range geminiResponse.Candidates {
+			if len(candidate.Content.Parts) > 0 {
+				for _, part := range candidate.Content.Parts {
+					if part.InlineData != nil && part.InlineData.MimeType != "" {
+						imageCount++
+					}
+				}
+			}
+		}
+	}
+
+	// 将图片信息存储到 context，供计费逻辑使用
+	if imageOutputTokens > 0 || imageCount > 0 {
+		c.Set("gemini_image_output_tokens", imageOutputTokens)
+		c.Set("gemini_text_output_tokens", textOutputTokens)
+		if imageCount > 0 {
+			c.Set("gemini_image_output_count", imageCount)
+		}
+	}
+
 	// 计算使用量（基于 UsageMetadata）
 	usage := dto.Usage{
 		PromptTokens:     geminiResponse.UsageMetadata.PromptTokenCount,
@@ -111,14 +145,16 @@ func GeminiTextGenerationStreamHandler(c *gin.Context, info *relaycommon.RelayIn
 			return false
 		}
 
-		// 统计图片数量
+		// 统计图片数量和文本 tokens
 		for _, candidate := range geminiResponse.Candidates {
-			for _, part := range candidate.Content.Parts {
-				if part.InlineData != nil && part.InlineData.MimeType != "" {
-					imageCount++
-				}
-				if part.Text != "" {
-					responseText.WriteString(part.Text)
+			if len(candidate.Content.Parts) > 0 {
+				for _, part := range candidate.Content.Parts {
+					if part.InlineData != nil && part.InlineData.MimeType != "" {
+						imageCount++
+					}
+					if part.Text != "" {
+						responseText.WriteString(part.Text)
+					}
 				}
 			}
 		}
@@ -136,6 +172,25 @@ func GeminiTextGenerationStreamHandler(c *gin.Context, info *relaycommon.RelayIn
 					usage.PromptTokensDetails.TextTokens = detail.TokenCount
 				}
 			}
+
+			// 从 CandidatesTokensDetails 中提取图片和文本输出 tokens
+			var imageOutputTokens int
+			var textOutputTokens int
+			for _, detail := range geminiResponse.UsageMetadata.CandidatesTokensDetails {
+				if detail.Modality == "IMAGE" {
+					imageOutputTokens += detail.TokenCount
+				} else if detail.Modality == "TEXT" {
+					textOutputTokens += detail.TokenCount
+				}
+			}
+
+			// 更新全局变量（用于最终计算）
+			if imageOutputTokens > 0 {
+				c.Set("gemini_image_output_tokens", imageOutputTokens)
+			}
+			if textOutputTokens > 0 {
+				c.Set("gemini_text_output_tokens", textOutputTokens)
+			}
 		}
 
 		// 直接发送 GeminiChatResponse 响应
@@ -151,10 +206,39 @@ func GeminiTextGenerationStreamHandler(c *gin.Context, info *relaycommon.RelayIn
 		return nil, types.NewOpenAIError(errors.New("no response received from Gemini API"), types.ErrorCodeEmptyResponse, http.StatusInternalServerError)
 	}
 
-	if imageCount != 0 {
-		if usage.CompletionTokens == 0 {
-			usage.CompletionTokens = imageCount * 258
+	// 从 context 中获取已设置的图片和文本输出 tokens（在流式处理中已设置）
+	imageOutputTokens := c.GetInt("gemini_image_output_tokens")
+	textOutputTokens := c.GetInt("gemini_text_output_tokens")
+
+	// 如果没有从 CandidatesTokensDetails 获取到，尝试从内容统计（作为后备）
+	if imageOutputTokens == 0 && imageCount > 0 {
+		// 后备方案：使用图片数量估算（但应该优先使用 API 返回的实际值）
+		imageOutputTokens = imageCount * 258
+	}
+
+	if textOutputTokens == 0 && usage.CompletionTokens > 0 {
+		// 如果没有单独的文本 tokens，从总 completion tokens 中减去图片 tokens
+		if imageOutputTokens > 0 && usage.CompletionTokens >= imageOutputTokens {
+			textOutputTokens = usage.CompletionTokens - imageOutputTokens
+		} else {
+			textOutputTokens = usage.CompletionTokens
 		}
+	}
+
+	// 如果仍然没有，使用本地统计
+	if textOutputTokens == 0 {
+		str := responseText.String()
+		if len(str) > 0 {
+			textOutputTokens = service.CountTokenInput(str, info.UpstreamModelName)
+		}
+	}
+
+	// 确保 context 中有正确的值
+	if imageOutputTokens > 0 {
+		c.Set("gemini_image_output_tokens", imageOutputTokens)
+	}
+	if textOutputTokens > 0 {
+		c.Set("gemini_text_output_tokens", textOutputTokens)
 	}
 
 	// 如果usage.CompletionTokens为0，则使用本地统计的completion tokens

@@ -249,9 +249,14 @@ func postConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, usage 
 	completionRatio := relayInfo.PriceData.CompletionRatio
 	cacheRatio := relayInfo.PriceData.CacheRatio
 	imageRatio := relayInfo.PriceData.ImageRatio
+	imageCompletionRatio := relayInfo.PriceData.ImageCompletionRatio
 	modelRatio := relayInfo.PriceData.ModelRatio
 	modelPrice := relayInfo.PriceData.ModelPrice
 	cachedCreationRatio := relayInfo.PriceData.CacheCreationRatio
+
+	// 获取 Gemini 图片和文本输出 tokens（用于计费和日志记录）
+	geminiImageOutputTokens := ctx.GetInt("gemini_image_output_tokens")
+	geminiTextOutputTokens := ctx.GetInt("gemini_text_output_tokens")
 
 	// Convert values to decimal for precise calculation
 	dPromptTokens := decimal.NewFromInt(int64(promptTokens))
@@ -365,7 +370,36 @@ func postConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, usage 
 			Add(imageTokensWithRatio).
 			Add(dCachedCreationTokensWithRatio)
 
-		completionQuota := dCompletionTokens.Mul(dCompletionRatio)
+		// 检查是否有 Gemini 图片输出（需要分别计费）
+		var completionQuota decimal.Decimal
+		if geminiImageOutputTokens > 0 && imageCompletionRatio > 0 {
+			// 分别计算文本输出和图片输出费用
+			textOutputTokens := int64(geminiTextOutputTokens)
+			if textOutputTokens == 0 {
+				// 如果没有单独统计文本 tokens，从 completionTokens 中减去图片 tokens
+				imageTokens := int64(geminiImageOutputTokens)
+				if dCompletionTokens.GreaterThanOrEqual(decimal.NewFromInt(imageTokens)) {
+					textOutputTokens = dCompletionTokens.Sub(decimal.NewFromInt(imageTokens)).IntPart()
+				}
+				if textOutputTokens < 0 {
+					textOutputTokens = 0
+				}
+			}
+
+			imageTokens := decimal.NewFromInt(int64(geminiImageOutputTokens))
+			dImageCompletionRatio := decimal.NewFromFloat(imageCompletionRatio)
+
+			textCompletionQuota := decimal.NewFromInt(textOutputTokens).Mul(dCompletionRatio)
+			imageCompletionQuota := imageTokens.Mul(dImageCompletionRatio)
+
+			completionQuota = textCompletionQuota.Add(imageCompletionQuota)
+
+			extraContent += fmt.Sprintf("，文本输出 %d tokens × %.2f + 图片输出 %d tokens × %.2f",
+				textOutputTokens, completionRatio, geminiImageOutputTokens, imageCompletionRatio)
+		} else {
+			// 常规计费：所有 completion tokens 使用 CompletionRatio
+			completionQuota = dCompletionTokens.Mul(dCompletionRatio)
+		}
 
 		quotaCalculateDecimal = promptQuota.Add(completionQuota).Mul(ratio)
 
@@ -541,6 +575,28 @@ func postConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, usage 
 	if !dImageGenerationCallQuota.IsZero() {
 		other["image_generation_call"] = true
 		other["image_generation_call_price"] = imageGenerationCallPrice
+	}
+	// 记录 Gemini 图片和文本输出 tokens 详情
+	if geminiImageOutputTokens > 0 {
+		other["image_output_tokens"] = geminiImageOutputTokens
+		calculatedTextOutputTokens := geminiTextOutputTokens
+		if calculatedTextOutputTokens == 0 {
+			// 如果没有单独统计文本tokens，从总completionTokens中减去图片tokens
+			calculatedTextOutputTokens = completionTokens - geminiImageOutputTokens
+			if calculatedTextOutputTokens < 0 {
+				calculatedTextOutputTokens = 0
+			}
+		}
+		if calculatedTextOutputTokens > 0 {
+			other["text_output_tokens"] = calculatedTextOutputTokens
+		}
+		// 记录图片补全倍率
+		if imageCompletionRatio > 0 {
+			other["image_completion_ratio"] = imageCompletionRatio
+		}
+	} else if geminiTextOutputTokens > 0 {
+		// 只有文本输出时也记录
+		other["text_output_tokens"] = geminiTextOutputTokens
 	}
 	model.RecordConsumeLog(ctx, relayInfo.UserId, model.RecordConsumeLogParams{
 		ChannelId:        relayInfo.ChannelId,

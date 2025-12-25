@@ -155,6 +155,24 @@ func UpdateOption(c *gin.Context) {
 			})
 			return
 		}
+	case "ImageCompletionRatio":
+		err = ratio_setting.UpdateImageCompletionRatioByJSONString(option.Value.(string))
+		if err != nil {
+			c.JSON(http.StatusOK, gin.H{
+				"success": false,
+				"message": "图片补全倍率设置失败: " + err.Error(),
+			})
+			return
+		}
+	case "OriginImageCompletionRatio":
+		err = ratio_setting.UpdateOriginImageCompletionRatioByJSONString(option.Value.(string))
+		if err != nil {
+			c.JSON(http.StatusOK, gin.H{
+				"success": false,
+				"message": "原始图片补全倍率设置失败: " + err.Error(),
+			})
+			return
+		}
 	case "VideoModelPricePerSecond":
 		err = ratio_setting.UpdateVideoModelPricePerSecondByJSONString(option.Value.(string))
 		if err != nil {

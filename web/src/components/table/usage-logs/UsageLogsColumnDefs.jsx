@@ -610,6 +610,7 @@ export const getLogsColumns = ({
           );
         } else {
           // 原有的逻辑
+          const imageCompletionRatio = other?.image_completion_ratio || 0;
           content = other?.claude
             ? renderModelPriceSimple(
               other.model_ratio,
@@ -622,6 +623,7 @@ export const getLogsColumns = ({
               other.cache_creation_ratio || 1.0,
               false,
               1.0,
+              imageCompletionRatio,
               other?.is_system_prompt_overwritten,
               'claude',
               other?.per_call_image_multiplier || 0,
@@ -639,7 +641,8 @@ export const getLogsColumns = ({
               0,
               1.0,
               false,
-              1.0,
+              other?.image_ratio || 1.0,
+              imageCompletionRatio,
               other?.is_system_prompt_overwritten,
               'openai',
               other?.per_call_image_multiplier || 0,

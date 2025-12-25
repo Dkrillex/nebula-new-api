@@ -42,6 +42,8 @@ const RatioSetting = () => {
     ImageRatio: '',
     AudioRatio: '',
     AudioCompletionRatio: '',
+    ImageCompletionRatio: '',
+    OriginImageCompletionRatio: '',
     AutoGroups: '',
     DefaultUseAutoGroup: false,
     ExposeRatioEnabled: false,
@@ -67,7 +69,9 @@ const RatioSetting = () => {
           item.key === 'CacheRatio' ||
           item.key === 'ImageRatio' ||
           item.key === 'AudioRatio' ||
-          item.key === 'AudioCompletionRatio'
+          item.key === 'AudioCompletionRatio' ||
+          item.key === 'ImageCompletionRatio' ||
+          item.key === 'OriginImageCompletionRatio'
         ) {
           try {
             item.value = JSON.stringify(JSON.parse(item.value), null, 2);

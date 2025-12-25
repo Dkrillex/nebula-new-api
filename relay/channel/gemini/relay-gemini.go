@@ -1143,6 +1143,21 @@ func GeminiChatStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *
 			logger.LogError(c, err.Error())
 		}
 		if isStop {
+			// 在最后一个响应块中提取图片和文本输出 tokens
+			var imageOutputTokens int
+			var textOutputTokens int
+			for _, detail := range geminiResponse.UsageMetadata.CandidatesTokensDetails {
+				if detail.Modality == "IMAGE" {
+					imageOutputTokens += detail.TokenCount
+				} else if detail.Modality == "TEXT" {
+					textOutputTokens += detail.TokenCount
+				}
+			}
+			// 将图片和文本输出 tokens 存储到 context，供计费逻辑使用
+			if imageOutputTokens > 0 || textOutputTokens > 0 {
+				c.Set("gemini_image_output_tokens", imageOutputTokens)
+				c.Set("gemini_text_output_tokens", textOutputTokens)
+			}
 			_ = handleStream(c, info, helper.GenerateStopResponse(id, createAt, info.UpstreamModelName, finishReason))
 		}
 		return true
@@ -1214,6 +1229,23 @@ func GeminiChatHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http.R
 	if isImageGenerationResponse(&geminiResponse) {
 		// 转换为图像响应格式
 		imageResponse := responseGeminiImageGeneration2OpenAI(&geminiResponse)
+
+		// 从 CandidatesTokensDetails 中提取图片和文本输出 tokens
+		var imageOutputTokens int
+		var textOutputTokens int
+		for _, detail := range geminiResponse.UsageMetadata.CandidatesTokensDetails {
+			if detail.Modality == "IMAGE" {
+				imageOutputTokens += detail.TokenCount
+			} else if detail.Modality == "TEXT" {
+				textOutputTokens += detail.TokenCount
+			}
+		}
+
+		// 将图片和文本输出 tokens 存储到 context，供计费逻辑使用
+		if imageOutputTokens > 0 || textOutputTokens > 0 {
+			c.Set("gemini_image_output_tokens", imageOutputTokens)
+			c.Set("gemini_text_output_tokens", textOutputTokens)
+		}
 
 		// 使用API返回的真实token使用量
 		usage := dto.Usage{

@@ -20,6 +20,7 @@ type PriceData struct {
 	ImageRatio             float64
 	AudioRatio             float64
 	AudioCompletionRatio   float64
+	ImageCompletionRatio   float64
 	OtherRatios            map[string]float64
 	UsePrice               bool
 	UseImageTokenPricing   bool                            // 是否使用图像Token表定价
@@ -39,5 +40,5 @@ func (p PriceData) ToSetting() string {
 		return fmt.Sprintf("UseImageTokenPricing: true, ImageTokenPricing: {InputTextPrice: %f, InputImagePrice: %f, OutputImagePrice: %f}, GroupRatio: %f",
 			p.ImageTokenPricing.InputTextPrice, p.ImageTokenPricing.InputImagePrice, p.ImageTokenPricing.OutputImagePrice, p.GroupRatioInfo.GroupRatio)
 	}
-	return fmt.Sprintf("ModelPrice: %f, ModelRatio: %f, CompletionRatio: %f, CacheRatio: %f, GroupRatio: %f, UsePrice: %t, CacheCreationRatio: %f, ShouldPreConsumedQuota: %d, ImageRatio: %f, AudioRatio: %f, AudioCompletionRatio: %f", p.ModelPrice, p.ModelRatio, p.CompletionRatio, p.CacheRatio, p.GroupRatioInfo.GroupRatio, p.UsePrice, p.CacheCreationRatio, p.ShouldPreConsumedQuota, p.ImageRatio, p.AudioRatio, p.AudioCompletionRatio)
+	return fmt.Sprintf("ModelPrice: %f, ModelRatio: %f, CompletionRatio: %f, CacheRatio: %f, GroupRatio: %f, UsePrice: %t, CacheCreationRatio: %f, ShouldPreConsumedQuota: %d, ImageRatio: %f, AudioRatio: %f, AudioCompletionRatio: %f, ImageCompletionRatio: %f", p.ModelPrice, p.ModelRatio, p.CompletionRatio, p.CacheRatio, p.GroupRatioInfo.GroupRatio, p.UsePrice, p.CacheCreationRatio, p.ShouldPreConsumedQuota, p.ImageRatio, p.AudioRatio, p.AudioCompletionRatio, p.ImageCompletionRatio)
 }

@@ -127,6 +127,8 @@ func ModelPriceHelper(c *gin.Context, info *relaycommon.RelayInfo, promptTokens 
 		preConsumedQuota = int(modelPrice * common.QuotaPerUnit * groupRatioInfo.GroupRatio)
 	}
 
+	imageCompletionRatio := ratio_setting.GetImageCompletionRatio(info.OriginModelName)
+
 	priceData := types.PriceData{
 		ModelPrice:             modelPrice,
 		ModelRatio:             modelRatio,
@@ -137,6 +139,7 @@ func ModelPriceHelper(c *gin.Context, info *relaycommon.RelayInfo, promptTokens 
 		ImageRatio:             imageRatio,
 		AudioRatio:             audioRatio,
 		AudioCompletionRatio:   audioCompletionRatio,
+		ImageCompletionRatio:   imageCompletionRatio,
 		CacheCreationRatio:     cacheCreationRatio,
 		ShouldPreConsumedQuota: preConsumedQuota,
 	}

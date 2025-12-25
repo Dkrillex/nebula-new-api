@@ -477,6 +477,12 @@ func InitRatioSettings() {
 	// Load audioCompletionRatioMap from database
 	loadAudioCompletionRatioFromDatabase()
 
+	// Load imageCompletionRatioMap from database
+	loadImageCompletionRatioFromDatabase()
+
+	// Load originImageCompletionRatioMap from database
+	loadOriginImageCompletionRatioFromDatabase()
+
 	// Print loaded configuration
 	printLoadedConfiguration()
 }
@@ -830,6 +836,16 @@ var (
 	audioCompletionRatioMapMutex                    = sync.RWMutex{}
 )
 
+var (
+	imageCompletionRatioMap      map[string]float64 = nil
+	imageCompletionRatioMapMutex                    = sync.RWMutex{}
+)
+
+var (
+	originImageCompletionRatioMap      map[string]float64 = nil
+	originImageCompletionRatioMapMutex                    = sync.RWMutex{}
+)
+
 // 按张计费的图片模型价格（系统价格，用于实际扣费，单位：美元/张）
 var (
 	imageModelPricePerImageMap      map[string]float64 = nil
@@ -935,6 +951,91 @@ func GetAudioCompletionRatioCopy() map[string]float64 {
 	defer audioCompletionRatioMapMutex.RUnlock()
 	copyMap := make(map[string]float64, len(audioCompletionRatioMap))
 	for k, v := range audioCompletionRatioMap {
+		copyMap[k] = v
+	}
+	return copyMap
+}
+
+func GetImageCompletionRatio(name string) float64 {
+	imageCompletionRatioMapMutex.RLock()
+	defer imageCompletionRatioMapMutex.RUnlock()
+	name = FormatMatchingModelName(name)
+	if ratio, ok := imageCompletionRatioMap[name]; ok {
+		return ratio
+	}
+	// 如果没有配置 ImageCompletionRatio，回退到 CompletionRatio
+	return GetCompletionRatio(name)
+}
+
+func ImageCompletionRatio2JSONString() string {
+	imageCompletionRatioMapMutex.RLock()
+	defer imageCompletionRatioMapMutex.RUnlock()
+	jsonBytes, err := common.Marshal(imageCompletionRatioMap)
+	if err != nil {
+		common.SysError("error marshalling image completion ratio: " + err.Error())
+	}
+	return string(jsonBytes)
+}
+
+func UpdateImageCompletionRatioByJSONString(jsonStr string) error {
+	tmp := make(map[string]float64)
+	if err := common.Unmarshal([]byte(jsonStr), &tmp); err != nil {
+		return err
+	}
+	imageCompletionRatioMapMutex.Lock()
+	imageCompletionRatioMap = tmp
+	imageCompletionRatioMapMutex.Unlock()
+	InvalidateExposedDataCache()
+	return nil
+}
+
+func GetImageCompletionRatioCopy() map[string]float64 {
+	imageCompletionRatioMapMutex.RLock()
+	defer imageCompletionRatioMapMutex.RUnlock()
+	copyMap := make(map[string]float64, len(imageCompletionRatioMap))
+	for k, v := range imageCompletionRatioMap {
+		copyMap[k] = v
+	}
+	return copyMap
+}
+
+func GetOriginImageCompletionRatio(name string) float64 {
+	originImageCompletionRatioMapMutex.RLock()
+	defer originImageCompletionRatioMapMutex.RUnlock()
+	name = FormatMatchingModelName(name)
+	if ratio, ok := originImageCompletionRatioMap[name]; ok {
+		return ratio
+	}
+	return 0
+}
+
+func OriginImageCompletionRatio2JSONString() string {
+	originImageCompletionRatioMapMutex.RLock()
+	defer originImageCompletionRatioMapMutex.RUnlock()
+	jsonBytes, err := common.Marshal(originImageCompletionRatioMap)
+	if err != nil {
+		common.SysError("error marshalling origin image completion ratio: " + err.Error())
+	}
+	return string(jsonBytes)
+}
+
+func UpdateOriginImageCompletionRatioByJSONString(jsonStr string) error {
+	tmp := make(map[string]float64)
+	if err := common.Unmarshal([]byte(jsonStr), &tmp); err != nil {
+		return err
+	}
+	originImageCompletionRatioMapMutex.Lock()
+	originImageCompletionRatioMap = tmp
+	originImageCompletionRatioMapMutex.Unlock()
+	InvalidateExposedDataCache()
+	return nil
+}
+
+func GetOriginImageCompletionRatioCopy() map[string]float64 {
+	originImageCompletionRatioMapMutex.RLock()
+	defer originImageCompletionRatioMapMutex.RUnlock()
+	copyMap := make(map[string]float64, len(originImageCompletionRatioMap))
+	for k, v := range originImageCompletionRatioMap {
 		copyMap[k] = v
 	}
 	return copyMap
@@ -1414,6 +1515,46 @@ func loadAudioCompletionRatioFromDatabase() {
 	// Fallback to default if database load fails
 	audioCompletionRatioMap = defaultAudioCompletionRatio
 	common.SysLog("Using default audio completion ratio configuration")
+}
+
+// loadImageCompletionRatioFromDatabase loads image completion ratio configuration from database
+func loadImageCompletionRatioFromDatabase() {
+	imageCompletionRatioMapMutex.Lock()
+	defer imageCompletionRatioMapMutex.Unlock()
+
+	// Try to get from database first
+	if imageCompletionStr, exists := common.OptionMap["ImageCompletionRatio"]; exists && imageCompletionStr != "" {
+		var imageCompletionMap map[string]float64
+		if err := common.Unmarshal([]byte(imageCompletionStr), &imageCompletionMap); err == nil {
+			imageCompletionRatioMap = imageCompletionMap
+			common.SysLog("Loaded image completion ratio configuration from database")
+			return
+		}
+	}
+
+	// Fallback to empty map if database load fails
+	imageCompletionRatioMap = make(map[string]float64)
+	common.SysLog("Using empty image completion ratio configuration")
+}
+
+// loadOriginImageCompletionRatioFromDatabase loads origin image completion ratio configuration from database
+func loadOriginImageCompletionRatioFromDatabase() {
+	originImageCompletionRatioMapMutex.Lock()
+	defer originImageCompletionRatioMapMutex.Unlock()
+
+	// Try to get from database first
+	if originImageCompletionStr, exists := common.OptionMap["OriginImageCompletionRatio"]; exists && originImageCompletionStr != "" {
+		var originImageCompletionMap map[string]float64
+		if err := common.Unmarshal([]byte(originImageCompletionStr), &originImageCompletionMap); err == nil {
+			originImageCompletionRatioMap = originImageCompletionMap
+			common.SysLog("Loaded origin image completion ratio configuration from database")
+			return
+		}
+	}
+
+	// Fallback to empty map if database load fails
+	originImageCompletionRatioMap = make(map[string]float64)
+	common.SysLog("Using empty origin image completion ratio configuration")
 }
 
 // loadImageRatioFromDatabase loads image ratio configuration from database

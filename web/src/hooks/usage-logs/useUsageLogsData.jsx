@@ -436,6 +436,12 @@ export const useLogsData = () => {
               other.cache_creation_ratio || 1.0,
             );
           } else {
+            // 提取 Gemini 图片和文本输出 tokens
+            const imageOutputTokens = other?.image_output_tokens || 0; // 输出的图片 tokens
+            const textOutputTokens = other?.text_output_tokens || 0;
+            const imageCompletionRatio = other?.image_completion_ratio || 0;
+            const imageInputTokens = other?.image_output || 0; // 输入的图片 tokens（注意：字段名是 image_output，但实际是输入）
+            
             content = renderModelPrice(
               logs[i].prompt_tokens,
               logs[i].completion_tokens,
@@ -448,7 +454,10 @@ export const useLogsData = () => {
               other?.cache_ratio || 1.0,
               other?.image || false,
               other?.image_ratio || 0,
-              other?.image_output || 0,
+              imageInputTokens, // 输入的图片 tokens
+              imageCompletionRatio,
+              textOutputTokens,
+              imageOutputTokens, // 输出的图片 tokens（需要添加到函数参数中）
               other?.web_search || false,
               other?.web_search_call_count || 0,
               other?.web_search_price || 0,

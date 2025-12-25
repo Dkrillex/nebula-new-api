@@ -47,6 +47,8 @@ export default function ModelRatioSettings(props) {
     ImageRatio: '',
     AudioRatio: '',
     AudioCompletionRatio: '',
+    ImageCompletionRatio: '',
+    OriginImageCompletionRatio: '',
     ExposeRatioEnabled: false,
     OriginModelPrice: '',
     OriginModelRatio: '',
@@ -82,6 +84,8 @@ export default function ModelRatioSettings(props) {
               'ImageRatio',
               'AudioRatio',
               'AudioCompletionRatio',
+              'ImageCompletionRatio',
+              'OriginImageCompletionRatio',
               'VideoModelPricePerSecond',
               'OriginVideoModelPricePerSecond',
               'ImageTokenPricing',
@@ -191,6 +195,12 @@ export default function ModelRatioSettings(props) {
     if (!currentInputs.hasOwnProperty('OriginImageModelPricePerImage')) {
       currentInputs.OriginImageModelPricePerImage = '';
     }
+    if (!currentInputs.hasOwnProperty('ImageCompletionRatio')) {
+      currentInputs.ImageCompletionRatio = '';
+    }
+    if (!currentInputs.hasOwnProperty('OriginImageCompletionRatio')) {
+      currentInputs.OriginImageCompletionRatio = '';
+    }
     setInputs(currentInputs);
     setInputsRow(structuredClone(currentInputs));
     refForm.current.setValues(currentInputs);
@@ -203,8 +213,8 @@ export default function ModelRatioSettings(props) {
         getFormApi={(formAPI) => (refForm.current = formAPI)}
         style={{ marginBottom: 15 }}
       >
-        <Row gutter={16}>
-          <Col xs={24} sm={16}>
+        <Row gutter={16} style={{ display: 'flex', alignItems: 'stretch' }}>
+          <Col xs={24} sm={12} style={{ display: 'flex', flexDirection: 'column' }}>
             <Form.TextArea
               label={t('模型固定价格')}
               extraText={t('一次调用消耗多少刀，优先级大于模型倍率')}
@@ -213,6 +223,7 @@ export default function ModelRatioSettings(props) {
               )}
               field={'ModelPrice'}
               autosize={{ minRows: 6, maxRows: 12 }}
+              style={{ flex: 1 }}
               trigger='blur'
               stopValidateWithError
               rules={[
@@ -224,9 +235,7 @@ export default function ModelRatioSettings(props) {
               onChange={(value) => setInputs({ ...inputs, ModelPrice: value })}
             />
           </Col>
-        </Row>
-        <Row gutter={16}>
-          <Col xs={24} sm={16}>
+          <Col xs={24} sm={12} style={{ display: 'flex', flexDirection: 'column' }}>
             <Form.TextArea
               label={t('原始模型固定价格')}
               extraText={t('原始模型固定价格')}
@@ -235,6 +244,7 @@ export default function ModelRatioSettings(props) {
               )}
               field={'OriginModelPrice'}
               autosize={{ minRows: 6, maxRows: 12 }}
+              style={{ flex: 1 }}
               trigger='blur'
               stopValidateWithError
               rules={[
@@ -249,13 +259,14 @@ export default function ModelRatioSettings(props) {
             />
           </Col>
         </Row>
-        <Row gutter={16}>
-          <Col xs={24} sm={16}>
+        <Row gutter={16} style={{ display: 'flex', alignItems: 'stretch' }}>
+          <Col xs={24} sm={12} style={{ display: 'flex', flexDirection: 'column' }}>
             <Form.TextArea
               label={t('模型倍率')}
               placeholder={t('为一个 JSON 文本，键为模型名称，值为倍率')}
               field={'ModelRatio'}
               autosize={{ minRows: 6, maxRows: 12 }}
+              style={{ flex: 1 }}
               trigger='blur'
               stopValidateWithError
               rules={[
@@ -267,36 +278,13 @@ export default function ModelRatioSettings(props) {
               onChange={(value) => setInputs({ ...inputs, ModelRatio: value })}
             />
           </Col>
-        </Row>
-        <Row gutter={16}>
-          <Col xs={24} sm={16}>
-            <Form.TextArea
-              label={t('模型补全倍率（仅对自定义模型有效）')}
-              extraText={t('仅对自定义模型有效')}
-              placeholder={t('为一个 JSON 文本，键为模型名称，值为倍率')}
-              field={'CompletionRatio'}
-              autosize={{ minRows: 6, maxRows: 12 }}
-              trigger='blur'
-              stopValidateWithError
-              rules={[
-                {
-                  validator: (rule, value) => verifyJSON(value),
-                  message: '不是合法的 JSON 字符串',
-                },
-              ]}
-              onChange={(value) =>
-                setInputs({ ...inputs, CompletionRatio: value })
-              }
-            />
-          </Col>
-        </Row>
-        <Row gutter={16}>
-          <Col xs={24} sm={16}>
+          <Col xs={24} sm={12} style={{ display: 'flex', flexDirection: 'column' }}>
             <Form.TextArea
               label={t('原始模型倍率')}
               placeholder={t('为一个 JSON 文本，键为模型名称，值为倍率')}
               field={'OriginModelRatio'}
               autosize={{ minRows: 6, maxRows: 12 }}
+              style={{ flex: 1 }}
               trigger='blur'
               stopValidateWithError
               rules={[
@@ -311,13 +299,35 @@ export default function ModelRatioSettings(props) {
             />
           </Col>
         </Row>
-        <Row gutter={16}>
-          <Col xs={24} sm={16}>
+        <Row gutter={16} style={{ display: 'flex', alignItems: 'stretch' }}>
+          <Col xs={24} sm={12} style={{ display: 'flex', flexDirection: 'column' }}>
+            <Form.TextArea
+              label={t('模型补全倍率（仅对自定义模型有效）')}
+              extraText={t('仅对自定义模型有效')}
+              placeholder={t('为一个 JSON 文本，键为模型名称，值为倍率')}
+              field={'CompletionRatio'}
+              autosize={{ minRows: 6, maxRows: 12 }}
+              style={{ flex: 1 }}
+              trigger='blur'
+              stopValidateWithError
+              rules={[
+                {
+                  validator: (rule, value) => verifyJSON(value),
+                  message: '不是合法的 JSON 字符串',
+                },
+              ]}
+              onChange={(value) =>
+                setInputs({ ...inputs, CompletionRatio: value })
+              }
+            />
+          </Col>
+          <Col xs={24} sm={12} style={{ display: 'flex', flexDirection: 'column' }}>
             <Form.TextArea
               label={t('原始模型补全倍率')}
               placeholder={t('为一个 JSON 文本，键为模型名称，值为倍率')}
               field={'OriginCompletionRatio'}
               autosize={{ minRows: 6, maxRows: 12 }}
+              style={{ flex: 1 }}
               trigger='blur'
               stopValidateWithError
               rules={[
@@ -351,8 +361,8 @@ export default function ModelRatioSettings(props) {
             />
           </Col>
         </Row>
-        <Row gutter={16}>
-          <Col xs={24} sm={16}>
+        <Row gutter={16} style={{ display: 'flex', alignItems: 'stretch' }}>
+          <Col xs={24} sm={12} style={{ display: 'flex', flexDirection: 'column' }}>
             <Form.TextArea
               label={t('视频模型每秒价格')}
               extraText={t('视频模型按秒计费的价格，单位：美元/秒')}
@@ -361,6 +371,7 @@ export default function ModelRatioSettings(props) {
               )}
               field={'VideoModelPricePerSecond'}
               autosize={{ minRows: 6, maxRows: 12 }}
+              style={{ flex: 1 }}
               trigger='blur'
               stopValidateWithError
               rules={[
@@ -374,9 +385,7 @@ export default function ModelRatioSettings(props) {
               }
             />
           </Col>
-        </Row>
-        <Row gutter={16}>
-          <Col xs={24} sm={16}>
+          <Col xs={24} sm={12} style={{ display: 'flex', flexDirection: 'column' }}>
             <Form.TextArea
               label={t('原始视频模型每秒价格')}
               extraText={t('原始视频模型按秒计费的价格，单位：美元/秒')}
@@ -385,6 +394,7 @@ export default function ModelRatioSettings(props) {
               )}
               field={'OriginVideoModelPricePerSecond'}
               autosize={{ minRows: 6, maxRows: 12 }}
+              style={{ flex: 1 }}
               trigger='blur'
               stopValidateWithError
               rules={[
@@ -471,8 +481,58 @@ export default function ModelRatioSettings(props) {
             />
           </Col>
         </Row>
-        <Row gutter={16}>
-          <Col xs={24} sm={16}>
+        <Row gutter={16} style={{ display: 'flex', alignItems: 'stretch' }}>
+          <Col xs={24} sm={12} style={{ display: 'flex', flexDirection: 'column' }}>
+            <Form.TextArea
+              label={t('图片补全倍率')}
+              extraText={t(
+                '图片输出相关的倍率设置，用于同时返回文本和图片的模型（如 gemini-3-pro-image-preview）',
+              )}
+              placeholder={t(
+                '为一个 JSON 文本，键为模型名称，值为倍率，例如：{"gemini-3-pro-image-preview": 45}',
+              )}
+              field={'ImageCompletionRatio'}
+              autosize={{ minRows: 6, maxRows: 12 }}
+              style={{ flex: 1 }}
+              trigger='blur'
+              stopValidateWithError
+              rules={[
+                {
+                  validator: (rule, value) => verifyJSON(value),
+                  message: '不是合法的 JSON 字符串',
+                },
+              ]}
+              onChange={(value) =>
+                setInputs({ ...inputs, ImageCompletionRatio: value })
+              }
+            />
+          </Col>
+          <Col xs={24} sm={12} style={{ display: 'flex', flexDirection: 'column' }}>
+            <Form.TextArea
+              label={t('原始图片补全倍率')}
+              extraText={t('原始图片补全倍率，用于前端展示对比')}
+              placeholder={t(
+                '为一个 JSON 文本，键为模型名称，值为倍率，例如：{"gemini-3-pro-image-preview": 60}',
+              )}
+              field={'OriginImageCompletionRatio'}
+              autosize={{ minRows: 6, maxRows: 12 }}
+              style={{ flex: 1 }}
+              trigger='blur'
+              stopValidateWithError
+              rules={[
+                {
+                  validator: (rule, value) => verifyJSON(value),
+                  message: '不是合法的 JSON 字符串',
+                },
+              ]}
+              onChange={(value) =>
+                setInputs({ ...inputs, OriginImageCompletionRatio: value })
+              }
+            />
+          </Col>
+        </Row>
+        <Row gutter={16} style={{ display: 'flex', alignItems: 'stretch' }}>
+          <Col xs={24} sm={12} style={{ display: 'flex', flexDirection: 'column' }}>
             <Form.TextArea
               label={t('图像Token表定价')}
               extraText={t(
@@ -483,6 +543,7 @@ export default function ModelRatioSettings(props) {
               )}
               field={'ImageTokenPricing'}
               autosize={{ minRows: 6, maxRows: 12 }}
+              style={{ flex: 1 }}
               trigger='blur'
               stopValidateWithError
               rules={[
@@ -496,9 +557,7 @@ export default function ModelRatioSettings(props) {
               }
             />
           </Col>
-        </Row>
-        <Row gutter={16}>
-          <Col xs={24} sm={16}>
+          <Col xs={24} sm={12} style={{ display: 'flex', flexDirection: 'column' }}>
             <Form.TextArea
               label={t('原始图像Token表定价')}
               extraText={t(
@@ -509,6 +568,7 @@ export default function ModelRatioSettings(props) {
               )}
               field={'OriginImageTokenPricing'}
               autosize={{ minRows: 6, maxRows: 12 }}
+              style={{ flex: 1 }}
               trigger='blur'
               stopValidateWithError
               rules={[
@@ -523,8 +583,8 @@ export default function ModelRatioSettings(props) {
             />
           </Col>
         </Row>
-        <Row gutter={16}>
-          <Col xs={24} sm={16}>
+        <Row gutter={16} style={{ display: 'flex', alignItems: 'stretch' }}>
+          <Col xs={24} sm={12} style={{ display: 'flex', flexDirection: 'column' }}>
             <Form.TextArea
               label={t('图片模型按张计费价格（系统价格）')}
               extraText={t(
@@ -535,6 +595,7 @@ export default function ModelRatioSettings(props) {
               )}
               field={'ImageModelPricePerImage'}
               autosize={{ minRows: 3, maxRows: 8 }}
+              style={{ flex: 1 }}
               trigger='blur'
               stopValidateWithError
               rules={[
@@ -548,9 +609,7 @@ export default function ModelRatioSettings(props) {
               }
             />
           </Col>
-        </Row>
-        <Row gutter={16}>
-          <Col xs={24} sm={16}>
+          <Col xs={24} sm={12} style={{ display: 'flex', flexDirection: 'column' }}>
             <Form.TextArea
               label={t('图片模型按张计费原始价格')}
               extraText={t(
@@ -561,6 +620,7 @@ export default function ModelRatioSettings(props) {
               )}
               field={'OriginImageModelPricePerImage'}
               autosize={{ minRows: 3, maxRows: 8 }}
+              style={{ flex: 1 }}
               trigger='blur'
               stopValidateWithError
               rules={[
