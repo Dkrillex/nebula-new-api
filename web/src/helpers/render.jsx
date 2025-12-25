@@ -1593,16 +1593,16 @@ export function renderAudioModelPrice(
       completionRatio = 0;
     }
 
-    // try toFixed audioRatio
-    audioRatio = parseFloat(audioRatio).toFixed(6);
     // 这里的 *2 是因为 1倍率=0.002刀，请勿删除
     let inputRatioPrice = modelRatio * 2.0;
     let completionRatioPrice = modelRatio * 2.0 * completionRatio;
     let cacheRatioPrice = modelRatio * 2.0 * cacheRatio;
     
     // 音频价格基于系统基准倍率（2），而不是基于文本提示价格
-    let audioInputRatioPrice = audioRatio * 2.0;
-    let audioCompletionRatioPrice = audioRatio * 2.0 * audioCompletionRatio;
+    // 注意：audioRatio 需要先转换为数字进行计算
+    let audioRatioNum = parseFloat(audioRatio);
+    let audioInputRatioPrice = audioRatioNum * 2.0;
+    let audioCompletionRatioPrice = audioRatioNum * 2.0 * audioCompletionRatio;
 
     // Calculate effective input tokens (non-cached + cached with ratio applied)
     // Note: inputTokens no longer includes cache tokens, so we don't subtract cacheTokens
