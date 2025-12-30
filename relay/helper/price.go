@@ -3,7 +3,10 @@ package helper
 import (
 	"fmt"
 	"one-api/common"
+	"one-api/constant"
+	"one-api/model"
 	relaycommon "one-api/relay/common"
+	"one-api/service"
 	"one-api/setting/ratio_setting"
 	"one-api/types"
 
@@ -71,6 +74,25 @@ func ModelPriceHelper(c *gin.Context, info *relaycommon.RelayInfo, promptTokens 
 	// 优先级3：检查按次计费（ModelPrice）
 	modelPrice, usePrice := ratio_setting.GetModelPrice(info.OriginModelName, false)
 
+	// 应用系统折扣到 modelPrice（OEM 系统折扣）
+	if c != nil && usePrice && modelPrice > 0 {
+		systemCode := "nebula" // 默认系统
+		if code, exists := c.Get(string(constant.ContextKeySystemCode)); exists {
+			if codeStr, ok := code.(string); ok && codeStr != "" {
+				systemCode = codeStr
+			}
+		}
+		vendorName := service.GetVendorNameFromModel(info.OriginModelName)
+		systemDiscount := model.GetSystemDiscount(systemCode, info.OriginModelName, vendorName)
+		if systemDiscount != 1.0 {
+			modelPrice = modelPrice * systemDiscount
+			if common.DebugEnabled {
+				println(fmt.Sprintf("[ModelPriceHelper] 应用OEM折扣到modelPrice: oemCode=%s, modelName=%s, systemDiscount=%.4f, 原价=%.4f, 折后价=%.4f",
+					oemCode, info.OriginModelName, systemDiscount, modelPrice/systemDiscount, modelPrice))
+			}
+		}
+	}
+
 	groupRatioInfo := HandleGroupRatio(c, info)
 
 	var preConsumedQuota int
@@ -112,6 +134,26 @@ func ModelPriceHelper(c *gin.Context, info *relaycommon.RelayInfo, promptTokens 
 				return types.PriceData{}, fmt.Errorf("模型 %s 倍率或价格未配置，请联系管理员设置或开始自用模式；Model %s ratio or price not set, please set or start self-use mode", matchName, matchName)
 			}
 		}
+
+		// 应用系统折扣到 modelRatio（OEM 系统折扣）
+		if c != nil && success {
+			systemCode := "nebula" // 默认系统
+			if code, exists := c.Get(string(constant.ContextKeySystemCode)); exists {
+				if codeStr, ok := code.(string); ok && codeStr != "" {
+					systemCode = codeStr
+				}
+			}
+			vendorName := service.GetVendorNameFromModel(info.OriginModelName)
+			systemDiscount := model.GetSystemDiscount(systemCode, info.OriginModelName, vendorName)
+			if systemDiscount != 1.0 {
+				modelRatio = modelRatio * systemDiscount
+				if common.DebugEnabled {
+					println(fmt.Sprintf("[ModelPriceHelper] 应用OEM折扣: oemCode=%s, modelName=%s, systemDiscount=%.4f, 原倍率=%.4f, 折后倍率=%.4f",
+						oemCode, info.OriginModelName, systemDiscount, modelRatio/systemDiscount, modelRatio))
+				}
+			}
+		}
+
 		completionRatio = ratio_setting.GetCompletionRatio(info.OriginModelName)
 		cacheRatio, _ = ratio_setting.GetCacheRatio(info.OriginModelName)
 		cacheCreationRatio, _ = ratio_setting.GetCreateCacheRatio(info.OriginModelName)

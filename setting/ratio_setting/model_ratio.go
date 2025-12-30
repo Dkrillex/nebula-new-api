@@ -1382,6 +1382,7 @@ func FormatMatchingModelName(name string) string {
 
 // FormatMatchingModelNameForPricing 用于定价匹配，可能返回通配符格式
 // 例如：gemini-2.5-flash-thinking-128 -> gemini-2.5-flash-thinking-*
+// doubao-seed-1-6-thinking-250715 -> doubao-seed-1-6 (匹配基础模型)
 func FormatMatchingModelNameForPricing(name string) string {
 	// 对于 -thinking-<数字> 格式，返回通配符以便统一配置定价
 	if strings.Contains(name, "-thinking-") {
@@ -1392,6 +1393,10 @@ func FormatMatchingModelNameForPricing(name string) string {
 		} else if strings.HasPrefix(name, "gemini-2.5-pro") {
 			return "gemini-2.5-pro-thinking-*"
 		}
+		// 对于其他模型（如 doubao-seed-1-6-thinking-250715），
+		// 直接返回基础模型名称（doubao-seed-1-6），以便匹配基础模型的配置
+		// 这样用户只需要配置 doubao-seed-1-6 的倍率，所有 thinking 变体都会使用这个倍率
+		return FormatMatchingModelName(name)
 	}
 	// 其他情况使用基础格式化
 	return FormatMatchingModelName(name)

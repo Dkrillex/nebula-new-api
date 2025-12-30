@@ -24,6 +24,16 @@ func AllOption() ([]*Option, error) {
 	return options, err
 }
 
+// GetOption 根据key获取Option
+func GetOption(key string) (*Option, error) {
+	var option Option
+	err := DB.Where("`key` = ?", key).First(&option).Error
+	if err != nil {
+		return nil, err
+	}
+	return &option, nil
+}
+
 func InitOptionMap() {
 	common.OptionMapRWMutex.Lock()
 	common.OptionMap = make(map[string]string)

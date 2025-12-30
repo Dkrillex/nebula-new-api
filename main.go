@@ -88,6 +88,11 @@ func main() {
 	// 热更新配置
 	go model.SyncOptions(common.SyncFrequency)
 
+	// 初始化OEM系统配置缓存
+	model.InitPlatformCost()
+	model.InitSystemConfig()
+	model.InitSystemDiscount()
+
 	// 数据看板
 	go model.UpdateQuotaData()
 

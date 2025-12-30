@@ -106,6 +106,20 @@ func RelayTaskSubmit(c *gin.Context, info *relaycommon.RelayInfo) (taskErr *dto.
 	// 1. 优先检查视频每秒价格
 	videoPrice, hasVideoPrice := ratio_setting.GetVideoModelPricePerSecondWithAudio(modelName, generateAudio)
 	if hasVideoPrice && videoPrice > 0 {
+		// 应用系统折扣到 videoPrice（OEM 系统折扣）
+		systemCode := "nebula" // 默认系统
+		if code, exists := c.Get(string(constant.ContextKeySystemCode)); exists {
+			if codeStr, ok := code.(string); ok && codeStr != "" {
+				systemCode = codeStr
+			}
+		}
+		vendorName := service.GetVendorNameFromModel(modelName)
+		systemDiscount := model.GetSystemDiscount(systemCode, modelName, vendorName)
+		if systemDiscount != 1.0 {
+			videoPrice = videoPrice * systemDiscount
+			common.SysLog(fmt.Sprintf("[RelayTaskSubmit] 应用OEM折扣到videoPrice: oemCode=%s, systemDiscount=%.4f, 原价=%.4f, 折后价=%.4f",
+				oemCode, systemDiscount, videoPrice/systemDiscount, videoPrice))
+		}
 		// 按秒计费：价格 * 秒数
 		quota = int(videoPrice * float64(videoSeconds) * common.QuotaPerUnit * priceData.GroupRatioInfo.GroupRatio)
 		common.SysLog(fmt.Sprintf("[RelayTaskSubmit] Video task per-second billing: %d seconds × $%.4f/sec × group_ratio %.2f = quota %d (generateAudio=%v)",
@@ -1043,6 +1057,22 @@ func handleVideoTaskBillingBySeconds(c *gin.Context, task *model.Task, taskResul
 	}
 
 	if hasVideoPrice && videoPrice > 0 && actualSeconds > 0 {
+		// 应用系统折扣到 videoPrice（OEM 系统折扣）
+		systemCode := "nebula" // 默认系统
+		if c != nil {
+			if code, exists := c.Get(string(constant.ContextKeySystemCode)); exists {
+				if codeStr, ok := code.(string); ok && codeStr != "" {
+					systemCode = codeStr
+				}
+			}
+		}
+		vendorName := service.GetVendorNameFromModel(modelName)
+		systemDiscount := model.GetSystemDiscount(systemCode, modelName, vendorName)
+		if systemDiscount != 1.0 {
+			videoPrice = videoPrice * systemDiscount
+			common.SysLog(fmt.Sprintf("[VideoTask] 应用OEM折扣到videoPrice: oemCode=%s, systemDiscount=%.4f, 原价=%.4f, 折后价=%.4f",
+				oemCode, systemDiscount, videoPrice/systemDiscount, videoPrice))
+		}
 		// 按秒计费：价格 * 秒数
 		actualQuota = int(videoPrice * float64(actualSeconds) * common.QuotaPerUnit * groupRatio)
 		billingType = "per_second"
@@ -1154,6 +1184,9 @@ func handleVideoTaskBillingBySeconds(c *gin.Context, task *model.Task, taskResul
 		logContent = fmt.Sprintf("视频任务 %s 实际扣费 quota: %d", task.TaskID, actualQuota)
 	}
 
+	// 计算价格链条（视频任务可能没有标准tokens，使用0作为默认值）
+	priceChain := service.CalculatePriceChainForLog(c, modelName, promptTokens, completionTokens, actualQuota)
+
 	model.RecordConsumeLog(c, task.UserId, model.RecordConsumeLogParams{
 		ChannelId:        task.ChannelId,
 		ModelName:        modelName,
@@ -1165,6 +1198,7 @@ func handleVideoTaskBillingBySeconds(c *gin.Context, task *model.Task, taskResul
 		TokenId:          tokenId,
 		Group:            user.Group,
 		Other:            other,
+		PriceChain:       priceChain,
 	})
 
 	// 更新用户和渠道的配额使用情况

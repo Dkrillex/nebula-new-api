@@ -428,17 +428,33 @@ func postConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, usage 
 			logger.LogDebug(ctx, fmt.Sprintf("[postConsumeQuota] 检查按张计费: modelName=%s, hasImagePrice=%v, imagePrice=%.4f", modelName, hasImagePrice, imagePrice))
 
 			if hasImagePrice && imagePrice > 0 {
-				// 使用按张价格计费（单位：美元/张）
-				logger.LogDebug(ctx, fmt.Sprintf("[postConsumeQuota] 使用按张计费: %.4f USD/张 × %d张", imagePrice, multiplier))
-				quotaCalculateDecimal = decimal.NewFromFloat(imagePrice).
+				// 获取系统代码和厂商名称（用于OEM价格链条计算）
+				systemCode := "nebula" // 默认系统
+				if code, exists := ctx.Get(string(constant.ContextKeySystemCode)); exists {
+					if codeStr, ok := code.(string); ok && codeStr != "" {
+						systemCode = codeStr
+					}
+				}
+				vendorName := service.GetVendorNameFromModel(modelName)
+
+				// 应用系统折扣
+				systemDiscount := model.GetSystemDiscount(systemCode, modelName, vendorName)
+				discountedImagePrice := imagePrice * systemDiscount
+				logger.LogDebug(ctx, fmt.Sprintf("[postConsumeQuota] OEM折扣: oemCode=%s, systemDiscount=%.4f, 原价=%.4f, 折后价=%.4f",
+					oemCode, systemDiscount, imagePrice, discountedImagePrice))
+
+				// 使用按张价格计费（单位：美元/张），已应用系统折扣
+				logger.LogDebug(ctx, fmt.Sprintf("[postConsumeQuota] 使用按张计费: %.4f USD/张 × %d张 (已应用系统折扣)", discountedImagePrice, multiplier))
+				quotaCalculateDecimal = decimal.NewFromFloat(discountedImagePrice).
 					Mul(decimal.NewFromInt(int64(multiplier))).
 					Mul(dQuotaPerUnit).
 					Mul(dGroupRatio)
 
 				// 计算人民币价格用于日志显示
-				priceInCNY := imagePrice * 7.3 // USD to CNY
+				priceInCNY := discountedImagePrice * 7.3 // USD to CNY
 				totalPriceInCNY := priceInCNY * float64(multiplier)
-				extraContent += fmt.Sprintf("图片生成：%d张 × ¥%.2f = ¥%.2f", multiplier, priceInCNY, totalPriceInCNY)
+				extraContent += fmt.Sprintf("图片生成：%d张 × ¥%.2f = ¥%.2f (系统折扣: %.2f%%)",
+					multiplier, priceInCNY, totalPriceInCNY, systemDiscount*100)
 			} else {
 				// 使用原有的按次计费逻辑（ModelPrice）
 				quotaCalculateDecimal = dModelPrice.Mul(dQuotaPerUnit).Mul(dGroupRatio).Mul(decimal.NewFromInt(int64(multiplier)))
@@ -598,6 +614,33 @@ func postConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, usage 
 		// 只有文本输出时也记录
 		other["text_output_tokens"] = geminiTextOutputTokens
 	}
+
+	// 计算价格链条
+	var priceChain *model.PriceChainParams
+	if relayInfo.PriceData.UsePrice && relayInfo.RelayMode == relayconstant.RelayModeImagesGenerations {
+		// 图片生成：使用专门的价格链条计算函数
+		imagePrice, hasImagePrice := ratio_setting.GetImageModelPricePerImage(modelName)
+		if hasImagePrice && imagePrice > 0 {
+			// 获取图片数量
+			imageCount := 1
+			if v, exists := ctx.Get("generated_images_count"); exists {
+				if n, ok := v.(int); ok && n > 0 {
+					imageCount = n
+				}
+			} else if usage != nil && usage.TotalTokens > 0 {
+				imageCount = usage.TotalTokens
+			}
+			// 使用原始imagePrice（未应用系统折扣），因为价格链条计算中会应用
+			priceChain = service.CalculatePriceChainForImageGeneration(ctx, logModel, imagePrice, imageCount, quota)
+		} else {
+			// 没有按张计费配置，使用常规价格链条计算
+			priceChain = service.CalculatePriceChainForLog(ctx, logModel, promptTokens, completionTokens, quota)
+		}
+	} else {
+		// 常规计费：使用tokens计算价格链条
+		priceChain = service.CalculatePriceChainForLog(ctx, logModel, promptTokens, completionTokens, quota)
+	}
+
 	model.RecordConsumeLog(ctx, relayInfo.UserId, model.RecordConsumeLogParams{
 		ChannelId:        relayInfo.ChannelId,
 		PromptTokens:     promptTokens,
@@ -611,6 +654,7 @@ func postConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, usage 
 		IsStream:         relayInfo.IsStream,
 		Group:            relayInfo.UsingGroup,
 		Other:            other,
+		PriceChain:       priceChain,
 	})
 }
 
@@ -812,6 +856,9 @@ func recordImageTokenPricingConsume(ctx *gin.Context, relayInfo *relaycommon.Rel
 	other["output_image_price"] = pricing.OutputImagePrice
 	other["group_ratio"] = relayInfo.PriceData.GroupRatioInfo.GroupRatio
 
+	// 计算价格链条
+	priceChain := service.CalculatePriceChainForLog(ctx, logModel, usage.PromptTokens, outputTokens, quota)
+
 	model.RecordConsumeLog(ctx, relayInfo.UserId, model.RecordConsumeLogParams{
 		ChannelId:        relayInfo.ChannelId,
 		PromptTokens:     usage.PromptTokens, // 总输入tokens
@@ -825,5 +872,6 @@ func recordImageTokenPricingConsume(ctx *gin.Context, relayInfo *relaycommon.Rel
 		IsStream:         relayInfo.IsStream,
 		Group:            relayInfo.UsingGroup,
 		Other:            other,
+		PriceChain:       priceChain,
 	})
 }
