@@ -1349,28 +1349,9 @@ func GetVideoModelPriceByResolution(modelName, resolution string) (float64, bool
 
 // 转换模型名，减少渠道必须配置各种带参数模型
 // 此函数用于数据库查询，始终返回基础模型名称（去除所有后缀）
+// 注意：不再自动处理 -thinking- 后缀，请通过渠道管理的模型重定向和参数覆盖来配置
 func FormatMatchingModelName(name string) string {
-	// 先处理 -thinking-<数字> 格式，去除这部分以匹配数据库中的基础模型名称
-	// 例如：gemini-2.5-flash-thinking-128 -> gemini-2.5-flash
-	if strings.Contains(name, "-thinking-") {
-		parts := strings.SplitN(name, "-thinking-", 2)
-		if len(parts) == 2 {
-			// 检查第二部分是否为数字
-			if _, err := strconv.Atoi(parts[1]); err == nil {
-				// 是数字，去除 -thinking-<数字> 部分
-				name = parts[0]
-			}
-		}
-	}
-
-	// 处理 -thinking-low / -thinking-high 后缀
-	name = strings.TrimSuffix(name, "-thinking-low")
-	name = strings.TrimSuffix(name, "-thinking-high")
-	// 处理 -thinking 后缀（不带数字的情况），去除后缀以匹配数据库中的基础模型名称
-	name = strings.TrimSuffix(name, "-thinking")
-	// 处理 -nothinking 后缀
-	name = strings.TrimSuffix(name, "-nothinking")
-
+	// 只处理 gpt-4-gizmo 和 gpt-4o-gizmo 的通配符匹配
 	if strings.HasPrefix(name, "gpt-4-gizmo") {
 		name = "gpt-4-gizmo-*"
 	}
@@ -1381,19 +1362,9 @@ func FormatMatchingModelName(name string) string {
 }
 
 // FormatMatchingModelNameForPricing 用于定价匹配，可能返回通配符格式
-// 例如：gemini-2.5-flash-thinking-128 -> gemini-2.5-flash-thinking-*
+// 注意：不再自动处理 -thinking- 后缀，请通过渠道管理的模型重定向和参数覆盖来配置
 func FormatMatchingModelNameForPricing(name string) string {
-	// 对于 -thinking-<数字> 格式，返回通配符以便统一配置定价
-	if strings.Contains(name, "-thinking-") {
-		if strings.HasPrefix(name, "gemini-2.5-flash-lite") {
-			return "gemini-2.5-flash-lite-thinking-*"
-		} else if strings.HasPrefix(name, "gemini-2.5-flash") {
-			return "gemini-2.5-flash-thinking-*"
-		} else if strings.HasPrefix(name, "gemini-2.5-pro") {
-			return "gemini-2.5-pro-thinking-*"
-		}
-	}
-	// 其他情况使用基础格式化
+	// 直接使用基础格式化，不再特殊处理 thinking 后缀
 	return FormatMatchingModelName(name)
 }
 

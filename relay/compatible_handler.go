@@ -237,7 +237,9 @@ func postConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, usage 
 	// 为了正确记录日志和计费，需要从 promptTokens 中减去这些详细分类的tokens，避免重复计算
 	// 对于 Azure OpenAI 和 OpenAI，prompt_tokens 已经包含了 cache_tokens，需要减去以便分开记录
 	// 注意：OpenRouter 在 PostClaudeConsumeQuota 中已经处理了这个问题
-	if relayInfo.ChannelType == constant.ChannelTypeAzure || relayInfo.ChannelType == constant.ChannelTypeOpenAI {
+	// 注意：Gemini API 的 promptTokenCount 不包含 cachedContentTokenCount，它们是分开返回的，所以不需要减去
+	if relayInfo.ChannelType == constant.ChannelTypeAzure ||
+		relayInfo.ChannelType == constant.ChannelTypeOpenAI {
 		if cacheTokens > 0 && promptTokens >= cacheTokens {
 			promptTokens -= cacheTokens
 		}
@@ -340,8 +342,11 @@ func postConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, usage 
 	var audioInputPrice float64
 	if !relayInfo.PriceData.UsePrice {
 		baseTokens := dPromptTokens
-		// 注意：promptTokens 经过上面处理后，已经减去了 cache/image/audio tokens
-		// 所以这里的 promptTokens 是纯文本输入tokens
+		// 注意：对于 Azure/OpenAI，promptTokens 经过上面处理后已经减去了 cache/image/audio tokens
+		// 对于 Gemini，promptTokens 本身就不包含 cachedTokens（它们是分开返回的）
+		// 所以这里的 baseTokens 对于不同提供商有不同的含义：
+		// - Azure/OpenAI: 是减去了缓存后的非缓存部分
+		// - Gemini: 是原始的非缓存输入 tokens
 		// 下面需要把各种特殊类型的tokens按倍率加回来
 		var cachedTokensWithRatio decimal.Decimal
 		if !dCacheTokens.IsZero() {

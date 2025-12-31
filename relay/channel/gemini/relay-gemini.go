@@ -1098,6 +1098,12 @@ func GeminiChatStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *
 			usage.CompletionTokens = geminiResponse.UsageMetadata.CandidatesTokenCount
 			usage.CompletionTokenDetails.ReasoningTokens = geminiResponse.UsageMetadata.ThoughtsTokenCount
 			usage.TotalTokens = geminiResponse.UsageMetadata.TotalTokenCount
+
+			// 处理缓存 tokens（Context Caching）
+			if geminiResponse.UsageMetadata.CachedContentTokenCount > 0 {
+				usage.PromptTokensDetails.CachedTokens = geminiResponse.UsageMetadata.CachedContentTokenCount
+			}
+
 			for _, detail := range geminiResponse.UsageMetadata.PromptTokensDetails {
 				if detail.Modality == "AUDIO" {
 					usage.PromptTokensDetails.AudioTokens = detail.TokenCount
@@ -1254,6 +1260,11 @@ func GeminiChatHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http.R
 			TotalTokens:      geminiResponse.UsageMetadata.TotalTokenCount,
 		}
 
+		// 处理缓存 tokens（Context Caching）
+		if geminiResponse.UsageMetadata.CachedContentTokenCount > 0 {
+			usage.PromptTokensDetails.CachedTokens = geminiResponse.UsageMetadata.CachedContentTokenCount
+		}
+
 		// 序列化图像响应
 		responseBody, err = json.Marshal(imageResponse)
 		if err != nil {
@@ -1278,6 +1289,11 @@ func GeminiChatHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http.R
 
 	usage.CompletionTokenDetails.ReasoningTokens = geminiResponse.UsageMetadata.ThoughtsTokenCount
 	usage.CompletionTokens = usage.TotalTokens - usage.PromptTokens
+
+	// 处理缓存 tokens（Context Caching）
+	if geminiResponse.UsageMetadata.CachedContentTokenCount > 0 {
+		usage.PromptTokensDetails.CachedTokens = geminiResponse.UsageMetadata.CachedContentTokenCount
+	}
 
 	for _, detail := range geminiResponse.UsageMetadata.PromptTokensDetails {
 		if detail.Modality == "AUDIO" {

@@ -156,6 +156,8 @@ func GetCacheRatio(name string) (float64, bool) {
 			return 0.1, false // Claude 系列默认 0.1
 		} else if strings.Contains(strings.ToLower(name), "gpt") {
 			return 0.12, false // GPT 系列默认 0.12
+		} else if strings.Contains(strings.ToLower(name), "gemini") {
+			return 0.1, false // Gemini 系列默认 0.1
 		}
 		return 0.5, false // 其他模型默认 0.5
 	}

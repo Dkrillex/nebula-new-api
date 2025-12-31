@@ -80,6 +80,11 @@ func GeminiTextGenerationHandler(c *gin.Context, info *relaycommon.RelayInfo, re
 
 	usage.CompletionTokenDetails.ReasoningTokens = geminiResponse.UsageMetadata.ThoughtsTokenCount
 
+	// 处理缓存 tokens（Context Caching）
+	if geminiResponse.UsageMetadata.CachedContentTokenCount > 0 {
+		usage.PromptTokensDetails.CachedTokens = geminiResponse.UsageMetadata.CachedContentTokenCount
+	}
+
 	for _, detail := range geminiResponse.UsageMetadata.PromptTokensDetails {
 		if detail.Modality == "AUDIO" {
 			usage.PromptTokensDetails.AudioTokens = detail.TokenCount
@@ -165,6 +170,12 @@ func GeminiTextGenerationStreamHandler(c *gin.Context, info *relaycommon.RelayIn
 			usage.CompletionTokens = geminiResponse.UsageMetadata.CandidatesTokenCount + geminiResponse.UsageMetadata.ThoughtsTokenCount
 			usage.TotalTokens = geminiResponse.UsageMetadata.TotalTokenCount
 			usage.CompletionTokenDetails.ReasoningTokens = geminiResponse.UsageMetadata.ThoughtsTokenCount
+
+			// 处理缓存 tokens（Context Caching）
+			if geminiResponse.UsageMetadata.CachedContentTokenCount > 0 {
+				usage.PromptTokensDetails.CachedTokens = geminiResponse.UsageMetadata.CachedContentTokenCount
+			}
+
 			for _, detail := range geminiResponse.UsageMetadata.PromptTokensDetails {
 				if detail.Modality == "AUDIO" {
 					usage.PromptTokensDetails.AudioTokens = detail.TokenCount

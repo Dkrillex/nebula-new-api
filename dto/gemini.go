@@ -311,6 +311,7 @@ type GeminiUsageMetadata struct {
 	CandidatesTokenCount    int                         `json:"candidatesTokenCount"`
 	TotalTokenCount         int                         `json:"totalTokenCount"`
 	ThoughtsTokenCount      int                         `json:"thoughtsTokenCount"`
+	CachedContentTokenCount int                         `json:"cachedContentTokenCount"` // Context Caching: 缓存命中的 token 数
 	PromptTokensDetails     []GeminiPromptTokensDetails `json:"promptTokensDetails"`
 	CandidatesTokensDetails []GeminiPromptTokensDetails `json:"candidatesTokensDetails"`
 }
