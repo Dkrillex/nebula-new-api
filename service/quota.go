@@ -29,13 +29,14 @@ type TokenDetails struct {
 }
 
 type QuotaInfo struct {
-	InputDetails  TokenDetails
-	OutputDetails TokenDetails
-	ModelName     string
-	UsePrice      bool
-	ModelPrice    float64
-	ModelRatio    float64
-	GroupRatio    float64
+	InputDetails    TokenDetails
+	OutputDetails   TokenDetails
+	ModelName       string
+	UsePrice        bool
+	ModelPrice      float64
+	ModelRatio      float64
+	GroupRatio      float64
+	OemUserDiscount float64 // OEM用户折扣
 }
 
 func hasCustomModelRatio(modelName string, currentRatio float64) bool {
@@ -52,6 +53,7 @@ func calculateAudioQuota(info QuotaInfo) int {
 		quotaPerUnit := decimal.NewFromFloat(common.QuotaPerUnit)
 		groupRatio := decimal.NewFromFloat(info.GroupRatio)
 
+		// 注意：modelPrice 应该已经在调用方应用了 oemUserDiscount
 		quota := modelPrice.Mul(quotaPerUnit).Mul(groupRatio)
 		return int(quota.IntPart())
 	}
@@ -86,6 +88,7 @@ func calculateAudioQuota(info QuotaInfo) int {
 	quota := decimal.Zero
 
 	// 文本输入和输出使用 modelRatio 作为基础
+	// 注意：modelRatio 应该已经在调用方应用了 oemUserDiscount
 	textRatio := groupRatio.Mul(modelRatio)
 	quota = quota.Add(inputTextTokens.Mul(textRatio))
 	quota = quota.Add(outputTextTokens.Mul(completionRatio).Mul(textRatio))
@@ -93,8 +96,13 @@ func calculateAudioQuota(info QuotaInfo) int {
 	// 音频输入和输出使用独立的绝对倍率（不乘以 modelRatio）
 	// audioRatio 是音频输入的绝对倍率
 	// audioCompletionRatio 是音频输出相对于音频输入的倍率
-	quota = quota.Add(inputAudioTokens.Mul(audioRatio).Mul(groupRatio))
-	quota = quota.Add(outputAudioTokens.Mul(audioRatio).Mul(audioCompletionRatio).Mul(groupRatio))
+	// 注意：音频倍率需要应用 oemUserDiscount
+	dOemUserDiscount := decimal.NewFromFloat(info.OemUserDiscount)
+	if dOemUserDiscount.IsZero() {
+		dOemUserDiscount = decimal.NewFromInt(1)
+	}
+	quota = quota.Add(inputAudioTokens.Mul(audioRatio).Mul(groupRatio).Mul(dOemUserDiscount))
+	quota = quota.Add(outputAudioTokens.Mul(audioRatio).Mul(audioCompletionRatio).Mul(groupRatio).Mul(dOemUserDiscount))
 
 	// If quota is less than or equal to zero, set quota to 1
 	if quota.LessThanOrEqual(decimal.Zero) {
@@ -139,6 +147,10 @@ func PreWssConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, usag
 		actualGroupRatio = userGroupRatio
 	}
 
+	// 获取OEM用户折扣并应用到 modelRatio
+	oemUserDiscount := GetOemUserDiscountForQuota(ctx, modelName)
+	discountedModelRatio := modelRatio * oemUserDiscount
+
 	quotaInfo := QuotaInfo{
 		InputDetails: TokenDetails{
 			TextTokens:  textInputTokens,
@@ -148,10 +160,11 @@ func PreWssConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, usag
 			TextTokens:  textOutTokens,
 			AudioTokens: audioOutTokens,
 		},
-		ModelName:  modelName,
-		UsePrice:   relayInfo.UsePrice,
-		ModelRatio: modelRatio,
-		GroupRatio: actualGroupRatio,
+		ModelName:       modelName,
+		UsePrice:        relayInfo.UsePrice,
+		ModelRatio:      discountedModelRatio, // 已应用 oemUserDiscount
+		GroupRatio:      actualGroupRatio,
+		OemUserDiscount: oemUserDiscount, // 用于音频倍率
 	}
 
 	quota := calculateAudioQuota(quotaInfo)
@@ -192,6 +205,9 @@ func PostWssConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, mod
 	modelPrice := relayInfo.PriceData.ModelPrice
 	usePrice := relayInfo.PriceData.UsePrice
 
+	// 获取OEM用户折扣
+	oemUserDiscount := GetOemUserDiscountForQuota(ctx, modelName)
+
 	quotaInfo := QuotaInfo{
 		InputDetails: TokenDetails{
 			TextTokens:  textInputTokens,
@@ -201,10 +217,11 @@ func PostWssConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, mod
 			TextTokens:  textOutTokens,
 			AudioTokens: audioOutTokens,
 		},
-		ModelName:  modelName,
-		UsePrice:   usePrice,
-		ModelRatio: modelRatio,
-		GroupRatio: groupRatio,
+		ModelName:       modelName,
+		UsePrice:        usePrice,
+		ModelRatio:      modelRatio,
+		GroupRatio:      groupRatio,
+		OemUserDiscount: oemUserDiscount,
 	}
 
 	quota := calculateAudioQuota(quotaInfo)
@@ -240,7 +257,7 @@ func PostWssConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, mod
 	other := GenerateWssOtherInfo(ctx, relayInfo, usage, modelRatio, groupRatio,
 		completionRatio.InexactFloat64(), audioRatio.InexactFloat64(), audioCompletionRatio.InexactFloat64(), modelPrice, relayInfo.PriceData.GroupRatioInfo.GroupSpecialRatio)
 
-	// 计算价格链条
+	// 计算价格链条（使用请求头X-Oem-Code中的OEM信息）
 	priceChain := CalculatePriceChainForLog(ctx, logModel, textInputTokens+audioInputTokens, textOutTokens+audioOutTokens, quota)
 
 	model.RecordConsumeLog(ctx, relayInfo.UserId, model.RecordConsumeLogParams{
@@ -296,8 +313,11 @@ func PostClaudeConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, 
 		calculateQuota += float64(cacheTokens) * cacheRatio
 		calculateQuota += float64(cacheCreationTokens) * cacheCreationRatio
 		calculateQuota += float64(completionTokens) * completionRatio
+		// 注意：modelRatio 已在 price.go 的 ModelPriceHelper 中应用了 oemUserDiscount
+		// 所以这里不需要再乘以 oemUserDiscount，否则会重复应用折扣
 		calculateQuota = calculateQuota * groupRatio * modelRatio
 	} else {
+		// 注意：modelPrice 已在 price.go 的 ModelPriceHelper 中应用了 oemUserDiscount
 		calculateQuota = modelPrice * common.QuotaPerUnit * groupRatio
 	}
 
@@ -349,7 +369,7 @@ func PostClaudeConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, 
 	other := GenerateClaudeOtherInfo(ctx, relayInfo, modelRatio, groupRatio, completionRatio,
 		cacheTokens, cacheRatio, cacheCreationTokens, cacheCreationRatio, modelPrice, relayInfo.PriceData.GroupRatioInfo.GroupSpecialRatio)
 
-	// 计算价格链条
+	// 计算价格链条（使用请求头X-Oem-Code中的OEM信息）
 	priceChain := CalculatePriceChainForLog(ctx, modelName, promptTokens, completionTokens, quota)
 
 	model.RecordConsumeLog(ctx, relayInfo.UserId, model.RecordConsumeLogParams{
@@ -410,6 +430,9 @@ func PostAudioConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, u
 	modelPrice := relayInfo.PriceData.ModelPrice
 	usePrice := relayInfo.PriceData.UsePrice
 
+	// 获取OEM用户折扣
+	oemUserDiscount := GetOemUserDiscountForQuota(ctx, relayInfo.OriginModelName)
+
 	quotaInfo := QuotaInfo{
 		InputDetails: TokenDetails{
 			TextTokens:  textInputTokens,
@@ -419,10 +442,11 @@ func PostAudioConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, u
 			TextTokens:  textOutTokens,
 			AudioTokens: audioOutTokens,
 		},
-		ModelName:  relayInfo.OriginModelName,
-		UsePrice:   usePrice,
-		ModelRatio: modelRatio,
-		GroupRatio: groupRatio,
+		ModelName:       relayInfo.OriginModelName,
+		UsePrice:        usePrice,
+		ModelRatio:      modelRatio,
+		GroupRatio:      groupRatio,
+		OemUserDiscount: oemUserDiscount,
 	}
 
 	quota := calculateAudioQuota(quotaInfo)
@@ -479,7 +503,7 @@ func PostAudioConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, u
 	other := GenerateAudioOtherInfo(ctx, relayInfo, usage, modelRatio, groupRatio,
 		completionRatio.InexactFloat64(), audioRatio.InexactFloat64(), audioCompletionRatio.InexactFloat64(), modelPrice, relayInfo.PriceData.GroupRatioInfo.GroupSpecialRatio)
 
-	// 计算价格链条
+	// 计算价格链条（使用请求头X-Oem-Code中的OEM信息）
 	priceChain := CalculatePriceChainForLog(ctx, logModel, textInputTokens+audioInputTokens, textOutTokens+audioOutTokens, quota)
 
 	model.RecordConsumeLog(ctx, relayInfo.UserId, model.RecordConsumeLogParams{

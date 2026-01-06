@@ -90,8 +90,12 @@ func main() {
 
 	// 初始化OEM系统配置缓存
 	model.InitPlatformCost()
-	model.InitSystemConfig()
-	model.InitSystemDiscount()
+	model.InitOemConfig()
+	model.InitOemDiscount()
+	model.InitOemUserDiscount()
+
+	// 定时刷新OEM配置缓存（每5分钟）
+	go model.SyncOemConfigCache(300)
 
 	// 数据看板
 	go model.UpdateQuotaData()

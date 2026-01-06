@@ -536,14 +536,25 @@ func handleVideoTaskBilling(ctx context.Context, task *model.Task, taskResult *r
 	modelRatio := priceData.ModelRatio
 	completionRatio := priceData.CompletionRatio
 
+	// 获取OEM用户折扣（视频任务没有gin.Context，使用默认值1.0）
+	// 注意：视频任务的轮询是在后台进行的，没有请求上下文
+	// 这里需要从任务数据中获取OEM信息
+	oemUserDiscount := 1.0
+	if taskData != nil {
+		// 尝试从任务数据中获取OEM用户折扣
+		if discount, ok := taskData["oem_user_discount"].(float64); ok && discount > 0 {
+			oemUserDiscount = discount
+		}
+	}
+
 	// 根据实际token消耗重新计算quota
 	var actualQuota int
 	if modelPrice == -1 {
-		// 按量计费：根据实际token消耗计算
-		actualQuota = int(float64(taskResult.TotalTokens) * modelRatio * completionRatio * groupRatio)
+		// 按量计费：根据实际token消耗计算，应用OEM用户折扣
+		actualQuota = int(float64(taskResult.TotalTokens) * modelRatio * completionRatio * groupRatio * oemUserDiscount)
 	} else {
-		// 固定价格：按固定价格计费
-		actualQuota = int(modelPrice * common.QuotaPerUnit * groupRatio)
+		// 固定价格：按固定价格计费，应用OEM用户折扣
+		actualQuota = int(modelPrice * common.QuotaPerUnit * groupRatio * oemUserDiscount)
 	}
 
 	// 计算quota差值（参考对话的补扣费逻辑）
@@ -601,6 +612,7 @@ func handleVideoTaskBilling(ctx context.Context, task *model.Task, taskResult *r
 	other["model_ratio"] = modelRatio
 	other["completion_ratio"] = completionRatio
 	other["group_ratio"] = groupRatio
+	other["oem_user_discount"] = oemUserDiscount
 	other["pre_consumed_quota"] = task.Quota
 	other["actual_quota"] = actualQuota
 	other["quota_delta"] = quotaDelta
@@ -871,10 +883,18 @@ func handleVeoTaskBilling(ctx context.Context, task *model.Task, channel *model.
 		groupRatio = 1.0
 	}
 
-	actualQuota := int(videoPrice * float64(requestedSeconds) * float64(sampleCount) * common.QuotaPerUnit * groupRatio)
+	// 获取OEM用户折扣（从任务数据中获取）
+	oemUserDiscount := 1.0
+	if taskData != nil {
+		if discount, ok := taskData["oem_user_discount"].(float64); ok && discount > 0 {
+			oemUserDiscount = discount
+		}
+	}
 
-	logger.LogInfo(ctx, fmt.Sprintf("[VeoTaskBilling] Billing: %d seconds × $%.4f/sec × sampleCount %d × group_ratio %.2f = quota %d",
-		requestedSeconds, videoPrice, sampleCount, groupRatio, actualQuota))
+	actualQuota := int(videoPrice * float64(requestedSeconds) * float64(sampleCount) * common.QuotaPerUnit * groupRatio * oemUserDiscount)
+
+	logger.LogInfo(ctx, fmt.Sprintf("[VeoTaskBilling] Billing: %d seconds × $%.4f/sec × sampleCount %d × group_ratio %.2f × oem_user_discount %.4f = quota %d",
+		requestedSeconds, videoPrice, sampleCount, groupRatio, oemUserDiscount, actualQuota))
 
 	// 6. 扣除用户余额（带重试机制）
 	maxRetries := 3
@@ -903,6 +923,7 @@ func handleVeoTaskBilling(ctx context.Context, task *model.Task, channel *model.
 	other["video_seconds"] = requestedSeconds
 	other["video_price_per_second"] = videoPrice
 	other["group_ratio"] = groupRatio
+	other["oem_user_discount"] = oemUserDiscount
 	other["sample_count"] = sampleCount
 	other["actual_quota"] = actualQuota
 	// 不存储 video_url，避免将 base64 视频数据存储到日志中（Veo 使用 FailReason 存储视频数据）
@@ -1124,10 +1145,18 @@ func handleSora2TaskBilling(ctx context.Context, task *model.Task, channel *mode
 		groupRatio = 1.0
 	}
 
-	actualQuota := int(videoPrice * float64(requestedSeconds) * common.QuotaPerUnit * groupRatio)
+	// 获取OEM用户折扣（从任务数据中获取）
+	oemUserDiscount := 1.0
+	if taskData != nil {
+		if discount, ok := taskData["oem_user_discount"].(float64); ok && discount > 0 {
+			oemUserDiscount = discount
+		}
+	}
 
-	logger.LogInfo(ctx, fmt.Sprintf("[Sora2TaskBilling] Billing: %d seconds × $%.4f/sec × group_ratio %.2f = quota %d",
-		requestedSeconds, videoPrice, groupRatio, actualQuota))
+	actualQuota := int(videoPrice * float64(requestedSeconds) * common.QuotaPerUnit * groupRatio * oemUserDiscount)
+
+	logger.LogInfo(ctx, fmt.Sprintf("[Sora2TaskBilling] Billing: %d seconds × $%.4f/sec × group_ratio %.2f × oem_user_discount %.4f = quota %d",
+		requestedSeconds, videoPrice, groupRatio, oemUserDiscount, actualQuota))
 
 	// 6. 扣除用户余额
 	maxRetries := 3
@@ -1156,6 +1185,7 @@ func handleSora2TaskBilling(ctx context.Context, task *model.Task, channel *mode
 	other["video_seconds"] = requestedSeconds
 	other["video_price_per_second"] = videoPrice
 	other["group_ratio"] = groupRatio
+	other["oem_user_discount"] = oemUserDiscount
 	other["actual_quota"] = actualQuota
 	// 不存储 video_url，避免将 base64 视频数据存储到日志中（使用 FailReason 存储视频数据）
 	other["billing_type"] = "per_second"
@@ -1296,11 +1326,19 @@ func handleWan25TaskBilling(ctx context.Context, task *model.Task, taskResult *r
 		groupRatio = 1.0
 	}
 
-	// 计算实际扣费：价格/秒 * 秒数 * 组倍率
-	actualQuota := int(videoPrice * float64(actualDuration) * common.QuotaPerUnit * groupRatio)
+	// 获取OEM用户折扣（从任务数据中获取）
+	oemUserDiscount := 1.0
+	if taskData != nil {
+		if discount, ok := taskData["oem_user_discount"].(float64); ok && discount > 0 {
+			oemUserDiscount = discount
+		}
+	}
 
-	logger.LogInfo(ctx, fmt.Sprintf("[Wan25TaskBilling] Billing: %d seconds × $%.4f/sec (resolution=%s) × group_ratio %.2f = quota %d",
-		actualDuration, videoPrice, resolution, groupRatio, actualQuota))
+	// 计算实际扣费：价格/秒 * 秒数 * 组倍率 * OEM用户折扣
+	actualQuota := int(videoPrice * float64(actualDuration) * common.QuotaPerUnit * groupRatio * oemUserDiscount)
+
+	logger.LogInfo(ctx, fmt.Sprintf("[Wan25TaskBilling] Billing: %d seconds × $%.4f/sec (resolution=%s) × group_ratio %.2f × oem_user_discount %.4f = quota %d",
+		actualDuration, videoPrice, resolution, groupRatio, oemUserDiscount, actualQuota))
 
 	// 扣除用户余额
 	maxRetries := 3
@@ -1330,6 +1368,7 @@ func handleWan25TaskBilling(ctx context.Context, task *model.Task, taskResult *r
 	other["video_resolution"] = resolution
 	other["video_price_per_second"] = videoPrice
 	other["group_ratio"] = groupRatio
+	other["oem_user_discount"] = oemUserDiscount
 	other["actual_quota"] = actualQuota
 	other["billing_type"] = "per_second_per_resolution"
 	other["platform"] = task.Platform

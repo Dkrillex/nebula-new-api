@@ -106,29 +106,23 @@ func RelayTaskSubmit(c *gin.Context, info *relaycommon.RelayInfo) (taskErr *dto.
 	// 1. 优先检查视频每秒价格
 	videoPrice, hasVideoPrice := ratio_setting.GetVideoModelPricePerSecondWithAudio(modelName, generateAudio)
 	if hasVideoPrice && videoPrice > 0 {
-		// 应用系统折扣到 videoPrice（OEM 系统折扣）
-		systemCode := "nebula" // 默认系统
-		if code, exists := c.Get(string(constant.ContextKeySystemCode)); exists {
-			if codeStr, ok := code.(string); ok && codeStr != "" {
-				systemCode = codeStr
-			}
-		}
-		vendorName := service.GetVendorNameFromModel(modelName)
-		systemDiscount := model.GetSystemDiscount(systemCode, modelName, vendorName)
-		if systemDiscount != 1.0 {
-			videoPrice = videoPrice * systemDiscount
-			common.SysLog(fmt.Sprintf("[RelayTaskSubmit] 应用OEM折扣到videoPrice: oemCode=%s, systemDiscount=%.4f, 原价=%.4f, 折后价=%.4f",
-				oemCode, systemDiscount, videoPrice/systemDiscount, videoPrice))
+		// 应用OEM用户折扣到 videoPrice（用于用户实际支付价）
+		oemUserDiscount := service.GetOemUserDiscountForQuota(c, modelName)
+		if oemUserDiscount != 1.0 {
+			videoPrice = videoPrice * oemUserDiscount
+			common.SysLog(fmt.Sprintf("[RelayTaskSubmit] 应用OEM用户折扣到videoPrice: oemUserDiscount=%.4f, 原价=%.4f, 折后价=%.4f",
+				oemUserDiscount, videoPrice/oemUserDiscount, videoPrice))
 		}
 		// 按秒计费：价格 * 秒数
 		quota = int(videoPrice * float64(videoSeconds) * common.QuotaPerUnit * priceData.GroupRatioInfo.GroupRatio)
 		common.SysLog(fmt.Sprintf("[RelayTaskSubmit] Video task per-second billing: %d seconds × $%.4f/sec × group_ratio %.2f = quota %d (generateAudio=%v)",
 			videoSeconds, videoPrice, priceData.GroupRatioInfo.GroupRatio, quota, generateAudio))
 	} else if priceData.ModelPrice > 0 {
-		// 2. 固定价格（按次计费）
-		quota = int(priceData.ModelPrice * common.QuotaPerUnit * priceData.GroupRatioInfo.GroupRatio)
-		common.SysLog(fmt.Sprintf("[RelayTaskSubmit] Video task per-call billing: $%.4f × group_ratio %.2f = quota %d",
-			priceData.ModelPrice, priceData.GroupRatioInfo.GroupRatio, quota))
+		// 2. 固定价格（按次计费），应用OEM用户折扣
+		oemUserDiscount := service.GetOemUserDiscountForQuota(c, modelName)
+		quota = int(priceData.ModelPrice * common.QuotaPerUnit * priceData.GroupRatioInfo.GroupRatio * oemUserDiscount)
+		common.SysLog(fmt.Sprintf("[RelayTaskSubmit] Video task per-call billing: $%.4f × group_ratio %.2f × oem_user_discount %.4f = quota %d",
+			priceData.ModelPrice, priceData.GroupRatioInfo.GroupRatio, oemUserDiscount, quota))
 	} else if quota == 0 || quota < 1000 {
 		// 3. 如果预扣费为0或过小，设置默认值
 		quota = int(0.1 * common.QuotaPerUnit) // 默认0.1美元的预扣费
@@ -260,18 +254,23 @@ func RelayTaskSubmit(c *gin.Context, info *relaycommon.RelayInfo) (taskErr *dto.
 
 	// 添加计费相关信息（用于后续扣费）
 	taskDataMap["model_name"] = modelName
-	taskDataMap["model_price"] = modelPrice
+	// 如果按秒计费，使用折扣后的 videoPrice；否则使用 modelPrice（已应用折扣）
+	if hasVideoPrice && videoPrice > 0 {
+		taskDataMap["model_price"] = videoPrice // 使用折扣后的 videoPrice
+		taskDataMap["video_price_per_second"] = videoPrice
+	} else {
+		taskDataMap["model_price"] = modelPrice // modelPrice 已在 ModelPriceHelperPerCall 中应用折扣
+	}
 	taskDataMap["group_ratio"] = groupRatio
 	if hasUserGroupRatio {
 		taskDataMap["user_group_ratio"] = userGroupRatio
 	}
+	// 保存OEM用户折扣（用于后台轮询时扣费）
+	taskDataMap["oem_user_discount"] = service.GetOemUserDiscountForQuota(c, modelName)
 	taskDataMap["requested_seconds"] = videoSeconds // 保存请求的秒数
 	taskDataMap["durationSeconds"] = videoSeconds
 	taskDataMap["generate_audio"] = generateAudio
 	taskDataMap["generateAudio"] = generateAudio
-	if hasVideoPrice && videoPrice > 0 {
-		taskDataMap["video_price_per_second"] = videoPrice
-	}
 	taskDataMap["billing_pending"] = true // 标记待扣费
 
 	// 记录调试信息
@@ -831,16 +830,19 @@ func handleVideoTaskBillingInQuery(c *gin.Context, task *model.Task, taskResult 
 		modelRatio := priceData.ModelRatio
 		completionRatio := priceData.CompletionRatio
 
+		// 获取OEM用户折扣
+		oemUserDiscount := service.GetOemUserDiscountForQuota(c, modelName)
+
 		// 豆包火山视频模型：按输出token计费，输入免费
 		outputTokens := taskResult.TotalTokens // 豆包返回的total_tokens就是输出token
 
-		// 根据模型价格类型计算实际quota
+		// 根据模型价格类型计算实际quota，应用OEM用户折扣
 		if modelPrice == -1 {
 			// 按量计费：根据实际token消耗计算
-			actualQuota = int(float64(outputTokens) * modelRatio * completionRatio * groupRatio)
+			actualQuota = int(float64(outputTokens) * modelRatio * completionRatio * groupRatio * oemUserDiscount)
 		} else {
 			// 固定价格：按固定价格计费
-			actualQuota = int(float64(outputTokens) * modelPrice * common.QuotaPerUnit * groupRatio)
+			actualQuota = int(float64(outputTokens) * modelPrice * common.QuotaPerUnit * groupRatio * oemUserDiscount)
 		}
 
 		// 计算quota差值（参考对话的补扣费逻辑）
@@ -1057,36 +1059,28 @@ func handleVideoTaskBillingBySeconds(c *gin.Context, task *model.Task, taskResul
 	}
 
 	if hasVideoPrice && videoPrice > 0 && actualSeconds > 0 {
-		// 应用系统折扣到 videoPrice（OEM 系统折扣）
-		systemCode := "nebula" // 默认系统
-		if c != nil {
-			if code, exists := c.Get(string(constant.ContextKeySystemCode)); exists {
-				if codeStr, ok := code.(string); ok && codeStr != "" {
-					systemCode = codeStr
-				}
-			}
-		}
-		vendorName := service.GetVendorNameFromModel(modelName)
-		systemDiscount := model.GetSystemDiscount(systemCode, modelName, vendorName)
-		if systemDiscount != 1.0 {
-			videoPrice = videoPrice * systemDiscount
-			common.SysLog(fmt.Sprintf("[VideoTask] 应用OEM折扣到videoPrice: oemCode=%s, systemDiscount=%.4f, 原价=%.4f, 折后价=%.4f",
-				oemCode, systemDiscount, videoPrice/systemDiscount, videoPrice))
+		// 应用OEM用户折扣到 videoPrice（用于用户实际支付价）
+		oemUserDiscount := service.GetOemUserDiscountForQuota(c, modelName)
+		if oemUserDiscount != 1.0 {
+			videoPrice = videoPrice * oemUserDiscount
+			common.SysLog(fmt.Sprintf("[VideoTask] 应用OEM用户折扣到videoPrice: oemUserDiscount=%.4f, 原价=%.4f, 折后价=%.4f",
+				oemUserDiscount, videoPrice/oemUserDiscount, videoPrice))
 		}
 		// 按秒计费：价格 * 秒数
 		actualQuota = int(videoPrice * float64(actualSeconds) * common.QuotaPerUnit * groupRatio)
 		billingType = "per_second"
 		videoPricePerSecond = videoPrice
-		common.SysLog(fmt.Sprintf("[VideoTask] Per-second billing: %d seconds × $%.4f/sec × group_ratio %.2f = quota %d",
-			actualSeconds, videoPrice, groupRatio, actualQuota))
+		common.SysLog(fmt.Sprintf("[VideoTask] Per-second billing: %d seconds × $%.4f/sec × group_ratio %.2f × oem_user_discount %.4f = quota %d",
+			actualSeconds, videoPrice, groupRatio, oemUserDiscount, actualQuota))
 	} else if modelPrice > 0 {
-		// 2. 固定价格（按次计费）
-		actualQuota = int(modelPrice * common.QuotaPerUnit * groupRatio)
+		// 2. 固定价格（按次计费），应用OEM用户折扣
+		oemUserDiscount := service.GetOemUserDiscountForQuota(c, modelName)
+		actualQuota = int(modelPrice * common.QuotaPerUnit * groupRatio * oemUserDiscount)
 		billingType = "per_call"
-		common.SysLog(fmt.Sprintf("[VideoTask] Per-call billing: $%.4f × group_ratio %.2f = quota %d",
-			modelPrice, groupRatio, actualQuota))
+		common.SysLog(fmt.Sprintf("[VideoTask] Per-call billing: $%.4f × group_ratio %.2f × oem_user_discount %.4f = quota %d",
+			modelPrice, groupRatio, oemUserDiscount, actualQuota))
 	} else if hasModelRatio && modelRatio > 0 && taskResult.TotalTokens > 0 {
-		// 3. 按token计费（doubao等返回tokens的视频模型）
+		// 3. 按token计费（doubao等返回tokens的视频模型），应用OEM用户折扣
 		// 使用和文本模型相同的计费逻辑：ratio * 2 * tokens / 1M
 		inputTokens := taskResult.TotalTokens // doubao只返回total_tokens
 		outputTokens := 0
@@ -1101,24 +1095,27 @@ func handleVideoTaskBillingBySeconds(c *gin.Context, task *model.Task, taskResul
 			outputRatioPrice = inputRatioPrice * completionRatio
 		}
 
-		actualQuota = int((float64(inputTokens)/1000000)*inputRatioPrice*groupRatio +
-			(float64(outputTokens)/1000000)*outputRatioPrice*groupRatio)
+		oemUserDiscount := service.GetOemUserDiscountForQuota(c, modelName)
+		actualQuota = int((float64(inputTokens)/1000000)*inputRatioPrice*groupRatio*oemUserDiscount +
+			(float64(outputTokens)/1000000)*outputRatioPrice*groupRatio*oemUserDiscount)
 		billingType = "per_token"
-		common.SysLog(fmt.Sprintf("[VideoTask] Per-token billing: %d tokens × ratio %.2f × group_ratio %.2f = quota %d",
-			taskResult.TotalTokens, modelRatio, groupRatio, actualQuota))
+		common.SysLog(fmt.Sprintf("[VideoTask] Per-token billing: %d tokens × ratio %.2f × group_ratio %.2f × oem_user_discount %.4f = quota %d",
+			taskResult.TotalTokens, modelRatio, groupRatio, oemUserDiscount, actualQuota))
 	} else if actualSeconds > 0 {
-		// 4. 如果没有价格信息且有秒数，使用默认价格（$0.1/秒）
-		actualQuota = int(0.1 * float64(actualSeconds) * common.QuotaPerUnit * groupRatio)
+		// 4. 如果没有价格信息且有秒数，使用默认价格（$0.1/秒），应用OEM用户折扣
+		oemUserDiscount := service.GetOemUserDiscountForQuota(c, modelName)
+		actualQuota = int(0.1 * float64(actualSeconds) * common.QuotaPerUnit * groupRatio * oemUserDiscount)
 		billingType = "per_second"
-		videoPricePerSecond = 0.1
-		common.SysLog(fmt.Sprintf("[VideoTask] Default per-second billing: %d seconds × $0.1/sec × group_ratio %.2f = quota %d",
-			actualSeconds, groupRatio, actualQuota))
+		videoPricePerSecond = 0.1 * oemUserDiscount
+		common.SysLog(fmt.Sprintf("[VideoTask] Default per-second billing: %d seconds × $0.1/sec × group_ratio %.2f × oem_user_discount %.4f = quota %d",
+			actualSeconds, groupRatio, oemUserDiscount, actualQuota))
 	} else {
-		// 5. 兜底：使用最小扣费
-		actualQuota = int(0.01 * common.QuotaPerUnit * groupRatio)
+		// 5. 兜底：使用最小扣费，应用OEM用户折扣
+		oemUserDiscount := service.GetOemUserDiscountForQuota(c, modelName)
+		actualQuota = int(0.01 * common.QuotaPerUnit * groupRatio * oemUserDiscount)
 		billingType = "fallback"
-		common.SysLog(fmt.Sprintf("[VideoTask] Fallback billing: $0.01 × group_ratio %.2f = quota %d",
-			groupRatio, actualQuota))
+		common.SysLog(fmt.Sprintf("[VideoTask] Fallback billing: $0.01 × group_ratio %.2f × oem_user_discount %.4f = quota %d",
+			groupRatio, oemUserDiscount, actualQuota))
 	}
 
 	common.SysLog(fmt.Sprintf("[VideoTask] 计算实际费用: seconds=%d, quota=%d", actualSeconds, actualQuota))
@@ -1155,11 +1152,9 @@ func handleVideoTaskBillingBySeconds(c *gin.Context, task *model.Task, taskResul
 	other["actual_quota"] = actualQuota
 	// 不存储 video_url，避免将 base64 视频数据存储到日志中
 	other["model_name"] = modelName
-	other["model_price"] = modelPrice
-	other["group_ratio"] = groupRatio
-
-	// 根据计费类型记录不同的元数据
+	// 如果按秒计费，使用折扣后的 videoPricePerSecond；否则使用 modelPrice（已应用折扣）
 	if billingType == "per_second" && videoPricePerSecond > 0 {
+		other["model_price"] = videoPricePerSecond // 使用折扣后的 videoPricePerSecond
 		other["video_seconds"] = actualSeconds
 		other["video_price_per_second"] = videoPricePerSecond
 	} else if billingType == "per_token" {

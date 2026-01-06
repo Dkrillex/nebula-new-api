@@ -220,15 +220,19 @@ func RecordConsumeLog(c *gin.Context, userId int, params RecordConsumeLogParams)
 		log.UserQuota = params.PriceChain.UserQuota
 		log.PlatformProfit = params.PriceChain.PlatformProfit
 		log.OemSubsidy = params.PriceChain.OemSubsidy
-
-		// 处理OEM补贴
-		if log.OemSubsidy != 0 && params.PriceChain.OemCode != "" {
-			ProcessOemSubsidy(c, params.PriceChain.OemCode, log.OemSubsidy)
-		}
 	}
+
+	// 先插入日志以获取日志ID
 	err := LOG_DB.Create(log).Error
 	if err != nil {
 		logger.LogError(c, "failed to record log: "+err.Error())
+		return
+	}
+
+	// 处理OEM补贴（在日志插入后，可以传入日志ID）
+	if params.PriceChain != nil && log.OemSubsidy != 0 && params.PriceChain.OemCode != "" {
+		logId := log.Id
+		ProcessOemSubsidy(c, params.PriceChain.OemCode, log.OemSubsidy, logId, userId)
 	}
 	if common.DataExportEnabled {
 		gopool.Go(func() {
@@ -239,19 +243,33 @@ func RecordConsumeLog(c *gin.Context, userId int, params RecordConsumeLogParams)
 
 // ProcessOemSubsidy 处理OEM补贴
 // 如果OEM补贴为负数（需要补贴），从系统账户扣除；如果为正数（盈利），增加到系统账户
-func ProcessOemSubsidy(c *gin.Context, oemCode string, oemSubsidy int64) error {
+func ProcessOemSubsidy(c *gin.Context, oemCode string, oemSubsidy int64, logId int, userId int) error {
 	if oemSubsidy == 0 {
+		common.SysLog(fmt.Sprintf("OEM补贴处理跳过: oemCode=%s, oemSubsidy=0", oemCode))
 		return nil
 	}
 
 	// 获取OEM配置
 	oemConfig := GetOemConfigByCode(oemCode)
-	if oemConfig == nil || oemConfig.OemAdminNebulaApiId == nil {
-		// 如果没有配置OEM管理员账户，不处理补贴
+	if oemConfig == nil {
+		common.SysLog(fmt.Sprintf("OEM补贴处理跳过: oemCode=%s, OEM配置不存在", oemCode))
+		return nil
+	}
+	if oemConfig.OemAdminNebulaApiId == nil {
+		// 如果没有配置OEM管理员账户，不处理补贴，但记录日志
+		common.SysLog(fmt.Sprintf("OEM补贴处理跳过: oemCode=%s, OemAdminNebulaApiId未配置（请在oem_config表中设置oem_admin_nebula_api_id字段）", oemCode))
 		return nil
 	}
 
 	systemAccountUserId := int(*oemConfig.OemAdminNebulaApiId)
+
+	// 获取变动前余额
+	user, err := GetUserById(systemAccountUserId, false)
+	if err != nil {
+		common.SysLog(fmt.Sprintf("获取OEM管理员账户失败: systemAccountUserId=%d, error=%v", systemAccountUserId, err))
+		return err
+	}
+	balanceBefore := int64(user.Quota)
 
 	if oemSubsidy < 0 {
 		// 需要补贴：从系统账户扣除（oemSubsidy是负数，所以需要取绝对值）
@@ -262,6 +280,27 @@ func ProcessOemSubsidy(c *gin.Context, oemCode string, oemSubsidy int64) error {
 				oemCode, systemAccountUserId, subsidyAmount, err))
 			return err
 		}
+
+		// 记录OEM账户变动日志
+		balanceAfter := balanceBefore + oemSubsidy
+		// 将quota转换为人民币（1美金=500000quota=7.3人民币）
+		subsidyRmb := float64(-oemSubsidy) / common.QuotaPerUnit * 7.3
+		accountLog := &OemAccountLog{
+			OemId:          oemConfig.Id,
+			OemAdminUserId: systemAccountUserId,
+			CreatedAt:      common.GetTimestamp(),
+			Type:           OemAccountLogTypeSubsidy,
+			Amount:         oemSubsidy, // 负数
+			BalanceBefore:  balanceBefore,
+			BalanceAfter:   balanceAfter,
+			RelatedLogId:   &logId,
+			RelatedUserId:  &userId,
+			Content:        fmt.Sprintf("OEM补贴：-¥%.6f（用户消费产生亏损）", subsidyRmb),
+		}
+		if err := RecordOemAccountLog(accountLog); err != nil {
+			common.SysLog(fmt.Sprintf("记录OEM账户变动日志失败: error=%v", err))
+		}
+
 		common.SysLog(fmt.Sprintf("OEM补贴扣除: oemCode=%s, systemAccountUserId=%d, subsidyAmount=%d",
 			oemCode, systemAccountUserId, subsidyAmount))
 	} else {
@@ -273,6 +312,27 @@ func ProcessOemSubsidy(c *gin.Context, oemCode string, oemSubsidy int64) error {
 				oemCode, systemAccountUserId, profitAmount, err))
 			return err
 		}
+
+		// 记录OEM账户变动日志
+		balanceAfter := balanceBefore + oemSubsidy
+		// 将quota转换为人民币（1美金=500000quota=7.3人民币）
+		profitRmb := float64(oemSubsidy) / common.QuotaPerUnit * 7.3
+		accountLog := &OemAccountLog{
+			OemId:          oemConfig.Id,
+			OemAdminUserId: systemAccountUserId,
+			CreatedAt:      common.GetTimestamp(),
+			Type:           OemAccountLogTypeProfit,
+			Amount:         oemSubsidy, // 正数
+			BalanceBefore:  balanceBefore,
+			BalanceAfter:   balanceAfter,
+			RelatedLogId:   &logId,
+			RelatedUserId:  &userId,
+			Content:        fmt.Sprintf("OEM盈利：+¥%.6f（用户消费产生盈利）", profitRmb),
+		}
+		if err := RecordOemAccountLog(accountLog); err != nil {
+			common.SysLog(fmt.Sprintf("记录OEM账户变动日志失败: error=%v", err))
+		}
+
 		common.SysLog(fmt.Sprintf("OEM盈利增加: oemCode=%s, systemAccountUserId=%d, profitAmount=%d",
 			oemCode, systemAccountUserId, profitAmount))
 	}

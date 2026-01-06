@@ -205,12 +205,33 @@ func Register(c *gin.Context) {
 	}
 	affCode := user.AffCode // this code is the inviter's code, not the user's own code
 	inviterId, _ := model.GetUserIdByAffCode(affCode)
+
+	// 获取OEM ID（从Context中获取）
+	var oemId *int64
+	if oemCode, exists := c.Get(string(constant.ContextKeyOemCode)); exists {
+		if codeStr, ok := oemCode.(string); ok && codeStr != "" {
+			oemConfig := model.GetOemConfigByCode(codeStr)
+			if oemConfig != nil {
+				oemId = &oemConfig.Id
+			}
+		}
+	}
+	// 如果还是没有，尝试从Context直接获取OemId
+	if oemId == nil {
+		if id, exists := c.Get(string(constant.ContextKeyOemId)); exists {
+			if idInt64, ok := id.(int64); ok {
+				oemId = &idInt64
+			}
+		}
+	}
+
 	cleanUser := model.User{
 		Username:    user.Username,
 		Password:    user.Password,
 		DisplayName: user.Username,
 		InviterId:   inviterId,
 		Role:        common.RoleCommonUser, // 明确设置角色为普通用户
+		OemId:       oemId,                 // 设置OEM ID
 	}
 	if common.EmailVerificationEnabled {
 		cleanUser.Email = user.Email

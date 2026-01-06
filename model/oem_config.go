@@ -162,3 +162,20 @@ func GetSystemConfigByApiPrefix(apiPrefix string) *OemConfig {
 func GetSystemConfigByApiPrefixAlias(apiPrefixAlias string) *OemConfig {
 	return GetOemConfigByApiPrefixAlias(apiPrefixAlias)
 }
+
+// SyncOemConfigCache 定时刷新OEM相关的所有缓存
+// frequency: 刷新间隔（秒）
+func SyncOemConfigCache(frequency int) {
+	for {
+		time.Sleep(time.Duration(frequency) * time.Second)
+		common.SysLog("定时刷新OEM配置缓存...")
+
+		// 刷新所有OEM相关缓存
+		RefreshOemConfigCache()
+		RefreshOemDiscountCache()
+		RefreshOemUserDiscountCache()
+		RefreshPlatformCostCache()
+
+		common.SysLog("OEM配置缓存刷新完成")
+	}
+}

@@ -17,11 +17,8 @@ func SystemIdentify() gin.HandlerFunc {
 		var oemCode string
 		var oemConfig *model.OemConfig
 
-		// 1. 优先从Nginx传递的Header获取（支持X-Oem-Code和X-System-Code）
+		// 1. 优先从Nginx传递的Header获取
 		oemCode = c.GetHeader("X-Oem-Code")
-		if oemCode == "" {
-			oemCode = c.GetHeader("X-System-Code") // 向后兼容
-		}
 
 		// 2. 如果Header没有，从请求路径中提取
 		if oemCode == "" {
@@ -52,8 +49,6 @@ func SystemIdentify() gin.HandlerFunc {
 
 		// 5. 存储到Context
 		common.SetContextKey(c, constant.ContextKeyOemCode, oemCode)
-		// 向后兼容：同时设置SystemCode
-		common.SetContextKey(c, constant.ContextKeySystemCode, oemCode)
 
 		if oemConfig != nil {
 			oemId := oemConfig.Id

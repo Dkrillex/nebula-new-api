@@ -276,6 +276,9 @@ func postConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, usage 
 
 	ratio := dModelRatio.Mul(dGroupRatio)
 
+	// 获取OEM用户折扣（用于按张计费等特殊计费场景）
+	oemUserDiscount := service.GetOemUserDiscountForQuota(ctx, modelName)
+
 	// openai web search 工具计费
 	var dWebSearchQuota decimal.Decimal
 	var webSearchPrice float64
@@ -402,6 +405,8 @@ func postConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, usage 
 		}
 
 		quotaCalculateDecimal = promptQuota.Add(completionQuota).Mul(ratio)
+		// 注意：oemUserDiscount 已经在 price.go 的 ModelPriceHelper 中应用到 modelRatio 了
+		// 所以这里不需要再乘以 oemUserDiscount，否则会重复应用折扣
 
 		if !ratio.IsZero() && quotaCalculateDecimal.LessThanOrEqual(decimal.Zero) {
 			quotaCalculateDecimal = decimal.NewFromInt(1)
@@ -428,23 +433,28 @@ func postConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, usage 
 			logger.LogDebug(ctx, fmt.Sprintf("[postConsumeQuota] 检查按张计费: modelName=%s, hasImagePrice=%v, imagePrice=%.4f", modelName, hasImagePrice, imagePrice))
 
 			if hasImagePrice && imagePrice > 0 {
-				// 获取系统代码和厂商名称（用于OEM价格链条计算）
-				systemCode := "nebula" // 默认系统
-				if code, exists := ctx.Get(string(constant.ContextKeySystemCode)); exists {
+				// 获取OEM代码和厂商名称（用于OEM价格链条计算）
+				oemCode := "nebula" // 默认系统
+				if code, exists := ctx.Get(string(constant.ContextKeyOemCode)); exists {
 					if codeStr, ok := code.(string); ok && codeStr != "" {
-						systemCode = codeStr
+						oemCode = codeStr
 					}
 				}
 				vendorName := service.GetVendorNameFromModel(modelName)
 
-				// 应用系统折扣
-				systemDiscount := model.GetSystemDiscount(systemCode, modelName, vendorName)
-				discountedImagePrice := imagePrice * systemDiscount
-				logger.LogDebug(ctx, fmt.Sprintf("[postConsumeQuota] OEM折扣: oemCode=%s, systemDiscount=%.4f, 原价=%.4f, 折后价=%.4f",
-					oemCode, systemDiscount, imagePrice, discountedImagePrice))
+				// 应用OEM用户折扣（用于用户实际支付价）
+				// 注意：这里使用 oemUserDiscount 而不是 systemDiscount
+				// systemDiscount 是平台给OEM的折扣，用于计算系统销售价和平台利润
+				// oemUserDiscount 是OEM给用户的折扣，用于计算用户实际支付价
+				discountedImagePrice := imagePrice * oemUserDiscount
+				logger.LogDebug(ctx, fmt.Sprintf("[postConsumeQuota] OEM用户折扣: oemCode=%s, oemUserDiscount=%.4f, groupRatio=%.4f, 原价=%.4f, 折后价=%.4f",
+					oemCode, oemUserDiscount, groupRatio, imagePrice, discountedImagePrice))
 
-				// 使用按张价格计费（单位：美元/张），已应用系统折扣
-				logger.LogDebug(ctx, fmt.Sprintf("[postConsumeQuota] 使用按张计费: %.4f USD/张 × %d张 (已应用系统折扣)", discountedImagePrice, multiplier))
+				// 更新 relayInfo.PriceData.ModelPrice 为折扣后的价格，用于后续日志记录
+				relayInfo.PriceData.ModelPrice = discountedImagePrice
+
+				// 使用按张价格计费（单位：美元/张），已应用OEM用户折扣和分组倍率
+				logger.LogDebug(ctx, fmt.Sprintf("[postConsumeQuota] 使用按张计费: %.4f USD/张 × %d张 × groupRatio %.4f (已应用OEM用户折扣)", discountedImagePrice, multiplier, groupRatio))
 				quotaCalculateDecimal = decimal.NewFromFloat(discountedImagePrice).
 					Mul(decimal.NewFromInt(int64(multiplier))).
 					Mul(dQuotaPerUnit).
@@ -453,17 +463,18 @@ func postConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, usage 
 				// 计算人民币价格用于日志显示
 				priceInCNY := discountedImagePrice * 7.3 // USD to CNY
 				totalPriceInCNY := priceInCNY * float64(multiplier)
-				extraContent += fmt.Sprintf("图片生成：%d张 × ¥%.2f = ¥%.2f (系统折扣: %.2f%%)",
-					multiplier, priceInCNY, totalPriceInCNY, systemDiscount*100)
+				_ = vendorName // 用于价格链条计算
+				extraContent += fmt.Sprintf("图片生成：%d张 × ¥%.2f = ¥%.2f (OEM用户折扣: %.2f%%, 分组倍率: %.2f)",
+					multiplier, priceInCNY, totalPriceInCNY, oemUserDiscount*100, groupRatio)
 			} else {
-				// 使用原有的按次计费逻辑（ModelPrice）
+				// 使用原有的按次计费逻辑（ModelPrice），modelPrice 已在 price.go 中应用了 oemUserDiscount
 				quotaCalculateDecimal = dModelPrice.Mul(dQuotaPerUnit).Mul(dGroupRatio).Mul(decimal.NewFromInt(int64(multiplier)))
 				if multiplier > 1 {
 					extraContent += fmt.Sprintf("，按次计费×图片数：单价 %v，数量 %d", modelPrice, multiplier)
 				}
 			}
 		} else {
-			// 非图片生成的按次计费
+			// 非图片生成的按次计费，modelPrice 已在 price.go 中应用了 oemUserDiscount
 			quotaCalculateDecimal = dModelPrice.Mul(dQuotaPerUnit).Mul(dGroupRatio)
 		}
 	}
@@ -664,6 +675,9 @@ func calculateImageTokenPricingQuota(ctx *gin.Context, relayInfo *relaycommon.Re
 	pricing := relayInfo.PriceData.ImageTokenPricing
 	groupRatio := relayInfo.PriceData.GroupRatioInfo.GroupRatio
 
+	// 获取OEM用户折扣
+	oemUserDiscount := service.GetOemUserDiscountForQuota(ctx, relayInfo.OriginModelName)
+
 	// 从 usage 和 context 获取真实的 tokens（不再查表）
 	inputTextTokens := 0
 	inputImageTokens := 0
@@ -716,14 +730,16 @@ func calculateImageTokenPricingQuota(ctx *gin.Context, relayInfo *relaycommon.Re
 
 	totalCost := inputTextCost.Add(inputImageCost).Add(outputCost)
 	totalCost = totalCost.Mul(decimal.NewFromFloat(groupRatio))
+	// 应用OEM用户折扣
+	totalCost = totalCost.Mul(decimal.NewFromFloat(oemUserDiscount))
 	quota := totalCost.Mul(decimal.NewFromFloat(common.QuotaPerUnit))
 
 	// 简化日志
 	quality := ctx.GetString("image_quality")
 	size := ctx.GetString("image_size")
 	if common.DebugEnabled {
-		logger.LogDebug(ctx, fmt.Sprintf("[ImageTokenPricing计费] %s %s | 文本=%d 图片输入=%d 输出=%d | $%.6f quota=%d",
-			quality, size, inputTextTokens, inputImageTokens, outputTokens, totalCost.InexactFloat64(), int(quota.Round(0).IntPart())))
+		logger.LogDebug(ctx, fmt.Sprintf("[ImageTokenPricing计费] %s %s | 文本=%d 图片输入=%d 输出=%d | $%.6f × oem_user_discount %.4f = quota=%d",
+			quality, size, inputTextTokens, inputImageTokens, outputTokens, totalCost.InexactFloat64(), oemUserDiscount, int(quota.Round(0).IntPart())))
 	}
 
 	return int(quota.Round(0).IntPart())
@@ -856,7 +872,7 @@ func recordImageTokenPricingConsume(ctx *gin.Context, relayInfo *relaycommon.Rel
 	other["output_image_price"] = pricing.OutputImagePrice
 	other["group_ratio"] = relayInfo.PriceData.GroupRatioInfo.GroupRatio
 
-	// 计算价格链条
+	// 计算价格链条（使用请求头X-Oem-Code中的OEM信息）
 	priceChain := service.CalculatePriceChainForLog(ctx, logModel, usage.PromptTokens, outputTokens, quota)
 
 	model.RecordConsumeLog(ctx, relayInfo.UserId, model.RecordConsumeLogParams{
