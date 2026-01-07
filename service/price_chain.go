@@ -194,14 +194,26 @@ func GetVendorNameFromModel(modelName string) string {
 	err := model.DB.Where("model_name = ?", modelName).First(&m).Error
 	if err != nil {
 		// 如果查询失败，返回空字符串
+		if common.DebugEnabled {
+			common.SysLog(fmt.Sprintf("[GetVendorNameFromModel] 查询模型失败: modelName=%s, err=%v", modelName, err))
+		}
 		return ""
 	}
 	if m.VendorID == 0 {
+		if common.DebugEnabled {
+			common.SysLog(fmt.Sprintf("[GetVendorNameFromModel] 模型没有关联厂商: modelName=%s, vendorId=0", modelName))
+		}
 		return ""
 	}
 	vendor, err := model.GetVendorByID(m.VendorID)
 	if err != nil {
+		if common.DebugEnabled {
+			common.SysLog(fmt.Sprintf("[GetVendorNameFromModel] 查询厂商失败: modelName=%s, vendorId=%d, err=%v", modelName, m.VendorID, err))
+		}
 		return ""
+	}
+	if common.DebugEnabled {
+		common.SysLog(fmt.Sprintf("[GetVendorNameFromModel] 成功: modelName=%s, vendorId=%d, vendorName=%s", modelName, m.VendorID, vendor.Name))
 	}
 	return vendor.Name
 }
@@ -455,6 +467,99 @@ func CalculatePriceChainForImageGeneration(c *gin.Context, modelName string, ima
 	}
 }
 
+// CalculatePriceChainForVideoTask 为视频任务计算价格链条
+// 视频任务的轮询是在后台进行的，没有HTTP请求上下文，所以需要传入OEM信息
+// 参数说明：
+//   - oemCode: OEM代码（如 "nebula"）
+//   - modelName: 模型名称
+//   - vendorName: 厂商名称
+//   - quota: 实际扣费的quota
+//   - oemUserDiscount: OEM用户折扣（在任务创建时保存的）
+//   - groupRatio: 用户分组倍率
+func CalculatePriceChainForVideoTask(oemCode string, modelName string, vendorName string, quota int, oemUserDiscount float64, groupRatio float64) *model.PriceChainParams {
+	// 获取 OEM 配置
+	var oemId *int64
+	if oemCode == "" {
+		oemCode = "nebula"
+	}
+	oemConfig := model.GetOemConfigByCode(oemCode)
+	if oemConfig != nil {
+		oemId = &oemConfig.Id
+	}
+
+	// 获取厂商名称（如果未提供）
+	if vendorName == "" {
+		vendorName = GetVendorNameFromModel(modelName)
+	}
+
+	// 确保折扣值有效
+	if oemUserDiscount <= 0 {
+		oemUserDiscount = 1.0
+	}
+	if groupRatio <= 0 {
+		groupRatio = 1.0
+	}
+
+	// oem_discount: 平台给OEM的折扣（OEM的成本）
+	var oemDiscount float64
+	if oemId != nil {
+		oemDiscount = model.GetOemDiscount(*oemId, modelName, vendorName)
+	} else {
+		oemDiscount = model.GetOemDiscountByCode(oemCode, modelName, vendorName)
+	}
+	if oemDiscount <= 0 {
+		oemDiscount = 1.0
+	}
+
+	// platform_cost: 平台成本折扣
+	costDiscount := model.GetPlatformCostDiscount(modelName, vendorName)
+	if costDiscount <= 0 {
+		costDiscount = 1.0
+	}
+
+	// 基于实际 quota 反推官方价格
+	// 实际扣费公式：user_quota = official_quota × oem_user_discount × group_ratio
+	// 反推：official_quota = user_quota / (oem_user_discount × group_ratio)
+	userQuotaValue := int64(quota)
+	var officialQuota int64
+	if oemUserDiscount > 0 && groupRatio > 0 {
+		officialQuota = int64(float64(userQuotaValue) / (oemUserDiscount * groupRatio))
+	} else {
+		officialQuota = userQuotaValue
+	}
+
+	// 计算平台成本价
+	costQuota := int64(float64(officialQuota) * costDiscount)
+
+	// 计算系统销售价（OEM的成本）
+	systemQuota := int64(float64(officialQuota) * oemDiscount)
+
+	// 计算平台利润
+	platformProfit := systemQuota - costQuota
+
+	// 计算OEM盈亏（正数表示盈利，负数表示亏损/补贴）
+	// OEM盈亏 = 用户支付价 - OEM成本（系统销售价）
+	oemSubsidyValue := userQuotaValue - systemQuota
+
+	if common.DebugEnabled {
+		common.SysLog(fmt.Sprintf("[CalculatePriceChainForVideoTask] oemCode=%s, modelName=%s, vendorName=%s, quota=%d, oemUserDiscount=%.4f, groupRatio=%.4f",
+			oemCode, modelName, vendorName, quota, oemUserDiscount, groupRatio))
+		common.SysLog(fmt.Sprintf("[CalculatePriceChainForVideoTask] officialQuota=%d, costQuota=%d, systemQuota=%d, userQuota=%d, platformProfit=%d, oemSubsidy=%d",
+			officialQuota, costQuota, systemQuota, userQuotaValue, platformProfit, oemSubsidyValue))
+	}
+
+	return &model.PriceChainParams{
+		OemId:          oemId,
+		OemCode:        oemCode,
+		OfficialQuota:  officialQuota,
+		CostQuota:      costQuota,
+		SystemQuota:    systemQuota,
+		UserQuota:      userQuotaValue,
+		PlatformProfit: platformProfit,
+		OemSubsidy:     oemSubsidyValue,
+	}
+}
+
 // GetOemUserDiscountForQuota 获取用于quota计算的OEM用户折扣
 // 用于在实际扣费时应用OEM给用户的折扣
 // 优先级：请求头X-Oem-Code > Context的OEM系统 > 默认nebula
@@ -489,9 +594,17 @@ func GetOemUserDiscountForQuota(c *gin.Context, modelName string) float64 {
 	}
 
 	if oemId == nil {
+		if common.DebugEnabled {
+			common.SysLog(fmt.Sprintf("[GetOemUserDiscountForQuota] oemId is nil, returning 1.0"))
+		}
 		return 1.0
 	}
 
 	vendorName := GetVendorNameFromModel(modelName)
-	return model.GetOemUserDiscount(*oemId, modelName, vendorName)
+	discount := model.GetOemUserDiscount(*oemId, modelName, vendorName)
+	if common.DebugEnabled {
+		common.SysLog(fmt.Sprintf("[GetOemUserDiscountForQuota] oemId=%d, modelName=%s, vendorName=%s, discount=%.4f",
+			*oemId, modelName, vendorName, discount))
+	}
+	return discount
 }

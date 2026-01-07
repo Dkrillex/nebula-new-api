@@ -99,7 +99,33 @@ func GetOemUserDiscount(oemId int64, modelName string, vendorName string) float6
 	// 2. 从缓存获取该OEM的所有折扣配置
 	discounts := GetOemUserDiscounts(oemId)
 	if len(discounts) == 0 {
+		if common.DebugEnabled {
+			common.SysLog(fmt.Sprintf("[GetOemUserDiscount] OEM %d 没有配置用户折扣，返回默认值 1.0", oemId))
+		}
 		return 1.0
+	}
+
+	// 打印实际的 vendorId 值
+	var vendorIdValue int64 = 0
+	if vendorId != nil {
+		vendorIdValue = *vendorId
+	}
+	if common.DebugEnabled {
+		common.SysLog(fmt.Sprintf("[GetOemUserDiscount] OEM %d 有 %d 条折扣配置，modelName=%s, vendorName=%s, vendorId=%d",
+			oemId, len(discounts), modelName, vendorName, vendorIdValue))
+		// 打印所有折扣配置详情
+		for i, discount := range discounts {
+			var discountVendorId int64 = 0
+			var discountModelName string = "<nil>"
+			if discount.VendorId != nil {
+				discountVendorId = *discount.VendorId
+			}
+			if discount.ModelName != nil {
+				discountModelName = *discount.ModelName
+			}
+			common.SysLog(fmt.Sprintf("[GetOemUserDiscount] 配置[%d]: vendorId=%d, modelName=%s, discount=%.4f",
+				i, discountVendorId, discountModelName, discount.UserDiscount))
+		}
 	}
 
 	// 3. 按优先级匹配
@@ -108,29 +134,46 @@ func GetOemUserDiscount(oemId int64, modelName string, vendorName string) float6
 		for _, discount := range discounts {
 			if discount.VendorId != nil && discount.ModelName != nil &&
 				*discount.VendorId == *vendorId && *discount.ModelName == modelName {
+				if common.DebugEnabled {
+					common.SysLog(fmt.Sprintf("[GetOemUserDiscount] 模型级匹配成功: vendorId=%d, modelName=%s, discount=%.4f",
+						*vendorId, modelName, discount.UserDiscount))
+				}
 				return discount.UserDiscount
 			}
 		}
 	}
 
-	// 3.2 厂商级匹配（vendor_id不为空，model_name为空）
+	// 3.2 厂商级匹配（vendor_id不为空，model_name为空或为NULL）
 	if vendorId != nil {
 		for _, discount := range discounts {
-			if discount.VendorId != nil && discount.ModelName == nil &&
+			// model_name 为 NULL 或空字符串都视为厂商级配置
+			isModelNameEmpty := discount.ModelName == nil || *discount.ModelName == ""
+			if discount.VendorId != nil && isModelNameEmpty &&
 				*discount.VendorId == *vendorId {
+				if common.DebugEnabled {
+					common.SysLog(fmt.Sprintf("[GetOemUserDiscount] 厂商级匹配成功: vendorId=%d, discount=%.4f",
+						*vendorId, discount.UserDiscount))
+				}
 				return discount.UserDiscount
 			}
 		}
 	}
 
-	// 3.3 通配符匹配（vendor_id为NULL，model_name为空）
+	// 3.3 通配符匹配（vendor_id为NULL，model_name为空或NULL）
 	for _, discount := range discounts {
-		if discount.VendorId == nil && discount.ModelName == nil {
+		isModelNameEmpty := discount.ModelName == nil || *discount.ModelName == ""
+		if discount.VendorId == nil && isModelNameEmpty {
+			if common.DebugEnabled {
+				common.SysLog(fmt.Sprintf("[GetOemUserDiscount] 通配符匹配成功: discount=%.4f", discount.UserDiscount))
+			}
 			return discount.UserDiscount
 		}
 	}
 
 	// 4. 无配置，返回默认值1.0（不打折）
+	if common.DebugEnabled {
+		common.SysLog(fmt.Sprintf("[GetOemUserDiscount] 没有匹配到折扣配置，返回默认值 1.0"))
+	}
 	return 1.0
 }
 

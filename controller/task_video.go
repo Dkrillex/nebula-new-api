@@ -163,6 +163,8 @@ func updateVideoSingleTask(ctx context.Context, adaptor channel.TaskAdaptor, cha
 				"generateAudio",
 				"sampleCount",
 				"sample_count",
+				"oem_user_discount", // ⚠️ 关键：OEM用户折扣，扣费需要
+				"oem_code",          // ⚠️ 关键：OEM代码，价格链计算需要
 			}
 
 			for _, field := range preservedFields {
@@ -503,8 +505,18 @@ func handleVideoTaskBilling(ctx context.Context, task *model.Task, taskResult *r
 
 	logger.LogInfo(ctx, fmt.Sprintf("Task %s using model name: %s", task.TaskID, modelName))
 
+	// 从任务数据中获取OEM用户折扣（在任务创建时保存的）
+	// 视频任务的轮询是在后台进行的，没有HTTP请求上下文，所以需要从任务数据中读取
+	oemUserDiscount := 1.0
+	if taskData != nil {
+		if discount, ok := taskData["oem_user_discount"].(float64); ok && discount > 0 {
+			oemUserDiscount = discount
+		}
+	}
+
 	// 使用 helper.ModelPriceHelper 获取模型价格和倍率信息
-	// 构建 RelayInfo 用于价格查询
+	// 注意：传入 nil 作为 context，因为视频任务轮询没有 HTTP 请求上下文
+	// OEM 用户折扣已经从 taskData 中获取，不需要 ModelPriceHelper 再获取
 	relayInfo := &relaycommon.RelayInfo{
 		OriginModelName: modelName,
 		UserId:          task.UserId,
@@ -513,16 +525,15 @@ func handleVideoTaskBilling(ctx context.Context, task *model.Task, taskResult *r
 		UserSetting:     dto.UserSetting{},
 	}
 
-	// 构建 TokenCountMeta
 	meta := &types.TokenCountMeta{
-		MaxTokens: 0, // 视频任务不需要max_tokens
+		MaxTokens: 0,
 	}
 
 	// 使用 helper.ModelPriceHelper 获取价格信息
+	// 注意：这里传入 nil，ModelPriceHelper 不会应用 OEM 折扣，我们后面手动应用
 	priceData, err := helper.ModelPriceHelper(nil, relayInfo, 1, meta)
 	if err != nil {
 		logger.LogError(ctx, fmt.Sprintf("Failed to get model price for %s: %v", modelName, err))
-		// 使用默认价格作为备选
 		priceData = types.PriceData{
 			ModelPrice: 0.1,
 			GroupRatioInfo: types.GroupRatioInfo{
@@ -536,25 +547,24 @@ func handleVideoTaskBilling(ctx context.Context, task *model.Task, taskResult *r
 	modelRatio := priceData.ModelRatio
 	completionRatio := priceData.CompletionRatio
 
-	// 获取OEM用户折扣（视频任务没有gin.Context，使用默认值1.0）
-	// 注意：视频任务的轮询是在后台进行的，没有请求上下文
-	// 这里需要从任务数据中获取OEM信息
-	oemUserDiscount := 1.0
-	if taskData != nil {
-		// 尝试从任务数据中获取OEM用户折扣
-		if discount, ok := taskData["oem_user_discount"].(float64); ok && discount > 0 {
-			oemUserDiscount = discount
-		}
-	}
+	// 记录计费参数（用于调试）
+	logger.LogInfo(ctx, fmt.Sprintf("[DoubaoTaskBilling] 计费参数: modelPrice=%.6f, modelRatio=%.6f, completionRatio=%.2f, groupRatio=%.2f, oemUserDiscount=%.4f",
+		modelPrice, modelRatio, completionRatio, groupRatio, oemUserDiscount))
 
 	// 根据实际token消耗重新计算quota
+	// 注意：由于 ModelPriceHelper 传入了 nil context，返回的 modelRatio 是原始倍率（未应用 OEM 折扣）
+	// 所以这里需要手动应用 oemUserDiscount
 	var actualQuota int
 	if modelPrice == -1 {
 		// 按量计费：根据实际token消耗计算，应用OEM用户折扣
 		actualQuota = int(float64(taskResult.TotalTokens) * modelRatio * completionRatio * groupRatio * oemUserDiscount)
+		logger.LogInfo(ctx, fmt.Sprintf("[DoubaoTaskBilling] 按量计费: %d tokens × %.6f modelRatio × %.2f completionRatio × %.2f groupRatio × %.4f oemUserDiscount = %d quota",
+			taskResult.TotalTokens, modelRatio, completionRatio, groupRatio, oemUserDiscount, actualQuota))
 	} else {
 		// 固定价格：按固定价格计费，应用OEM用户折扣
 		actualQuota = int(modelPrice * common.QuotaPerUnit * groupRatio * oemUserDiscount)
+		logger.LogInfo(ctx, fmt.Sprintf("[DoubaoTaskBilling] 固定价格计费: %.6f modelPrice × %.2f QuotaPerUnit × %.2f groupRatio × %.4f oemUserDiscount = %d quota",
+			modelPrice, common.QuotaPerUnit, groupRatio, oemUserDiscount, actualQuota))
 	}
 
 	// 计算quota差值（参考对话的补扣费逻辑）
@@ -620,6 +630,33 @@ func handleVideoTaskBilling(ctx context.Context, task *model.Task, taskResult *r
 	other["video_task"] = true              // 标记为视频任务
 	other["billing_type"] = "final_billing" // 标记为最终计费
 
+	// 获取OEM信息用于价格链计算
+	var oemCode string
+	if taskData != nil {
+		if code, ok := taskData["oem_code"].(string); ok && code != "" {
+			oemCode = code
+		}
+	}
+	// 如果任务数据中没有保存 oem_code，使用默认值
+	if oemCode == "" {
+		oemCode = "nebula"
+	}
+
+	// 获取厂商名称用于价格链计算
+	vendorName := service.GetVendorNameFromModel(modelName)
+	other["vendor_name"] = vendorName
+	other["oem_code"] = oemCode
+
+	// 计算价格链（OEM盈利/亏损）
+	priceChain := service.CalculatePriceChainForVideoTask(
+		oemCode,
+		modelName,
+		vendorName,
+		actualQuota,
+		oemUserDiscount,
+		groupRatio,
+	)
+
 	// 记录消费日志
 	otherStr := common.MapToJsonStr(other)
 	consumeLog := &model.Log{
@@ -642,9 +679,31 @@ func handleVideoTaskBilling(ctx context.Context, task *model.Task, taskResult *r
 		Other:            otherStr,
 	}
 
+	// 设置价格链信息
+	if priceChain != nil {
+		consumeLog.OemId = priceChain.OemId
+		consumeLog.OfficialQuota = priceChain.OfficialQuota
+		consumeLog.CostQuota = priceChain.CostQuota
+		consumeLog.SystemQuota = priceChain.SystemQuota
+		consumeLog.UserQuota = priceChain.UserQuota
+		consumeLog.PlatformProfit = priceChain.PlatformProfit
+		consumeLog.OemSubsidy = priceChain.OemSubsidy
+	}
+
 	// 插入消费日志
 	if err := model.LOG_DB.Create(consumeLog).Error; err != nil {
 		logger.LogError(ctx, fmt.Sprintf("Failed to insert consume log for task %s: %v", task.TaskID, err))
+	}
+
+	// 处理OEM盈利/亏损（如果有价格链信息）
+	if priceChain != nil && priceChain.OemSubsidy != 0 {
+		// OemSubsidy > 0 表示OEM盈利，< 0 表示OEM亏损
+		err := model.ProcessOemSubsidy(nil, oemCode, priceChain.OemSubsidy, consumeLog.Id, task.UserId)
+		if err != nil {
+			logger.LogError(ctx, fmt.Sprintf("[DoubaoTaskBilling] 处理OEM盈利失败: %v", err))
+		} else {
+			logger.LogInfo(ctx, fmt.Sprintf("[DoubaoTaskBilling] OEM盈利处理完成: oemCode=%s, profit=%d", oemCode, priceChain.OemSubsidy))
+		}
 	}
 
 	logger.LogInfo(ctx, fmt.Sprintf("Task %s billing completed successfully", task.TaskID))

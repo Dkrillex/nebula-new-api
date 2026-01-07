@@ -103,11 +103,16 @@ func ModelPriceHelper(c *gin.Context, info *relaycommon.RelayInfo, promptTokens 
 		}
 		vendorName := service.GetVendorNameFromModel(info.OriginModelName)
 		oemUserDiscount := model.GetOemUserDiscountByCode(oemCode, info.OriginModelName, vendorName)
-		if oemUserDiscount != 1.0 {
+		if common.DebugEnabled {
+			println(fmt.Sprintf("[ModelPriceHelper] 查询OEM用户折扣: oemCode=%s, modelName=%s, vendorName=%s, oemUserDiscount=%.4f",
+				oemCode, info.OriginModelName, vendorName, oemUserDiscount))
+		}
+		if oemUserDiscount != 1.0 && oemUserDiscount > 0 {
+			originalPrice := modelPrice
 			modelPrice = modelPrice * oemUserDiscount
 			if common.DebugEnabled {
 				println(fmt.Sprintf("[ModelPriceHelper] 应用OEM用户折扣到modelPrice: oemCode=%s, modelName=%s, oemUserDiscount=%.4f, 原价=%.4f, 折后价=%.4f",
-					oemCode, info.OriginModelName, oemUserDiscount, modelPrice/oemUserDiscount, modelPrice))
+					oemCode, info.OriginModelName, oemUserDiscount, originalPrice, modelPrice))
 			}
 		}
 	}

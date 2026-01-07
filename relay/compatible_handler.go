@@ -872,6 +872,23 @@ func recordImageTokenPricingConsume(ctx *gin.Context, relayInfo *relaycommon.Rel
 	other["output_image_price"] = pricing.OutputImagePrice
 	other["group_ratio"] = relayInfo.PriceData.GroupRatioInfo.GroupRatio
 
+	// 记录OEM用户折扣信息（用于溯源）
+	oemUserDiscount := service.GetOemUserDiscountForQuota(ctx, modelName)
+	if oemUserDiscount != 1.0 && oemUserDiscount > 0 {
+		other["oem_user_discount"] = oemUserDiscount
+		oemCode := "nebula"
+		if code, exists := ctx.Get(string(constant.ContextKeyOemCode)); exists {
+			if codeStr, ok := code.(string); ok && codeStr != "" {
+				oemCode = codeStr
+			}
+		}
+		other["oem_code"] = oemCode
+		vendorName := service.GetVendorNameFromModel(modelName)
+		if vendorName != "" {
+			other["vendor_name"] = vendorName
+		}
+	}
+
 	// 计算价格链条（使用请求头X-Oem-Code中的OEM信息）
 	priceChain := service.CalculatePriceChainForLog(ctx, logModel, usage.PromptTokens, outputTokens, quota)
 

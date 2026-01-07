@@ -266,7 +266,18 @@ func RelayTaskSubmit(c *gin.Context, info *relaycommon.RelayInfo) (taskErr *dto.
 		taskDataMap["user_group_ratio"] = userGroupRatio
 	}
 	// 保存OEM用户折扣（用于后台轮询时扣费）
-	taskDataMap["oem_user_discount"] = service.GetOemUserDiscountForQuota(c, modelName)
+	oemUserDiscountForSave := service.GetOemUserDiscountForQuota(c, modelName)
+	taskDataMap["oem_user_discount"] = oemUserDiscountForSave
+	// 保存OEM代码（用于后台轮询时计算价格链）
+	oemCodeForSave := "nebula" // 默认值
+	if code, exists := c.Get(string(constant.ContextKeyOemCode)); exists {
+		if codeStr, ok := code.(string); ok && codeStr != "" {
+			oemCodeForSave = codeStr
+		}
+	}
+	taskDataMap["oem_code"] = oemCodeForSave
+	// 记录保存的 OEM 用户折扣
+	common.SysLog(fmt.Sprintf("[RelayTaskSubmit] 保存OEM信息: modelName=%s, oemCode=%s, oemUserDiscount=%.4f", modelName, oemCodeForSave, oemUserDiscountForSave))
 	taskDataMap["requested_seconds"] = videoSeconds // 保存请求的秒数
 	taskDataMap["durationSeconds"] = videoSeconds
 	taskDataMap["generate_audio"] = generateAudio
@@ -1152,6 +1163,25 @@ func handleVideoTaskBillingBySeconds(c *gin.Context, task *model.Task, taskResul
 	other["actual_quota"] = actualQuota
 	// 不存储 video_url，避免将 base64 视频数据存储到日志中
 	other["model_name"] = modelName
+	other["group_ratio"] = groupRatio
+
+	// 记录OEM用户折扣信息（用于溯源）
+	oemUserDiscount := service.GetOemUserDiscountForQuota(c, modelName)
+	if oemUserDiscount != 1.0 && oemUserDiscount > 0 {
+		other["oem_user_discount"] = oemUserDiscount
+		oemCode := "nebula"
+		if code, exists := c.Get(string(constant.ContextKeyOemCode)); exists {
+			if codeStr, ok := code.(string); ok && codeStr != "" {
+				oemCode = codeStr
+			}
+		}
+		other["oem_code"] = oemCode
+		vendorName := service.GetVendorNameFromModel(modelName)
+		if vendorName != "" {
+			other["vendor_name"] = vendorName
+		}
+	}
+
 	// 如果按秒计费，使用折扣后的 videoPricePerSecond；否则使用 modelPrice（已应用折扣）
 	if billingType == "per_second" && videoPricePerSecond > 0 {
 		other["model_price"] = videoPricePerSecond // 使用折扣后的 videoPricePerSecond
