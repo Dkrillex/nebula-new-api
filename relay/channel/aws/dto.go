@@ -24,19 +24,35 @@ func copyRequest(req *dto.ClaudeRequest) *AwsClaudeRequest {
 	// 使用通用白名单过滤函数，只保留 AWS Bedrock 支持的字段
 	filteredReq := filterAwsBedrockSupportedFields(req)
 
-	return &AwsClaudeRequest{
+	awsReq := &AwsClaudeRequest{
 		AnthropicVersion: "bedrock-2023-05-31",
 		System:           filteredReq.System,
 		Messages:         filteredReq.Messages,
 		MaxTokens:        filteredReq.MaxTokens,
-		Temperature:      filteredReq.Temperature,
-		TopP:             filteredReq.TopP,
 		TopK:             filteredReq.TopK,
 		StopSequences:    filteredReq.StopSequences,
 		Tools:            filteredReq.Tools,
 		ToolChoice:       filteredReq.ToolChoice,
 		Thinking:         filteredReq.Thinking,
 	}
+
+	// AWS Bedrock Claude 不允许同时指定 temperature 和 top_p
+	// 当两者都存在时，优先使用 temperature（更常用），移除 top_p
+	hasTemperature := filteredReq.Temperature != nil && *filteredReq.Temperature != 0
+	hasTopP := filteredReq.TopP != 0
+
+	if hasTemperature && hasTopP {
+		// 两者都存在，只保留 temperature
+		awsReq.Temperature = filteredReq.Temperature
+		// TopP 保持零值，不设置
+	} else if hasTemperature {
+		awsReq.Temperature = filteredReq.Temperature
+	} else if hasTopP {
+		awsReq.TopP = filteredReq.TopP
+	}
+	// 如果两者都没有，则都不设置
+
+	return awsReq
 }
 
 // filterAwsBedrockSupportedFields 使用白名单机制过滤，只保留 AWS Bedrock 支持的字段
