@@ -105,29 +105,6 @@ func GetOemUserDiscount(oemId int64, modelName string, vendorName string) float6
 		return 1.0
 	}
 
-	// 打印实际的 vendorId 值
-	var vendorIdValue int64 = 0
-	if vendorId != nil {
-		vendorIdValue = *vendorId
-	}
-	if common.DebugEnabled {
-		common.SysLog(fmt.Sprintf("[GetOemUserDiscount] OEM %d 有 %d 条折扣配置，modelName=%s, vendorName=%s, vendorId=%d",
-			oemId, len(discounts), modelName, vendorName, vendorIdValue))
-		// 打印所有折扣配置详情
-		for i, discount := range discounts {
-			var discountVendorId int64 = 0
-			var discountModelName string = "<nil>"
-			if discount.VendorId != nil {
-				discountVendorId = *discount.VendorId
-			}
-			if discount.ModelName != nil {
-				discountModelName = *discount.ModelName
-			}
-			common.SysLog(fmt.Sprintf("[GetOemUserDiscount] 配置[%d]: vendorId=%d, modelName=%s, discount=%.4f",
-				i, discountVendorId, discountModelName, discount.UserDiscount))
-		}
-	}
-
 	// 3. 按优先级匹配
 	// 3.1 模型级匹配（vendor_id和model_name都不为空，且都匹配）
 	if modelName != "" && vendorId != nil {

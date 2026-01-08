@@ -10,6 +10,7 @@ import (
 	"one-api/dto"
 	relaycommon "one-api/relay/common"
 	"one-api/service"
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -17,9 +18,11 @@ import (
 
 // 豆包视频生成请求结构体
 type requestPayload struct {
-	Model       string        `json:"model"`
-	Content     []ContentItem `json:"content"`
-	CallbackURL string        `json:"callback_url,omitempty"` // 可选的回调URL
+	Model           string        `json:"model"`
+	Content         []ContentItem `json:"content"`
+	CallbackURL     string        `json:"callback_url,omitempty"`      // 可选的回调URL
+	GenerateAudio   *bool         `json:"generate_audio,omitempty"`    // 是否生成音频（1.5 Pro 新增）
+	ReturnLastFrame *bool         `json:"return_last_frame,omitempty"` // 是否返回最后一帧（1.5 Pro 新增）
 }
 
 type ContentItem struct {
@@ -139,8 +142,14 @@ func (a *TaskAdaptor) BuildRequestBody(c *gin.Context, info *relaycommon.RelayIn
 	}
 	req := v.(*dto.VideoRequest)
 
-	// 转换为豆包API格式
-	payload := convertVideoRequestToDoubaoPayload(req)
+	// 获取映射后的模型名称（用于发送到上游API）
+	upstreamModel := info.UpstreamModelName
+	if upstreamModel == "" {
+		upstreamModel = req.Model
+	}
+
+	// 转换为豆包API格式，传入原始模型名和映射后的模型名
+	payload := convertVideoRequestToDoubaoPayload(req, upstreamModel)
 
 	// 序列化为JSON
 	jsonData, err := json.Marshal(payload)
@@ -153,7 +162,6 @@ func (a *TaskAdaptor) BuildRequestBody(c *gin.Context, info *relaycommon.RelayIn
 
 // DoRequest delegates to common helper.
 func (a *TaskAdaptor) DoRequest(c *gin.Context, info *relaycommon.RelayInfo, requestBody io.Reader) (*http.Response, error) {
-	common.SysLog("[Doubao] DoRequest - 开始发送请求")
 
 	// 构建请求URL
 	url, err := a.BuildRequestURL(info)
@@ -456,12 +464,34 @@ func (a *TaskAdaptor) GetChannelName() string {
 
 // convertVideoRequestToDoubaoPayload 将 VideoRequest 转换为豆包请求格式
 // 现在直接从 Metadata 中提取 content 和 callback_url，按照豆包官方格式传递
-func convertVideoRequestToDoubaoPayload(request *dto.VideoRequest) *requestPayload {
+// request: 原始请求（包含原始模型名，用于判断参数）
+// upstreamModel: 映射后的模型名（用于发送到上游API）
+func convertVideoRequestToDoubaoPayload(request *dto.VideoRequest, upstreamModel string) *requestPayload {
 	payload := &requestPayload{
-		Model: request.Model,
+		Model: upstreamModel, // 使用映射后的模型名发送到上游
 	}
 
-	common.SysLog(fmt.Sprintf("[Doubao] Model: %s", request.Model))
+	common.SysLog(fmt.Sprintf("[Doubao] Original Model: %s, Upstream Model: %s", request.Model, upstreamModel))
+
+	// 根据模型名称判断是否生成音频（仅针对 1.5 Pro 系列）
+	// doubao-seedance-1-5-pro-251215-noAudio → generate_audio: false（写死）
+	// doubao-seedance-1-5-pro-251215 → generate_audio: true（默认）
+	if strings.Contains(request.Model, "doubao-seedance-1-5-pro-251215") {
+		if strings.Contains(request.Model, "-noAudio") {
+			generateAudio := false
+			payload.GenerateAudio = &generateAudio
+			common.SysLog("[Doubao] 检测到 -noAudio 后缀，设置 generate_audio: false")
+		} else {
+			generateAudio := true
+			payload.GenerateAudio = &generateAudio
+			common.SysLog("[Doubao] doubao-seedance-1-5-pro-251215 模型，设置 generate_audio: true")
+		}
+
+		// 默认启用 return_last_frame
+		returnLastFrame := true
+		payload.ReturnLastFrame = &returnLastFrame
+		common.SysLog("[Doubao] doubao-seedance-1-5-pro-251215 模型，设置 return_last_frame: true")
+	}
 
 	// 从 Metadata 中提取 content
 	if request.Metadata != nil {
@@ -492,6 +522,15 @@ func convertVideoRequestToDoubaoPayload(request *dto.VideoRequest) *requestPaylo
 		// 提取 callback_url
 		if callbackURL, ok := request.Metadata["callback_url"].(string); ok && callbackURL != "" {
 			payload.CallbackURL = callbackURL
+		}
+
+		// 提取 return_last_frame (1.5 Pro 系列支持)
+		if strings.Contains(request.Model, "doubao-seedance-1-5-pro-251215") {
+			if returnLastFrameVal, ok := request.Metadata["return_last_frame"]; ok {
+				if returnLastFrame, ok2 := returnLastFrameVal.(bool); ok2 {
+					payload.ReturnLastFrame = &returnLastFrame
+				}
+			}
 		}
 	} else {
 		// 如果没有metadata，使用默认格式
@@ -533,12 +572,12 @@ func (a *TaskAdaptor) ParseTaskResult(respBody []byte) (*relaycommon.TaskInfo, e
 		return nil, fmt.Errorf("解析响应失败: %v", err)
 	}
 
-	common.SysLog("[Doubao] ParseTaskResult - JSON解析成功")
-	common.SysLog(fmt.Sprintf("[Doubao] ParseTaskResult - 任务ID: %s", doubaoResp.ID))
-	common.SysLog(fmt.Sprintf("[Doubao] ParseTaskResult - 任务状态: %s", doubaoResp.Status))
-	common.SysLog(fmt.Sprintf("[Doubao] ParseTaskResult - 模型: %s", doubaoResp.Model))
-	common.SysLog(fmt.Sprintf("[Doubao] ParseTaskResult - 创建时间: %d", doubaoResp.CreatedAt))
-	common.SysLog(fmt.Sprintf("[Doubao] ParseTaskResult - 更新时间: %d", doubaoResp.UpdatedAt))
+	//common.SysLog("[Doubao] ParseTaskResult - JSON解析成功")
+	//common.SysLog(fmt.Sprintf("[Doubao] ParseTaskResult - 任务ID: %s", doubaoResp.ID))
+	//common.SysLog(fmt.Sprintf("[Doubao] ParseTaskResult - 任务状态: %s", doubaoResp.Status))
+	//common.SysLog(fmt.Sprintf("[Doubao] ParseTaskResult - 模型: %s", doubaoResp.Model))
+	//common.SysLog(fmt.Sprintf("[Doubao] ParseTaskResult - 创建时间: %d", doubaoResp.CreatedAt))
+	//common.SysLog(fmt.Sprintf("[Doubao] ParseTaskResult - 更新时间: %d", doubaoResp.UpdatedAt))
 
 	// 转换为通用任务信息格式
 	taskInfo := &relaycommon.TaskInfo{

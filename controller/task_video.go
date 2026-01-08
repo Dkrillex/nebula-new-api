@@ -170,7 +170,7 @@ func updateVideoSingleTask(ctx context.Context, adaptor channel.TaskAdaptor, cha
 			for _, field := range preservedFields {
 				if value, exists := existingData[field]; exists {
 					newData[field] = value
-					logger.LogInfo(ctx, fmt.Sprintf("[VideoTaskPoll] 保留字段 %s: %v", field, value))
+					//logger.LogInfo(ctx, fmt.Sprintf("[VideoTaskPoll] 保留字段 %s: %v", field, value))
 				}
 			}
 			if _, exists := newData["generateAudio"]; exists {
@@ -180,7 +180,7 @@ func updateVideoSingleTask(ctx context.Context, adaptor channel.TaskAdaptor, cha
 			// 合并数据并更新
 			if mergedData, err := json.Marshal(newData); err == nil {
 				task.Data = mergedData
-				logger.LogInfo(ctx, fmt.Sprintf("[VideoTaskPoll] 成功合并 task.Data，保留了 %d 个字段", len(preservedFields)))
+				//logger.LogInfo(ctx, fmt.Sprintf("[VideoTaskPoll] 成功合并 task.Data，保留了 %d 个字段", len(preservedFields)))
 			} else {
 				logger.LogError(ctx, fmt.Sprintf("[VideoTaskPoll] 合并数据失败: %v", err))
 				task.Data = redactVideoResponseBody(responseBody)
@@ -476,14 +476,28 @@ func handleVideoTaskBilling(ctx context.Context, task *model.Task, taskResult *r
 	}
 
 	// 获取原始模型名称和token信息
+	// 优先使用 task.ModelName（数据库字段），这是保存的原始请求模型名
 	var modelName string
 	var tokenName string
 	var tokenId int
-	if taskData != nil {
-		// 尝试从任务数据中提取原始模型名称和token信息
+
+	// 优先使用数据库字段中的模型名（这是原始请求模型名）
+	if task.ModelName != "" {
+		modelName = task.ModelName
+		logger.LogInfo(ctx, fmt.Sprintf("[DoubaoTaskBilling] 使用数据库字段模型名: %s", modelName))
+	} else if taskData != nil {
+		// 备选方案：从任务数据中提取模型名称
 		if model, ok := taskData["model"].(string); ok && model != "" {
 			modelName = model
+			logger.LogWarn(ctx, fmt.Sprintf("[DoubaoTaskBilling] 数据库字段为空，使用任务数据模型名: %s", modelName))
+		} else if modelNameField, ok := taskData["model_name"].(string); ok && modelNameField != "" {
+			modelName = modelNameField
+			logger.LogWarn(ctx, fmt.Sprintf("[DoubaoTaskBilling] 使用任务数据model_name字段: %s", modelName))
 		}
+	}
+
+	// 获取token信息
+	if taskData != nil {
 		if token, ok := taskData["token_name"].(string); ok && token != "" {
 			tokenName = token
 		}
@@ -495,6 +509,7 @@ func handleVideoTaskBilling(ctx context.Context, task *model.Task, taskResult *r
 	// 如果没有找到模型名称，使用平台-动作组合作为备选
 	if modelName == "" {
 		modelName = fmt.Sprintf("%s-%s", task.Platform, task.Action)
+		logger.LogWarn(ctx, fmt.Sprintf("[DoubaoTaskBilling] 未找到模型名称，使用默认: %s", modelName))
 	}
 
 	// 如果没有找到 token_name，使用 task.ApiKey 作为备选（新增的表字段）

@@ -48,6 +48,15 @@ func RelayTaskSubmit(c *gin.Context, info *relaycommon.RelayInfo) (taskErr *dto.
 		return
 	}
 
+	// 处理模型映射（在验证请求之后，构建请求体之前）
+	// 这样可以确保发送到上游的模型名是映射后的名称
+	if err := helper.ModelMappedHelper(c, info, nil); err != nil {
+		common.SysError(fmt.Sprintf("[RelayTaskSubmit] 模型映射失败: %v", err))
+		// 映射失败不阻塞请求，继续使用原始模型名
+	} else if info.IsModelMapped {
+		common.SysLog(fmt.Sprintf("[RelayTaskSubmit] 模型映射成功: %s -> %s", info.OriginModelName, info.UpstreamModelName))
+	}
+
 	modelName := info.OriginModelName
 	if modelName == "" {
 		modelName = service.CoverTaskActionToModelName(platform, info.Action)
@@ -611,6 +620,8 @@ func sanitizeVideoMetadata(data map[string]interface{}) {
 		"user_group_ratio",
 		"token_id",
 		"name",
+		"oem_code",          // 敏感信息：OEM代码
+		"oem_user_discount", // 敏感信息：OEM用户折扣
 	}
 	for _, key := range blockedKeys {
 		delete(data, key)
