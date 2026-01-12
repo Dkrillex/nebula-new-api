@@ -339,21 +339,57 @@ func RequestOpenAI2ClaudeMessage(c *gin.Context, textRequest dto.GeneralOpenAIRe
 							},
 						}
 					}
-					lastMessage.Content = append(lastMessage.Content.([]dto.ClaudeMediaMessage), dto.ClaudeMediaMessage{
-						Type:      "tool_result",
-						ToolUseId: message.ToolCallId,
-						Content:   message.Content,
-					})
-					claudeMessages[len(claudeMessages)-1] = lastMessage
-					continue
-				} else {
-					claudeMessage.Role = "user"
-					claudeMessage.Content = []dto.ClaudeMediaMessage{
-						{
+
+					// 检查是否已存在相同的 tool_use_id，避免重复添加
+					contents := lastMessage.Content.([]dto.ClaudeMediaMessage)
+					toolResultExists := false
+					for _, existingContent := range contents {
+						if existingContent.Type == "tool_result" && existingContent.ToolUseId == message.ToolCallId {
+							toolResultExists = true
+							break
+						}
+					}
+
+					// 只有不存在重复的 tool_use_id 时才添加新的 tool_result
+					if !toolResultExists {
+						lastMessage.Content = append(contents, dto.ClaudeMediaMessage{
 							Type:      "tool_result",
 							ToolUseId: message.ToolCallId,
 							Content:   message.Content,
-						},
+						})
+						claudeMessages[len(claudeMessages)-1] = lastMessage
+					}
+					continue
+				} else {
+					// 检查是否已存在独立的tool_result消息，避免创建重复消息
+					toolResultExists := false
+					for i := len(claudeMessages) - 1; i >= 0; i-- {
+						if claudeMessages[i].Role == "user" {
+							if contents, ok := claudeMessages[i].Content.([]dto.ClaudeMediaMessage); ok {
+								for _, content := range contents {
+									if content.Type == "tool_result" && content.ToolUseId == message.ToolCallId {
+										toolResultExists = true
+										break
+									}
+								}
+							}
+							break // 只检查最近的用户消息
+						}
+					}
+
+					// 只有不存在重复的 tool_use_id 时才创建新的用户消息
+					if !toolResultExists {
+						claudeMessage.Role = "user"
+						claudeMessage.Content = []dto.ClaudeMediaMessage{
+							{
+								Type:      "tool_result",
+								ToolUseId: message.ToolCallId,
+								Content:   message.Content,
+							},
+						}
+					} else {
+						// 如果已存在，跳过当前消息
+						continue
 					}
 				}
 			} else if message.IsStringContent() && message.ToolCalls == nil {

@@ -720,3 +720,42 @@ func getValueType(v interface{}) string {
 		return fmt.Sprintf("%T", v)
 	}
 }
+
+func ClaudeCountTokens(c *gin.Context) {
+	var request dto.ClaudeCountTokensRequest
+	if err := c.ShouldBindJSON(&request); err != nil {
+		// 返回 Claude 格式错误
+		c.JSON(http.StatusBadRequest, gin.H{
+			"type": "error",
+			"error": types.ClaudeError{
+				Type:    "invalid_request_error",
+				Message: err.Error(),
+			},
+		})
+		return
+	}
+
+	// 构造 ClaudeRequest 复用现有计数逻辑
+	claudeReq := dto.ClaudeRequest{
+		Model:    request.Model,
+		System:   request.System,
+		Messages: request.Messages,
+		Tools:    request.Tools,
+	}
+
+	tokens, err := service.CountTokenClaudeRequest(claudeReq, request.Model)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"type": "error",
+			"error": types.ClaudeError{
+				Type:    "api_error",
+				Message: err.Error(),
+			},
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, dto.ClaudeCountTokensResponse{
+		InputTokens: tokens,
+	})
+}

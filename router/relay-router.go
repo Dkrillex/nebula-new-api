@@ -85,6 +85,12 @@ func SetRelayRouter(router *gin.Engine) {
 		httpRouter := relayV1Router.Group("")
 		httpRouter.Use(middleware.Distribute())
 
+		// claude count_tokens route (不消耗配额，不需要 Distribute 中间件)
+		// 必须在 /messages 之前注册，避免被 /messages 路由匹配
+		relayV1Router.POST("/messages/count_tokens", func(c *gin.Context) {
+			controller.ClaudeCountTokens(c)
+		})
+
 		// claude related routes
 		httpRouter.POST("/messages", func(c *gin.Context) {
 			controller.Relay(c, types.RelayFormatClaude)

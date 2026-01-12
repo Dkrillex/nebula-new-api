@@ -152,25 +152,38 @@ func ClaudeToOpenAIRequest(claudeRequest dto.ClaudeRequest, info *relaycommon.Re
 					}
 					toolCalls = append(toolCalls, toolCall)
 				case "tool_result":
-					// Add tool result as a separate message
+					// Add tool result as a separate message, but check for duplicates first
 					toolName := mediaMsg.Name
 					if toolName == "" {
 						toolName = claudeRequest.SearchToolNameByToolCallId(mediaMsg.ToolUseId)
 					}
-					oaiToolMessage := dto.Message{
-						Role:       "tool",
-						Name:       &toolName,
-						ToolCallId: mediaMsg.ToolUseId,
+
+					// 检查是否已存在相同 tool_call_id 的工具结果消息
+					toolResultExists := false
+					for _, existingMsg := range openAIMessages {
+						if existingMsg.Role == "tool" && existingMsg.ToolCallId == mediaMsg.ToolUseId {
+							toolResultExists = true
+							break
+						}
 					}
-					//oaiToolMessage.SetStringContent(*mediaMsg.GetMediaContent().Text)
-					if mediaMsg.IsStringContent() {
-						oaiToolMessage.SetStringContent(mediaMsg.GetStringContent())
-					} else {
-						mediaContents := mediaMsg.ParseMediaContent()
-						encodeJson, _ := common.Marshal(mediaContents)
-						oaiToolMessage.SetStringContent(string(encodeJson))
+
+					// 只有不存在重复时才添加新的tool消息
+					if !toolResultExists {
+						oaiToolMessage := dto.Message{
+							Role:       "tool",
+							Name:       &toolName,
+							ToolCallId: mediaMsg.ToolUseId,
+						}
+						//oaiToolMessage.SetStringContent(*mediaMsg.GetMediaContent().Text)
+						if mediaMsg.IsStringContent() {
+							oaiToolMessage.SetStringContent(mediaMsg.GetStringContent())
+						} else {
+							mediaContents := mediaMsg.ParseMediaContent()
+							encodeJson, _ := common.Marshal(mediaContents)
+							oaiToolMessage.SetStringContent(string(encodeJson))
+						}
+						openAIMessages = append(openAIMessages, oaiToolMessage)
 					}
-					openAIMessages = append(openAIMessages, oaiToolMessage)
 				}
 			}
 
