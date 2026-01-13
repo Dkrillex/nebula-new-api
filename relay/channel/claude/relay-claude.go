@@ -671,6 +671,34 @@ func FormatClaudeResponseInfo(requestMode int, claudeResponse *dto.ClaudeRespons
 	return true
 }
 
+// mapClaudeErrorToStatusCode 根据 Claude 错误类型映射 HTTP 状态码
+func mapClaudeErrorToStatusCode(claudeError *types.ClaudeError) int {
+	if claudeError == nil {
+		return http.StatusInternalServerError
+	}
+
+	// 根据 Claude 错误类型映射状态码
+	switch claudeError.Type {
+	case "invalid_request_error":
+		return http.StatusBadRequest // 400
+	case "authentication_error":
+		return http.StatusUnauthorized // 401
+	case "permission_error":
+		return http.StatusForbidden // 403
+	case "not_found_error":
+		return http.StatusNotFound // 404
+	case "request_too_large":
+		return http.StatusRequestEntityTooLarge // 413
+	case "rate_limit_error":
+		return http.StatusTooManyRequests // 429
+	case "api_error", "overloaded_error":
+		return http.StatusServiceUnavailable // 503
+	default:
+		// 默认返回 500，保持向后兼容
+		return http.StatusInternalServerError
+	}
+}
+
 func HandleStreamResponseData(c *gin.Context, info *relaycommon.RelayInfo, claudeInfo *ClaudeResponseInfo, data string, requestMode int) *types.NewAPIError {
 	var claudeResponse dto.ClaudeResponse
 	err := common.UnmarshalJsonStr(data, &claudeResponse)
@@ -679,7 +707,8 @@ func HandleStreamResponseData(c *gin.Context, info *relaycommon.RelayInfo, claud
 		return types.NewError(err, types.ErrorCodeBadResponseBody)
 	}
 	if claudeError := claudeResponse.GetClaudeError(); claudeError != nil && claudeError.Type != "" {
-		return types.WithClaudeError(*claudeError, http.StatusInternalServerError)
+		statusCode := mapClaudeErrorToStatusCode(claudeError)
+		return types.WithClaudeError(*claudeError, statusCode)
 	}
 	if info.RelayFormat == types.RelayFormatClaude {
 		FormatClaudeResponseInfo(requestMode, &claudeResponse, nil, claudeInfo)
@@ -770,7 +799,8 @@ func HandleClaudeResponseData(c *gin.Context, info *relaycommon.RelayInfo, claud
 		return types.NewError(err, types.ErrorCodeBadResponseBody)
 	}
 	if claudeError := claudeResponse.GetClaudeError(); claudeError != nil && claudeError.Type != "" {
-		return types.WithClaudeError(*claudeError, http.StatusInternalServerError)
+		statusCode := mapClaudeErrorToStatusCode(claudeError)
+		return types.WithClaudeError(*claudeError, statusCode)
 	}
 	if requestMode == RequestModeCompletion {
 		completionTokens := service.CountTextToken(claudeResponse.Completion, info.OriginModelName)
