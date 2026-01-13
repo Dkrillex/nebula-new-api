@@ -29,13 +29,11 @@ func SystemIdentify() gin.HandlerFunc {
 		// 3. 如果还是没有，使用默认系统
 		if oemCode == "" {
 			oemCode = "nebula"
-			common.SysLog("未找到OEM代码，使用默认值: nebula")
 		}
 
 		// 4. 获取OEM配置
 		oemConfig = model.GetOemConfigByCode(oemCode)
 		if oemConfig == nil {
-			common.SysLog("OEM配置不存在: oemCode=" + oemCode + ", 使用默认nebula系统")
 			oemCode = "nebula"
 			oemConfig = model.GetOemConfigByCode(oemCode)
 		}

@@ -64,7 +64,6 @@ func RefreshOemConfigCache() {
 	oemConfigCacheById = newCacheById
 	oemConfigCacheTime = time.Now()
 	oemConfigCacheLock.Unlock()
-
 	common.SysLog(fmt.Sprintf("OEM配置缓存已刷新，共 %d 条", len(configs)))
 }
 

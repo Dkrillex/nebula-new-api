@@ -19,6 +19,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/credentials"
 	"github.com/aws/aws-sdk-go-v2/service/bedrockruntime"
 	bedrockruntimeTypes "github.com/aws/aws-sdk-go-v2/service/bedrockruntime/types"
+	"github.com/aws/smithy-go"
 	"github.com/aws/smithy-go/auth/bearer"
 )
 
@@ -55,6 +56,115 @@ func wrapErr(err error) *dto.OpenAIErrorWithStatusCode {
 			Message: fmt.Sprintf("%s", err.Error()),
 		},
 	}
+}
+
+// extractStatusCodeFromAwsError 从 AWS SDK 错误中提取 HTTP 状态码
+func extractStatusCodeFromAwsError(err error) int {
+	if err == nil {
+		return http.StatusInternalServerError
+	}
+
+	// 尝试从 smithy-go 的 APIError 中获取状态码
+	var apiErr smithy.APIError
+	if errors.As(err, &apiErr) {
+		// AWS SDK v2 错误类型映射
+		switch apiErr.ErrorCode() {
+		case "ValidationException":
+			return http.StatusBadRequest // 400
+		case "ThrottlingException":
+			return http.StatusTooManyRequests // 429
+		case "AccessDeniedException":
+			return http.StatusForbidden // 403
+		case "UnauthorizedException", "UnrecognizedClientException":
+			return http.StatusUnauthorized // 401
+		case "ResourceNotFoundException", "ModelNotReadyException":
+			return http.StatusNotFound // 404
+		case "ServiceQuotaExceededException":
+			return http.StatusTooManyRequests // 429
+		case "ModelTimeoutException", "ModelErrorException":
+			return http.StatusInternalServerError // 500
+		case "InternalServerException", "ServiceUnavailableException":
+			return http.StatusServiceUnavailable // 503
+		case "ModelStreamErrorException":
+			return http.StatusInternalServerError // 500
+		}
+	}
+
+	// 默认返回 500
+	return http.StatusInternalServerError
+}
+
+// cleanAwsMetadata 清理 AWS Bedrock 专有的元数据字段，返回清理后的数据和是否应该跳过
+func cleanAwsMetadata(data string) (cleanedData string, shouldSkip bool) {
+	if data == "" {
+		return data, true
+	}
+
+	trimmed := strings.TrimSpace(data)
+	if trimmed == "{}" || trimmed == "" {
+		return data, true
+	}
+
+	// 尝试解析 JSON
+	var jsonData map[string]interface{}
+	if err := common.Unmarshal([]byte(data), &jsonData); err != nil {
+		// 解析失败，返回原数据
+		return data, false
+	}
+
+	// 检查是否有 type 字段
+	eventType, hasType := jsonData["type"]
+
+	// 如果没有 type 字段，检查是否只包含 AWS 元数据
+	if !hasType {
+		// 检查是否包含 AWS 专有字段
+		hasAwsMetadata := false
+		for key := range jsonData {
+			if strings.Contains(key, "amazon-bedrock") || strings.Contains(key, "invocation") {
+				hasAwsMetadata = true
+				break
+			}
+		}
+		// 如果只包含 AWS 元数据而没有 type，跳过整个事件
+		if hasAwsMetadata {
+			return data, true
+		}
+		return data, false
+	}
+
+	// 有 type 字段，移除 AWS 专有的元数据字段
+	needClean := false
+	awsMetadataKeys := []string{}
+	for key := range jsonData {
+		if strings.Contains(key, "amazon-bedrock") ||
+			(strings.Contains(key, "invocation") && strings.Contains(key, "Metrics")) {
+			awsMetadataKeys = append(awsMetadataKeys, key)
+			needClean = true
+		}
+	}
+
+	// 如果需要清理，移除 AWS 元数据字段
+	if needClean {
+		for _, key := range awsMetadataKeys {
+			delete(jsonData, key)
+		}
+
+		// 重新序列化
+		cleanedBytes, err := common.Marshal(jsonData)
+		if err != nil {
+			// 序列化失败，返回原数据
+			return data, false
+		}
+
+		if common.DebugEnabled {
+			common.SysLog(fmt.Sprintf("cleaned AWS metadata from event type: %v", eventType))
+		}
+
+		return string(cleanedBytes), false
+	}
+
+	// 不需要清理，返回原数据
+	return data, false
 }
 
 func awsRegionPrefix(awsRegionId string) string {
@@ -132,7 +242,8 @@ func awsHandler(c *gin.Context, info *relaycommon.RelayInfo, requestMode int) (*
 
 	awsResp, err := awsCli.InvokeModel(c.Request.Context(), awsReq)
 	if err != nil {
-		return types.NewOpenAIError(errors.Wrap(err, "InvokeModel"), types.ErrorCodeAwsInvokeError, http.StatusInternalServerError), nil
+		statusCode := extractStatusCodeFromAwsError(err)
+		return types.NewOpenAIError(errors.Wrap(err, "InvokeModel"), types.ErrorCodeAwsInvokeError, statusCode), nil
 	}
 
 	claudeInfo := &claude.ClaudeResponseInfo{
@@ -189,7 +300,8 @@ func awsStreamHandler(c *gin.Context, resp *http.Response, info *relaycommon.Rel
 
 	awsResp, err := awsCli.InvokeModelWithResponseStream(c.Request.Context(), awsReq)
 	if err != nil {
-		return types.NewOpenAIError(errors.Wrap(err, "InvokeModelWithResponseStream"), types.ErrorCodeAwsInvokeError, http.StatusInternalServerError), nil
+		statusCode := extractStatusCodeFromAwsError(err)
+		return types.NewOpenAIError(errors.Wrap(err, "InvokeModelWithResponseStream"), types.ErrorCodeAwsInvokeError, statusCode), nil
 	}
 	stream := awsResp.GetStream()
 	defer stream.Close()
@@ -206,16 +318,34 @@ func awsStreamHandler(c *gin.Context, resp *http.Response, info *relaycommon.Rel
 		switch v := event.(type) {
 		case *bedrockruntimeTypes.ResponseStreamMemberChunk:
 			info.SetFirstResponseTime()
-			respErr := claude.HandleStreamResponseData(c, info, claudeInfo, string(v.Value.Bytes), RequestModeMessage)
+			chunkData := string(v.Value.Bytes)
+
+			// 清理 AWS Bedrock 专有的元数据字段（如 amazon-bedrock-invocationMetrics）
+			cleanedData, shouldSkip := cleanAwsMetadata(chunkData)
+			if shouldSkip {
+				if common.DebugEnabled {
+					common.SysLog(fmt.Sprintf("skipping AWS-only metadata chunk: %s", chunkData))
+				}
+				continue
+			}
+
+			// 使用清理后的数据
+			respErr := claude.HandleStreamResponseData(c, info, claudeInfo, cleanedData, RequestModeMessage)
 			if respErr != nil {
 				return respErr, nil
 			}
 		case *bedrockruntimeTypes.UnknownUnionMember:
-			fmt.Println("unknown tag:", v.Tag)
-			return types.NewError(errors.New("unknown response type"), types.ErrorCodeInvalidRequest), nil
+			if common.DebugEnabled {
+				common.SysLog(fmt.Sprintf("unknown AWS stream tag: %s", v.Tag))
+			}
+			// 忽略未知成员类型，不返回错误
+			continue
 		default:
-			fmt.Println("union is nil or unknown type")
-			return types.NewError(errors.New("nil or unknown response type"), types.ErrorCodeInvalidRequest), nil
+			if common.DebugEnabled {
+				common.SysLog("AWS stream event is nil or unknown type")
+			}
+			// 忽略空事件，不返回错误
+			continue
 		}
 	}
 
