@@ -88,8 +88,9 @@ func RelayErrorHandler(ctx context.Context, resp *http.Response, showBodyWhenFai
 		return
 	}
 	CloseResponseBodyGracefully(resp)
-	var errResponse dto.GeneralErrorResponse
 
+	// 先尝试解析为 GeneralErrorResponse（OpenAI/Claude/Gemini 通用格式）
+	var errResponse dto.GeneralErrorResponse
 	err = common.Unmarshal(responseBody, &errResponse)
 	if err != nil {
 		if showBodyWhenFail {
@@ -102,9 +103,23 @@ func RelayErrorHandler(ctx context.Context, resp *http.Response, showBodyWhenFai
 		}
 		return
 	}
+
 	if errResponse.Error.Message != "" {
-		// General format error (OpenAI, Anthropic, Gemini, etc.)
-		newApiErr = types.WithOpenAIError(errResponse.Error, resp.StatusCode)
+		// 判断是 Claude 格式还是 OpenAI 格式
+		// Claude 错误的 type 字段通常是 "invalid_request_error", "rate_limit_error" 等
+		// OpenAI 错误的 type 字段通常是 "invalid_request_error", "insufficient_quota" 等
+		// 关键区别：Claude 错误没有 "code" 字段，只有 "type" 和 "message"
+		if errResponse.Error.Type != "" && errResponse.Error.Code == nil {
+			// 这是 Claude 格式的错误
+			claudeError := types.ClaudeError{
+				Type:    errResponse.Error.Type,
+				Message: errResponse.Error.Message,
+			}
+			newApiErr = types.WithClaudeError(claudeError, resp.StatusCode)
+		} else {
+			// 这是 OpenAI 或其他格式的错误
+			newApiErr = types.WithOpenAIError(errResponse.Error, resp.StatusCode)
+		}
 	} else {
 		newApiErr = types.NewOpenAIError(errors.New(errResponse.ToMessage()), types.ErrorCodeBadResponseStatusCode, resp.StatusCode)
 	}

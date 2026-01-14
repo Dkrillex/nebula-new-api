@@ -126,6 +126,7 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 				errorResponse = gin.H{
 					"type": "error",
 					"error": gin.H{
+						"type":    claudeError.Type,
 						"message": claudeError.Message,
 					},
 					"request_id": c.GetString(common.RequestIdKey),
