@@ -3,7 +3,10 @@ package helper
 import (
 	"fmt"
 	"one-api/common"
+	"one-api/constant"
+	"one-api/model"
 	relaycommon "one-api/relay/common"
+	"one-api/service"
 	"one-api/setting/ratio_setting"
 	"one-api/types"
 
@@ -11,6 +14,7 @@ import (
 )
 
 // HandleGroupRatio checks for "auto_group" in the context and updates the group ratio and relayInfo.UsingGroup if present
+// 优先级：用户特殊分组倍率 > OEM特定GroupRatio > 全局GroupRatio > 默认值1.0
 func HandleGroupRatio(ctx *gin.Context, relayInfo *relaycommon.RelayInfo) types.GroupRatioInfo {
 	groupRatioInfo := types.GroupRatioInfo{
 		GroupRatio:        1.0, // default ratio
@@ -36,8 +40,8 @@ func HandleGroupRatio(ctx *gin.Context, relayInfo *relaycommon.RelayInfo) types.
 		groupRatioInfo.GroupRatio = userGroupRatio
 		groupRatioInfo.HasSpecialRatio = true
 	} else {
-		// normal group ratio
-		groupRatioInfo.GroupRatio = ratio_setting.GetGroupRatio(relayInfo.UsingGroup)
+		// 优先使用OEM特定的GroupRatio
+		groupRatioInfo.GroupRatio = service.GetGroupRatioByOemFromContext(ctx, relayInfo.UsingGroup)
 	}
 
 	return groupRatioInfo
@@ -58,11 +62,29 @@ func ModelPriceHelper(c *gin.Context, info *relaycommon.RelayInfo, promptTokens 
 	// 优先级2：检查按张计费（ImageModelPricePerImage）
 	imageModelPrice, hasImageModelPrice := ratio_setting.GetImageModelPricePerImage(info.OriginModelName)
 	if hasImageModelPrice && imageModelPrice > 0 {
+		// 应用OEM用户折扣到 imageModelPrice（oem_user_discount）
+		if c != nil {
+			oemCode := "nebula" // 默认系统
+			if code, exists := c.Get(string(constant.ContextKeyOemCode)); exists {
+				if codeStr, ok := code.(string); ok && codeStr != "" {
+					oemCode = codeStr
+				}
+			}
+			vendorName := service.GetVendorNameFromModel(info.OriginModelName)
+			oemUserDiscount := model.GetOemUserDiscountByCode(oemCode, info.OriginModelName, vendorName)
+			if oemUserDiscount != 1.0 {
+				imageModelPrice = imageModelPrice * oemUserDiscount
+				if common.DebugEnabled {
+					println(fmt.Sprintf("[ModelPriceHelper] 应用OEM用户折扣到imageModelPrice: oemCode=%s, modelName=%s, oemUserDiscount=%.4f, 原价=%.4f, 折后价=%.4f",
+						oemCode, info.OriginModelName, oemUserDiscount, imageModelPrice/oemUserDiscount, imageModelPrice))
+				}
+			}
+		}
 		groupRatioInfo := HandleGroupRatio(c, info)
 		preConsumedQuota := int(imageModelPrice * common.QuotaPerUnit * groupRatioInfo.GroupRatio)
 		return types.PriceData{
-			UsePrice:               true, // 按张计费需要设置 UsePrice = true
-			ModelPrice:             imageModelPrice,
+			UsePrice:               true,            // 按张计费需要设置 UsePrice = true
+			ModelPrice:             imageModelPrice, // 已应用OEM用户折扣
 			GroupRatioInfo:         groupRatioInfo,
 			ShouldPreConsumedQuota: preConsumedQuota,
 		}, nil
@@ -70,6 +92,30 @@ func ModelPriceHelper(c *gin.Context, info *relaycommon.RelayInfo, promptTokens 
 
 	// 优先级3：检查按次计费（ModelPrice）
 	modelPrice, usePrice := ratio_setting.GetModelPrice(info.OriginModelName, false)
+
+	// 应用OEM用户折扣到 modelPrice（oem_user_discount）
+	if c != nil && usePrice && modelPrice > 0 {
+		oemCode := "nebula" // 默认系统
+		if code, exists := c.Get(string(constant.ContextKeyOemCode)); exists {
+			if codeStr, ok := code.(string); ok && codeStr != "" {
+				oemCode = codeStr
+			}
+		}
+		vendorName := service.GetVendorNameFromModel(info.OriginModelName)
+		oemUserDiscount := model.GetOemUserDiscountByCode(oemCode, info.OriginModelName, vendorName)
+		if common.DebugEnabled {
+			println(fmt.Sprintf("[ModelPriceHelper] 查询OEM用户折扣: oemCode=%s, modelName=%s, vendorName=%s, oemUserDiscount=%.4f",
+				oemCode, info.OriginModelName, vendorName, oemUserDiscount))
+		}
+		if oemUserDiscount != 1.0 && oemUserDiscount > 0 {
+			originalPrice := modelPrice
+			modelPrice = modelPrice * oemUserDiscount
+			if common.DebugEnabled {
+				println(fmt.Sprintf("[ModelPriceHelper] 应用OEM用户折扣到modelPrice: oemCode=%s, modelName=%s, oemUserDiscount=%.4f, 原价=%.4f, 折后价=%.4f",
+					oemCode, info.OriginModelName, oemUserDiscount, originalPrice, modelPrice))
+			}
+		}
+	}
 
 	groupRatioInfo := HandleGroupRatio(c, info)
 
@@ -112,6 +158,26 @@ func ModelPriceHelper(c *gin.Context, info *relaycommon.RelayInfo, promptTokens 
 				return types.PriceData{}, fmt.Errorf("模型 %s 倍率或价格未配置，请联系管理员设置或开始自用模式；Model %s ratio or price not set, please set or start self-use mode", matchName, matchName)
 			}
 		}
+
+		// 应用OEM用户折扣到 modelRatio（oem_user_discount）
+		if c != nil && success {
+			oemCode := "nebula" // 默认系统
+			if code, exists := c.Get(string(constant.ContextKeyOemCode)); exists {
+				if codeStr, ok := code.(string); ok && codeStr != "" {
+					oemCode = codeStr
+				}
+			}
+			vendorName := service.GetVendorNameFromModel(info.OriginModelName)
+			oemUserDiscount := model.GetOemUserDiscountByCode(oemCode, info.OriginModelName, vendorName)
+			if oemUserDiscount != 1.0 {
+				modelRatio = modelRatio * oemUserDiscount
+				if common.DebugEnabled {
+					println(fmt.Sprintf("[ModelPriceHelper] 应用OEM用户折扣: oemCode=%s, modelName=%s, oemUserDiscount=%.4f, 原倍率=%.4f, 折后倍率=%.4f",
+						oemCode, info.OriginModelName, oemUserDiscount, modelRatio/oemUserDiscount, modelRatio))
+				}
+			}
+		}
+
 		completionRatio = ratio_setting.GetCompletionRatio(info.OriginModelName)
 		cacheRatio, _ = ratio_setting.GetCacheRatio(info.OriginModelName)
 		cacheCreationRatio, _ = ratio_setting.GetCreateCacheRatio(info.OriginModelName)
@@ -165,6 +231,26 @@ func ModelPriceHelperPerCall(c *gin.Context, info *relaycommon.RelayInfo) types.
 			modelPrice = defaultPrice
 		}
 	}
+
+	// 应用OEM用户折扣到 modelPrice（oem_user_discount）
+	if c != nil {
+		oemCode := "nebula" // 默认系统
+		if code, exists := c.Get(string(constant.ContextKeyOemCode)); exists {
+			if codeStr, ok := code.(string); ok && codeStr != "" {
+				oemCode = codeStr
+			}
+		}
+		vendorName := service.GetVendorNameFromModel(info.OriginModelName)
+		oemUserDiscount := model.GetOemUserDiscountByCode(oemCode, info.OriginModelName, vendorName)
+		if oemUserDiscount != 1.0 {
+			modelPrice = modelPrice * oemUserDiscount
+			if common.DebugEnabled {
+				println(fmt.Sprintf("[ModelPriceHelperPerCall] 应用OEM用户折扣到modelPrice: oemCode=%s, modelName=%s, oemUserDiscount=%.4f, 原价=%.4f, 折后价=%.4f",
+					oemCode, info.OriginModelName, oemUserDiscount, modelPrice/oemUserDiscount, modelPrice))
+			}
+		}
+	}
+
 	quota := int(modelPrice * common.QuotaPerUnit * groupRatioInfo.GroupRatio)
 	priceData := types.PerCallPriceData{
 		ModelPrice:     modelPrice,

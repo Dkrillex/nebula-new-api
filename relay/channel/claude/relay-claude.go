@@ -339,21 +339,57 @@ func RequestOpenAI2ClaudeMessage(c *gin.Context, textRequest dto.GeneralOpenAIRe
 							},
 						}
 					}
-					lastMessage.Content = append(lastMessage.Content.([]dto.ClaudeMediaMessage), dto.ClaudeMediaMessage{
-						Type:      "tool_result",
-						ToolUseId: message.ToolCallId,
-						Content:   message.Content,
-					})
-					claudeMessages[len(claudeMessages)-1] = lastMessage
-					continue
-				} else {
-					claudeMessage.Role = "user"
-					claudeMessage.Content = []dto.ClaudeMediaMessage{
-						{
+
+					// 检查是否已存在相同的 tool_use_id，避免重复添加
+					contents := lastMessage.Content.([]dto.ClaudeMediaMessage)
+					toolResultExists := false
+					for _, existingContent := range contents {
+						if existingContent.Type == "tool_result" && existingContent.ToolUseId == message.ToolCallId {
+							toolResultExists = true
+							break
+						}
+					}
+
+					// 只有不存在重复的 tool_use_id 时才添加新的 tool_result
+					if !toolResultExists {
+						lastMessage.Content = append(contents, dto.ClaudeMediaMessage{
 							Type:      "tool_result",
 							ToolUseId: message.ToolCallId,
 							Content:   message.Content,
-						},
+						})
+						claudeMessages[len(claudeMessages)-1] = lastMessage
+					}
+					continue
+				} else {
+					// 检查是否已存在独立的tool_result消息，避免创建重复消息
+					toolResultExists := false
+					for i := len(claudeMessages) - 1; i >= 0; i-- {
+						if claudeMessages[i].Role == "user" {
+							if contents, ok := claudeMessages[i].Content.([]dto.ClaudeMediaMessage); ok {
+								for _, content := range contents {
+									if content.Type == "tool_result" && content.ToolUseId == message.ToolCallId {
+										toolResultExists = true
+										break
+									}
+								}
+							}
+							break // 只检查最近的用户消息
+						}
+					}
+
+					// 只有不存在重复的 tool_use_id 时才创建新的用户消息
+					if !toolResultExists {
+						claudeMessage.Role = "user"
+						claudeMessage.Content = []dto.ClaudeMediaMessage{
+							{
+								Type:      "tool_result",
+								ToolUseId: message.ToolCallId,
+								Content:   message.Content,
+							},
+						}
+					} else {
+						// 如果已存在，跳过当前消息
+						continue
 					}
 				}
 			} else if message.IsStringContent() && message.ToolCalls == nil {
@@ -635,6 +671,34 @@ func FormatClaudeResponseInfo(requestMode int, claudeResponse *dto.ClaudeRespons
 	return true
 }
 
+// mapClaudeErrorToStatusCode 根据 Claude 错误类型映射 HTTP 状态码
+func mapClaudeErrorToStatusCode(claudeError *types.ClaudeError) int {
+	if claudeError == nil {
+		return http.StatusInternalServerError
+	}
+
+	// 根据 Claude 错误类型映射状态码
+	switch claudeError.Type {
+	case "invalid_request_error":
+		return http.StatusBadRequest // 400
+	case "authentication_error":
+		return http.StatusUnauthorized // 401
+	case "permission_error":
+		return http.StatusForbidden // 403
+	case "not_found_error":
+		return http.StatusNotFound // 404
+	case "request_too_large":
+		return http.StatusRequestEntityTooLarge // 413
+	case "rate_limit_error":
+		return http.StatusTooManyRequests // 429
+	case "api_error", "overloaded_error":
+		return http.StatusServiceUnavailable // 503
+	default:
+		// 默认返回 500，保持向后兼容
+		return http.StatusInternalServerError
+	}
+}
+
 func HandleStreamResponseData(c *gin.Context, info *relaycommon.RelayInfo, claudeInfo *ClaudeResponseInfo, data string, requestMode int) *types.NewAPIError {
 	var claudeResponse dto.ClaudeResponse
 	err := common.UnmarshalJsonStr(data, &claudeResponse)
@@ -643,7 +707,8 @@ func HandleStreamResponseData(c *gin.Context, info *relaycommon.RelayInfo, claud
 		return types.NewError(err, types.ErrorCodeBadResponseBody)
 	}
 	if claudeError := claudeResponse.GetClaudeError(); claudeError != nil && claudeError.Type != "" {
-		return types.WithClaudeError(*claudeError, http.StatusInternalServerError)
+		statusCode := mapClaudeErrorToStatusCode(claudeError)
+		return types.WithClaudeError(*claudeError, statusCode)
 	}
 	if info.RelayFormat == types.RelayFormatClaude {
 		FormatClaudeResponseInfo(requestMode, &claudeResponse, nil, claudeInfo)
@@ -734,7 +799,8 @@ func HandleClaudeResponseData(c *gin.Context, info *relaycommon.RelayInfo, claud
 		return types.NewError(err, types.ErrorCodeBadResponseBody)
 	}
 	if claudeError := claudeResponse.GetClaudeError(); claudeError != nil && claudeError.Type != "" {
-		return types.WithClaudeError(*claudeError, http.StatusInternalServerError)
+		statusCode := mapClaudeErrorToStatusCode(claudeError)
+		return types.WithClaudeError(*claudeError, statusCode)
 	}
 	if requestMode == RequestModeCompletion {
 		completionTokens := service.CountTextToken(claudeResponse.Completion, info.OriginModelName)

@@ -47,4 +47,13 @@ const (
 	ContextKeyUserName    ContextKey = "username"
 
 	ContextKeySystemPromptOverride ContextKey = "system_prompt_override"
+
+	// OEM系统相关
+	ContextKeyOemCode   ContextKey = "oem_code"
+	ContextKeyOemId     ContextKey = "oem_id"
+	ContextKeyOemConfig ContextKey = "oem_config"
+
+	// 向后兼容（已废弃，使用ContextKeyOemCode代替）
+	ContextKeySystemCode   ContextKey = "system_code"
+	ContextKeySystemConfig ContextKey = "system_config"
 )

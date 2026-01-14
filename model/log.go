@@ -36,6 +36,14 @@ type Log struct {
 	Group            string `json:"group" gorm:"index"`
 	Ip               string `json:"ip" gorm:"index;default:''"`
 	Other            string `json:"other"`
+	// OEM系统价格链条字段
+	OemId          *int64 `json:"oem_id" gorm:"column:oem_id;index"`
+	OfficialQuota  int64  `json:"official_quota" gorm:"default:0"`
+	CostQuota      int64  `json:"cost_quota" gorm:"default:0"`
+	SystemQuota    int64  `json:"system_quota" gorm:"default:0"`
+	UserQuota      int64  `json:"user_quota" gorm:"default:0"`
+	PlatformProfit int64  `json:"platform_profit" gorm:"default:0"`
+	OemSubsidy     int64  `json:"oem_subsidy" gorm:"default:0"`
 }
 
 const (
@@ -148,6 +156,20 @@ type RecordConsumeLogParams struct {
 	IsStream         bool                   `json:"is_stream"`
 	Group            string                 `json:"group"`
 	Other            map[string]interface{} `json:"other"`
+	// OEM系统价格链条字段
+	PriceChain *PriceChainParams `json:"price_chain,omitempty"`
+}
+
+// PriceChainParams 价格链条参数
+type PriceChainParams struct {
+	OemId          *int64 `json:"oem_id"`
+	OemCode        string `json:"oem_code"` // 用于向后兼容和日志显示
+	OfficialQuota  int64  `json:"official_quota"`
+	CostQuota      int64  `json:"cost_quota"`
+	SystemQuota    int64  `json:"system_quota"`
+	UserQuota      int64  `json:"user_quota"`
+	PlatformProfit int64  `json:"platform_profit"`
+	OemSubsidy     int64  `json:"oem_subsidy"`
 }
 
 func RecordConsumeLog(c *gin.Context, userId int, params RecordConsumeLogParams) {
@@ -188,15 +210,134 @@ func RecordConsumeLog(c *gin.Context, userId int, params RecordConsumeLogParams)
 		}(),
 		Other: otherStr,
 	}
+
+	// 记录价格链条信息
+	if params.PriceChain != nil {
+		log.OemId = params.PriceChain.OemId
+		log.OfficialQuota = params.PriceChain.OfficialQuota
+		log.CostQuota = params.PriceChain.CostQuota
+		log.SystemQuota = params.PriceChain.SystemQuota
+		log.UserQuota = params.PriceChain.UserQuota
+		log.PlatformProfit = params.PriceChain.PlatformProfit
+		log.OemSubsidy = params.PriceChain.OemSubsidy
+	}
+
+	// 先插入日志以获取日志ID
 	err := LOG_DB.Create(log).Error
 	if err != nil {
 		logger.LogError(c, "failed to record log: "+err.Error())
+		return
+	}
+
+	// 处理OEM补贴（在日志插入后，可以传入日志ID）
+	if params.PriceChain != nil && log.OemSubsidy != 0 && params.PriceChain.OemCode != "" {
+		logId := log.Id
+		ProcessOemSubsidy(c, params.PriceChain.OemCode, log.OemSubsidy, logId, userId)
 	}
 	if common.DataExportEnabled {
 		gopool.Go(func() {
 			LogQuotaData(userId, username, params.ModelName, params.Quota, common.GetTimestamp(), params.PromptTokens+params.CompletionTokens)
 		})
 	}
+}
+
+// ProcessOemSubsidy 处理OEM补贴
+// 如果OEM补贴为负数（需要补贴），从系统账户扣除；如果为正数（盈利），增加到系统账户
+func ProcessOemSubsidy(c *gin.Context, oemCode string, oemSubsidy int64, logId int, userId int) error {
+	if oemSubsidy == 0 {
+		common.SysLog(fmt.Sprintf("OEM补贴处理跳过: oemCode=%s, oemSubsidy=0", oemCode))
+		return nil
+	}
+
+	// 获取OEM配置
+	oemConfig := GetOemConfigByCode(oemCode)
+	if oemConfig == nil {
+		common.SysLog(fmt.Sprintf("OEM补贴处理跳过: oemCode=%s, OEM配置不存在", oemCode))
+		return nil
+	}
+	if oemConfig.OemAdminNebulaApiId == nil {
+		// 如果没有配置OEM管理员账户，不处理补贴，但记录日志
+		common.SysLog(fmt.Sprintf("OEM补贴处理跳过: oemCode=%s, OemAdminNebulaApiId未配置（请在oem_config表中设置oem_admin_nebula_api_id字段）", oemCode))
+		return nil
+	}
+
+	systemAccountUserId := int(*oemConfig.OemAdminNebulaApiId)
+
+	// 获取变动前余额
+	user, err := GetUserById(systemAccountUserId, false)
+	if err != nil {
+		common.SysLog(fmt.Sprintf("获取OEM管理员账户失败: systemAccountUserId=%d, error=%v", systemAccountUserId, err))
+		return err
+	}
+	balanceBefore := int64(user.Quota)
+
+	if oemSubsidy < 0 {
+		// 需要补贴：从系统账户扣除（oemSubsidy是负数，所以需要取绝对值）
+		subsidyAmount := int(-oemSubsidy)
+		err := DecreaseUserQuota(systemAccountUserId, subsidyAmount)
+		if err != nil {
+			common.SysLog(fmt.Sprintf("处理OEM补贴失败: oemCode=%s, systemAccountUserId=%d, subsidyAmount=%d, error=%v",
+				oemCode, systemAccountUserId, subsidyAmount, err))
+			return err
+		}
+
+		// 记录OEM账户变动日志
+		balanceAfter := balanceBefore + oemSubsidy
+		// 将quota转换为人民币（1美金=500000quota=7.3人民币）
+		subsidyRmb := float64(-oemSubsidy) / common.QuotaPerUnit * 7.3
+		accountLog := &OemAccountLog{
+			OemId:          oemConfig.Id,
+			OemAdminUserId: systemAccountUserId,
+			CreatedAt:      common.GetTimestamp(),
+			Type:           OemAccountLogTypeSubsidy,
+			Amount:         oemSubsidy, // 负数
+			BalanceBefore:  balanceBefore,
+			BalanceAfter:   balanceAfter,
+			RelatedLogId:   &logId,
+			RelatedUserId:  &userId,
+			Content:        fmt.Sprintf("OEM补贴：-¥%.6f（用户消费产生亏损）", subsidyRmb),
+		}
+		if err := RecordOemAccountLog(accountLog); err != nil {
+			common.SysLog(fmt.Sprintf("记录OEM账户变动日志失败: error=%v", err))
+		}
+
+		common.SysLog(fmt.Sprintf("OEM补贴扣除: oemCode=%s, systemAccountUserId=%d, subsidyAmount=%d",
+			oemCode, systemAccountUserId, subsidyAmount))
+	} else {
+		// 盈利：增加到系统账户
+		profitAmount := int(oemSubsidy)
+		err := IncreaseUserQuota(systemAccountUserId, profitAmount, false)
+		if err != nil {
+			common.SysLog(fmt.Sprintf("处理OEM盈利失败: oemCode=%s, systemAccountUserId=%d, profitAmount=%d, error=%v",
+				oemCode, systemAccountUserId, profitAmount, err))
+			return err
+		}
+
+		// 记录OEM账户变动日志
+		balanceAfter := balanceBefore + oemSubsidy
+		// 将quota转换为人民币（1美金=500000quota=7.3人民币）
+		profitRmb := float64(oemSubsidy) / common.QuotaPerUnit * 7.3
+		accountLog := &OemAccountLog{
+			OemId:          oemConfig.Id,
+			OemAdminUserId: systemAccountUserId,
+			CreatedAt:      common.GetTimestamp(),
+			Type:           OemAccountLogTypeProfit,
+			Amount:         oemSubsidy, // 正数
+			BalanceBefore:  balanceBefore,
+			BalanceAfter:   balanceAfter,
+			RelatedLogId:   &logId,
+			RelatedUserId:  &userId,
+			Content:        fmt.Sprintf("OEM盈利：+¥%.6f（用户消费产生盈利）", profitRmb),
+		}
+		if err := RecordOemAccountLog(accountLog); err != nil {
+			common.SysLog(fmt.Sprintf("记录OEM账户变动日志失败: error=%v", err))
+		}
+
+		common.SysLog(fmt.Sprintf("OEM盈利增加: oemCode=%s, systemAccountUserId=%d, profitAmount=%d",
+			oemCode, systemAccountUserId, profitAmount))
+	}
+
+	return nil
 }
 
 func GetAllLogs(logType int, startTimestamp int64, endTimestamp int64, modelName string, username string, tokenName string, startIdx int, num int, channel int, group string) (logs []*Log, total int64, err error) {

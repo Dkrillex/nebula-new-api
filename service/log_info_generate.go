@@ -4,6 +4,7 @@ import (
 	"one-api/common"
 	"one-api/constant"
 	"one-api/dto"
+	"one-api/model"
 	relaycommon "one-api/relay/common"
 	"one-api/types"
 
@@ -32,6 +33,24 @@ func GenerateTextOtherInfo(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, m
 	isSystemPromptOverwritten := common.GetContextKeyBool(ctx, constant.ContextKeySystemPromptOverride)
 	if isSystemPromptOverwritten {
 		other["is_system_prompt_overwritten"] = true
+	}
+
+	// 记录OEM用户折扣信息（用于溯源）
+	if ctx != nil {
+		oemCode := "nebula" // 默认系统
+		if code, exists := ctx.Get(string(constant.ContextKeyOemCode)); exists {
+			if codeStr, ok := code.(string); ok && codeStr != "" {
+				oemCode = codeStr
+			}
+		}
+		vendorName := GetVendorNameFromModel(relayInfo.OriginModelName)
+		oemUserDiscount := model.GetOemUserDiscountByCode(oemCode, relayInfo.OriginModelName, vendorName)
+		// 只有当折扣不是1.0时才记录，避免日志冗余
+		if oemUserDiscount != 1.0 && oemUserDiscount > 0 {
+			other["oem_user_discount"] = oemUserDiscount
+			other["oem_code"] = oemCode
+			other["vendor_name"] = vendorName
+		}
 	}
 
 	adminInfo := make(map[string]interface{})
@@ -78,12 +97,31 @@ func GenerateClaudeOtherInfo(ctx *gin.Context, relayInfo *relaycommon.RelayInfo,
 	return info
 }
 
-func GenerateMjOtherInfo(priceData types.PerCallPriceData) map[string]interface{} {
+func GenerateMjOtherInfo(ctx *gin.Context, modelName string, priceData types.PerCallPriceData) map[string]interface{} {
 	other := make(map[string]interface{})
 	other["model_price"] = priceData.ModelPrice
 	other["group_ratio"] = priceData.GroupRatioInfo.GroupRatio
 	if priceData.GroupRatioInfo.HasSpecialRatio {
 		other["user_group_ratio"] = priceData.GroupRatioInfo.GroupSpecialRatio
 	}
+
+	// 记录OEM用户折扣信息（用于溯源）
+	if ctx != nil {
+		oemCode := "nebula" // 默认系统
+		if code, exists := ctx.Get(string(constant.ContextKeyOemCode)); exists {
+			if codeStr, ok := code.(string); ok && codeStr != "" {
+				oemCode = codeStr
+			}
+		}
+		vendorName := GetVendorNameFromModel(modelName)
+		oemUserDiscount := model.GetOemUserDiscountByCode(oemCode, modelName, vendorName)
+		// 只有当折扣不是1.0时才记录，避免日志冗余
+		if oemUserDiscount != 1.0 && oemUserDiscount > 0 {
+			other["oem_user_discount"] = oemUserDiscount
+			other["oem_code"] = oemCode
+			other["vendor_name"] = vendorName
+		}
+	}
+
 	return other
 }

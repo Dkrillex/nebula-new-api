@@ -515,3 +515,16 @@ type ClaudeUsage struct {
 type ClaudeServerToolUse struct {
 	WebSearchRequests int `json:"web_search_requests"`
 }
+
+// ClaudeCountTokensRequest count_tokens 请求结构
+type ClaudeCountTokensRequest struct {
+	Model    string          `json:"model" binding:"required"`
+	System   any             `json:"system,omitempty"`
+	Messages []ClaudeMessage `json:"messages" binding:"required"`
+	Tools    any             `json:"tools,omitempty"`
+}
+
+// ClaudeCountTokensResponse count_tokens 响应结构
+type ClaudeCountTokensResponse struct {
+	InputTokens int `json:"input_tokens"`
+}

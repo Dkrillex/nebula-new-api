@@ -1056,6 +1056,43 @@ const EditChannelModal = (props) => {
       }
     }
 
+    // type === 3 (Azure): 保留 Azure 相关设置
+    if (localInputs.type === 3) {
+      // 保留 azure_responses_version
+      if (localInputs.azure_responses_version !== undefined && localInputs.azure_responses_version !== null) {
+        if (localInputs.azure_responses_version.trim() === '') {
+          // 如果为空字符串，删除该字段
+          delete settings.azure_responses_version;
+        } else {
+          settings.azure_responses_version = localInputs.azure_responses_version;
+        }
+      }
+      // 保留 azure_model_api_versions（从表单中获取已解析的值）
+      if (localInputs.azure_model_api_versions !== undefined && localInputs.azure_model_api_versions !== null) {
+        if (localInputs.azure_model_api_versions.trim() === '') {
+          // 如果为空字符串，删除该字段
+          delete settings.azure_model_api_versions;
+        } else {
+          try {
+            settings.azure_model_api_versions = JSON.parse(localInputs.azure_model_api_versions);
+          } catch (error) {
+            console.error('解析 azure_model_api_versions 失败:', error);
+            // 如果解析失败，保留 settings 中已有的值（如果存在），否则删除
+            if (!settings.azure_model_api_versions) {
+              delete settings.azure_model_api_versions;
+            }
+          }
+        }
+      }
+    }
+
+    // type === 41 (Vertex): 保留 Vertex 密钥格式设置
+    if (localInputs.type === 41) {
+      if (localInputs.vertex_key_type !== undefined && localInputs.vertex_key_type !== null) {
+        settings.vertex_key_type = localInputs.vertex_key_type;
+      }
+    }
+
     localInputs.settings = JSON.stringify(settings);
 
     // 清理不需要发送到后端的字段
@@ -1068,14 +1105,13 @@ const EditChannelModal = (props) => {
     delete localInputs.is_enterprise_account;
     // 顶层的 vertex_key_type 不应发送给后端
     delete localInputs.vertex_key_type;
-    // azure_model_api_versions 已保存在 settings 中，不需要作为顶层字段发送
+    // Azure 相关字段已保存在 settings 中，不需要作为顶层字段发送
+    delete localInputs.azure_responses_version;
     delete localInputs.azure_model_api_versions;
     // 清理字段透传控制的临时字段
     delete localInputs.allow_service_tier;
     delete localInputs.disable_store;
     delete localInputs.allow_safety_identifier;
-    // azure_model_api_versions 已保存在 settings 中，不需要作为顶层字段发送
-    delete localInputs.azure_model_api_versions;
 
     let res;
     localInputs.auto_ban = localInputs.auto_ban ? 1 : 0;

@@ -20,6 +20,13 @@ type ClaudeError struct {
 	Message string `json:"message,omitempty"`
 }
 
+// ToAPIResponse 转换为 API 响应格式（不包含 Type 字段）
+func (e ClaudeError) ToAPIResponse() map[string]string {
+	return map[string]string{
+		"message": e.Message,
+	}
+}
+
 type ErrorType string
 
 const (
@@ -175,10 +182,22 @@ func (e *NewAPIError) ToClaudeError() ClaudeError {
 				Message: e.Error(),
 				Type:    fmt.Sprintf("%v", openAIError.Code),
 			}
+		} else {
+			// 类型断言失败，使用错误码作为 type
+			result = ClaudeError{
+				Message: e.Error(),
+				Type:    string(e.errorCode),
+			}
 		}
 	case ErrorTypeClaudeError:
 		if claudeError, ok := e.RelayError.(ClaudeError); ok {
 			result = claudeError
+		} else {
+			// 类型断言失败，使用错误码作为 type
+			result = ClaudeError{
+				Message: e.Error(),
+				Type:    string(e.errorCode),
+			}
 		}
 	default:
 		result = ClaudeError{
@@ -186,11 +205,17 @@ func (e *NewAPIError) ToClaudeError() ClaudeError {
 			Type:    string(e.errorType),
 		}
 	}
-	if e.errorCode != ErrorCodeCountTokenFailed {
-		result.Message = common.MaskSensitiveInfo(result.Message)
-	}
+	// Claude 错误不脱敏，保留原始信息（包括文档链接等）
 	if result.Message == "" {
 		result.Message = string(e.errorType)
+	}
+	// 确保 Type 不为空，避免序列化为 "<nil>"
+	if result.Type == "" {
+		if e.errorCode != "" {
+			result.Type = string(e.errorCode)
+		} else {
+			result.Type = string(e.errorType)
+		}
 	}
 	return result
 }

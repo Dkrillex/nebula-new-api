@@ -122,9 +122,13 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 				helper.WssError(c, ws, newAPIError.ToOpenAIError())
 				return
 			case types.RelayFormatClaude:
+				claudeError := newAPIError.ToClaudeError()
 				errorResponse = gin.H{
-					"type":  "error",
-					"error": newAPIError.ToClaudeError(),
+					"type": "error",
+					"error": gin.H{
+						"message": claudeError.Message,
+					},
+					"request_id": c.GetString(common.RequestIdKey),
 				}
 			default:
 				openAIErr := newAPIError.ToOpenAIError()
@@ -719,4 +723,43 @@ func getValueType(v interface{}) string {
 	default:
 		return fmt.Sprintf("%T", v)
 	}
+}
+
+func ClaudeCountTokens(c *gin.Context) {
+	var request dto.ClaudeCountTokensRequest
+	if err := c.ShouldBindJSON(&request); err != nil {
+		// 返回 Claude 格式错误
+		c.JSON(http.StatusBadRequest, gin.H{
+			"type": "error",
+			"error": types.ClaudeError{
+				Type:    "invalid_request_error",
+				Message: err.Error(),
+			},
+		})
+		return
+	}
+
+	// 构造 ClaudeRequest 复用现有计数逻辑
+	claudeReq := dto.ClaudeRequest{
+		Model:    request.Model,
+		System:   request.System,
+		Messages: request.Messages,
+		Tools:    request.Tools,
+	}
+
+	tokens, err := service.CountTokenClaudeRequest(claudeReq, request.Model)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"type": "error",
+			"error": types.ClaudeError{
+				Type:    "api_error",
+				Message: err.Error(),
+			},
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, dto.ClaudeCountTokensResponse{
+		InputTokens: tokens,
+	})
 }

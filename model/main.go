@@ -266,6 +266,10 @@ func migrateDB() error {
 		&Setup{},
 		&TwoFA{},
 		&TwoFABackupCode{},
+		// OEM系统相关表
+		&PlatformCost{},
+		&OemConfig{},
+		&OemDiscount{},
 	)
 	if err != nil {
 		return err

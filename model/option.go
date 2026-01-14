@@ -24,6 +24,16 @@ func AllOption() ([]*Option, error) {
 	return options, err
 }
 
+// GetOption 根据key获取Option
+func GetOption(key string) (*Option, error) {
+	var option Option
+	err := DB.Where("`key` = ?", key).First(&option).Error
+	if err != nil {
+		return nil, err
+	}
+	return &option, nil
+}
+
 func InitOptionMap() {
 	common.OptionMapRWMutex.Lock()
 	common.OptionMap = make(map[string]string)
@@ -417,6 +427,22 @@ func updateOptionMap(key string, value string) (err error) {
 		err = ratio_setting.UpdateAudioRatioByJSONString(value)
 	case "AudioCompletionRatio":
 		err = ratio_setting.UpdateAudioCompletionRatioByJSONString(value)
+	case "ImageCompletionRatio":
+		err = ratio_setting.UpdateImageCompletionRatioByJSONString(value)
+	case "OriginImageCompletionRatio":
+		err = ratio_setting.UpdateOriginImageCompletionRatioByJSONString(value)
+	case "ImageModelPricePerImage":
+		err = ratio_setting.UpdateImageModelPricePerImageByJSONString(value)
+	case "OriginImageModelPricePerImage":
+		err = ratio_setting.UpdateOriginImageModelPricePerImageByJSONString(value)
+	case "ImageTokenPricing":
+		err = ratio_setting.UpdateImageTokenPricingByJSONString(value)
+	case "OriginImageTokenPricing":
+		err = ratio_setting.UpdateOriginImageTokenPricingByJSONString(value)
+	case "VideoModelPricePerSecond":
+		err = ratio_setting.UpdateVideoModelPricePerSecondByJSONString(value)
+	case "MultiModalPricing":
+		err = ratio_setting.UpdateMultiModalPricingByJSONString(value)
 	case "TopUpLink":
 		common.TopUpLink = value
 	//case "ChatLink":

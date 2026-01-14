@@ -19,6 +19,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/credentials"
 	"github.com/aws/aws-sdk-go-v2/service/bedrockruntime"
 	bedrockruntimeTypes "github.com/aws/aws-sdk-go-v2/service/bedrockruntime/types"
+	"github.com/aws/smithy-go"
 	"github.com/aws/smithy-go/auth/bearer"
 )
 
@@ -55,6 +56,42 @@ func wrapErr(err error) *dto.OpenAIErrorWithStatusCode {
 			Message: fmt.Sprintf("%s", err.Error()),
 		},
 	}
+}
+
+// extractStatusCodeFromAwsError 从 AWS SDK 错误中提取 HTTP 状态码
+func extractStatusCodeFromAwsError(err error) int {
+	if err == nil {
+		return http.StatusInternalServerError
+	}
+
+	// 尝试从 smithy-go 的 APIError 中获取状态码
+	var apiErr smithy.APIError
+	if errors.As(err, &apiErr) {
+		// AWS SDK v2 错误类型映射
+		switch apiErr.ErrorCode() {
+		case "ValidationException":
+			return http.StatusBadRequest // 400
+		case "ThrottlingException":
+			return http.StatusTooManyRequests // 429
+		case "AccessDeniedException":
+			return http.StatusForbidden // 403
+		case "UnauthorizedException", "UnrecognizedClientException":
+			return http.StatusUnauthorized // 401
+		case "ResourceNotFoundException", "ModelNotReadyException":
+			return http.StatusNotFound // 404
+		case "ServiceQuotaExceededException":
+			return http.StatusTooManyRequests // 429
+		case "ModelTimeoutException", "ModelErrorException":
+			return http.StatusInternalServerError // 500
+		case "InternalServerException", "ServiceUnavailableException":
+			return http.StatusServiceUnavailable // 503
+		case "ModelStreamErrorException":
+			return http.StatusInternalServerError // 500
+		}
+	}
+
+	// 默认返回 500
+	return http.StatusInternalServerError
 }
 
 func awsRegionPrefix(awsRegionId string) string {
@@ -132,7 +169,8 @@ func awsHandler(c *gin.Context, info *relaycommon.RelayInfo, requestMode int) (*
 
 	awsResp, err := awsCli.InvokeModel(c.Request.Context(), awsReq)
 	if err != nil {
-		return types.NewOpenAIError(errors.Wrap(err, "InvokeModel"), types.ErrorCodeAwsInvokeError, http.StatusInternalServerError), nil
+		statusCode := extractStatusCodeFromAwsError(err)
+		return types.NewOpenAIError(errors.Wrap(err, "InvokeModel"), types.ErrorCodeAwsInvokeError, statusCode), nil
 	}
 
 	claudeInfo := &claude.ClaudeResponseInfo{
@@ -189,7 +227,8 @@ func awsStreamHandler(c *gin.Context, resp *http.Response, info *relaycommon.Rel
 
 	awsResp, err := awsCli.InvokeModelWithResponseStream(c.Request.Context(), awsReq)
 	if err != nil {
-		return types.NewOpenAIError(errors.Wrap(err, "InvokeModelWithResponseStream"), types.ErrorCodeAwsInvokeError, http.StatusInternalServerError), nil
+		statusCode := extractStatusCodeFromAwsError(err)
+		return types.NewOpenAIError(errors.Wrap(err, "InvokeModelWithResponseStream"), types.ErrorCodeAwsInvokeError, statusCode), nil
 	}
 	stream := awsResp.GetStream()
 	defer stream.Close()
@@ -211,11 +250,17 @@ func awsStreamHandler(c *gin.Context, resp *http.Response, info *relaycommon.Rel
 				return respErr, nil
 			}
 		case *bedrockruntimeTypes.UnknownUnionMember:
-			fmt.Println("unknown tag:", v.Tag)
-			return types.NewError(errors.New("unknown response type"), types.ErrorCodeInvalidRequest), nil
+			if common.DebugEnabled {
+				common.SysLog(fmt.Sprintf("unknown AWS stream tag: %s", v.Tag))
+			}
+			// 忽略未知成员类型，继续处理
+			continue
 		default:
-			fmt.Println("union is nil or unknown type")
-			return types.NewError(errors.New("nil or unknown response type"), types.ErrorCodeInvalidRequest), nil
+			if common.DebugEnabled {
+				common.SysLog("AWS stream event is nil or unknown type")
+			}
+			// 忽略空事件，继续处理
+			continue
 		}
 	}
 
