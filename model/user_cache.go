@@ -21,6 +21,7 @@ type UserBase struct {
 	Status   int    `json:"status"`
 	Username string `json:"username"`
 	Setting  string `json:"setting"`
+	OemId    *int64 `json:"oem_id"` // OEM ID（外键关联oem_config.id）
 }
 
 func (user *UserBase) WriteContext(c *gin.Context) {
@@ -30,6 +31,9 @@ func (user *UserBase) WriteContext(c *gin.Context) {
 	common.SetContextKey(c, constant.ContextKeyUserEmail, user.Email)
 	common.SetContextKey(c, constant.ContextKeyUserName, user.Username)
 	common.SetContextKey(c, constant.ContextKeyUserSetting, user.GetSetting())
+	if user.OemId != nil {
+		common.SetContextKey(c, constant.ContextKeyUserOemId, *user.OemId)
+	}
 }
 
 func (user *UserBase) GetSetting() dto.UserSetting {
@@ -106,6 +110,7 @@ func GetUserCache(userId int) (userCache *UserBase, err error) {
 		Username: user.Username,
 		Setting:  user.Setting,
 		Email:    user.Email,
+		OemId:    user.OemId,
 	}
 
 	return userCache, nil

@@ -45,6 +45,7 @@ const (
 	ContextKeyUserGroup   ContextKey = "user_group"
 	ContextKeyUsingGroup  ContextKey = "group"
 	ContextKeyUserName    ContextKey = "username"
+	ContextKeyUserOemId   ContextKey = "user_oem_id"
 
 	ContextKeySystemPromptOverride ContextKey = "system_prompt_override"
 

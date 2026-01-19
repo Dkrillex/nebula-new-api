@@ -331,28 +331,36 @@ func (a *TaskAdaptor) convertToRequestPayload(req *relaycommon.TaskSubmitReq) (*
 			common.SysLog("[Ali Video] 使用OSS URL格式的图片（oss://...）")
 			payload.Input.ImgURL = imageData
 		} else if strings.HasPrefix(imageData, "data:image/") {
-			// data URL格式，提取纯base64部分
+			// data URL 格式：保持原样透传（上游文档允许 data:{mime};base64,{data}）
 			// 注意：大图片可能触发 InvalidParameter.DataInspection 错误
-			common.SysLog("[Ali Video] 检测到data URL格式，提取纯base64（注意：大图片可能失败）")
+			common.SysLog("[Ali Video] 检测到data URL格式，原样透传（data:image/...;base64,xxx）")
+			payload.Input.ImgURL = imageData
+
+			// 仅用于日志提示大小：提取 base64 部分估算体积
 			parts := strings.SplitN(imageData, ",", 2)
 			if len(parts) == 2 {
-				payload.Input.ImgURL = parts[1] // 只要base64部分
 				imgSize := len(parts[1])
-				common.SysLog(fmt.Sprintf("[Ali Video] 提取后的base64长度: %d (约%dKB)", imgSize, imgSize*3/4/1024))
+				common.SysLog(fmt.Sprintf("[Ali Video] data URL中的base64长度: %d (约%dKB)", imgSize, imgSize*3/4/1024))
 				if imgSize > 500000 { // 约375KB
 					common.SysError(fmt.Sprintf("[Ali Video] 警告：图片base64过大(%dKB)，可能触发内容审核长度限制", imgSize*3/4/1024))
 				}
-			} else {
-				return nil, fmt.Errorf("无效的data URL格式")
 			}
 		} else {
-			// 纯base64，直接使用
+			// 纯 base64：自动识别图片格式并补齐 data URL 前缀，避免上游解析歧义
 			imgSize := len(imageData)
-			common.SysLog(fmt.Sprintf("[Ali Video] 纯base64格式，长度: %d (约%dKB)", imgSize, imgSize*3/4/1024))
+			common.SysLog(fmt.Sprintf("[Ali Video] 纯base64格式，长度: %d (约%dKB)，尝试补齐data URL前缀", imgSize, imgSize*3/4/1024))
 			if imgSize > 500000 { // 约375KB
 				common.SysError(fmt.Sprintf("[Ali Video] 警告：图片base64过大(%dKB)，可能触发内容审核长度限制", imgSize*3/4/1024))
 			}
-			payload.Input.ImgURL = imageData
+
+			_, format, normalizedBase64, err := service.DecodeBase64ImageData(imageData)
+			if err != nil {
+				return nil, fmt.Errorf("无效的base64图片数据: %w", err)
+			}
+			if format == "" {
+				format = "jpeg"
+			}
+			payload.Input.ImgURL = fmt.Sprintf("data:image/%s;base64,%s", format, normalizedBase64)
 		}
 
 		// 打印图片格式信息（截断显示）

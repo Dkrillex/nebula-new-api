@@ -27,29 +27,34 @@ type PriceChain struct {
 
 // CalculatePriceChain 计算完整价格链条
 // 价格链条：官方价格 → 平台成本 → 系统销售价 → 用户支付价
-// 优先级：请求头X-Oem-Code > Context的OEM系统 > 默认nebula
-// 注意：用户信息中的oemId只用于统计，不影响扣费
+// 优先级：用户oem_id（从Context获取）> 请求头X-Oem-Code > 默认nebula
+// 注意：用户已认证时优先使用用户的oem_id，未认证或oem_id为空时使用请求头
 // userQuota 参数是实际扣费的 quota，用于确保价格链中的 user_quota 与实际扣费一致
 //
 // 重要：这个函数现在基于实际 quota 反推官方价格
 func CalculatePriceChain(c *gin.Context, modelName string, vendorName string, tokens int, userQuota int) *PriceChain {
 	chain := &PriceChain{}
 
-	// 1. 优先从Context获取OEM信息（由SystemIdentify中间件从请求头X-Oem-Code设置）
+	// 1. 优先从Context获取OEM信息
+	// SystemIdentify中间件会优先使用用户oem_id（如果用户已认证且有oem_id），否则使用请求头X-Oem-Code
+	// 所以这里从Context获取的已经是优先级最高的OEM信息了
 	var oemId *int64
 	var oemCode string
 
 	if c != nil {
-		if code, exists := c.Get(string(constant.ContextKeyOemCode)); exists {
-			if codeStr, ok := code.(string); ok && codeStr != "" {
-				oemCode = codeStr
-			}
-		}
+		// 优先获取OEM ID（可能来自用户oem_id或请求头）
 		if id, exists := c.Get(string(constant.ContextKeyOemId)); exists {
 			if idInt64, ok := id.(int64); ok {
 				oemId = &idInt64
 			}
 		}
+		// 获取OEM Code（用于显示和fallback）
+		if code, exists := c.Get(string(constant.ContextKeyOemCode)); exists {
+			if codeStr, ok := code.(string); ok && codeStr != "" {
+				oemCode = codeStr
+			}
+		}
+		// 如果只有oemCode没有oemId，通过oemCode查询oemId
 		if oemId == nil && oemCode != "" {
 			oemConfig := model.GetOemConfigByCode(oemCode)
 			if oemConfig != nil {
@@ -220,7 +225,8 @@ func GetVendorNameFromModel(modelName string) string {
 
 // CalculatePriceChainForLog 为日志记录计算价格链条
 // 这是一个辅助函数，用于在RecordConsumeLog中自动计算价格链条
-// 注意：使用请求头X-Oem-Code中的OEM信息，用户oemId只用于统计
+// 优先级：用户oem_id（从Context获取）> 请求头X-Oem-Code > 默认nebula
+// 注意：用户已认证时优先使用用户的oem_id，未认证或oem_id为空时使用请求头
 // promptTokens 和 completionTokens 是原始 tokens 数量
 // quota 是实际扣费的 quota（已包含所有折扣）
 //
@@ -234,20 +240,25 @@ func CalculatePriceChainForLog(c *gin.Context, modelName string, promptTokens in
 	}
 
 	// 1. 优先从Context获取OEM信息
+	// SystemIdentify中间件会优先使用用户oem_id（如果用户已认证且有oem_id），否则使用请求头X-Oem-Code
+	// 所以这里从Context获取的已经是优先级最高的OEM信息了
 	var oemId *int64
 	var oemCode string
 
 	if c != nil {
-		if code, exists := c.Get(string(constant.ContextKeyOemCode)); exists {
-			if codeStr, ok := code.(string); ok && codeStr != "" {
-				oemCode = codeStr
-			}
-		}
+		// 优先获取OEM ID（可能来自用户oem_id或请求头）
 		if id, exists := c.Get(string(constant.ContextKeyOemId)); exists {
 			if idInt64, ok := id.(int64); ok {
 				oemId = &idInt64
 			}
 		}
+		// 获取OEM Code（用于显示和fallback）
+		if code, exists := c.Get(string(constant.ContextKeyOemCode)); exists {
+			if codeStr, ok := code.(string); ok && codeStr != "" {
+				oemCode = codeStr
+			}
+		}
+		// 如果只有oemCode没有oemId，通过oemCode查询oemId
 		if oemId == nil && oemCode != "" {
 			oemConfig := model.GetOemConfigByCode(oemCode)
 			if oemConfig != nil {
@@ -346,26 +357,31 @@ func CalculatePriceChainForLog(c *gin.Context, modelName string, promptTokens in
 
 // CalculatePriceChainForImageGeneration 为图片生成计算价格链条
 // 图片生成是按张计费，不是按tokens计费，需要特殊处理
-// 优先级：请求头X-Oem-Code > Context的OEM系统 > 默认nebula
-// 注意：用户信息中的oemId只用于统计，不影响扣费
+// 优先级：用户oem_id（从Context获取）> 请求头X-Oem-Code > 默认nebula
+// 注意：用户已认证时优先使用用户的oem_id，未认证或oem_id为空时使用请求头
 //
 // 重要：这个函数现在基于实际 quota 反推官方价格
 func CalculatePriceChainForImageGeneration(c *gin.Context, modelName string, imagePrice float64, imageCount int, quota int) *model.PriceChainParams {
-	// 1. 优先从Context获取OEM信息（由SystemIdentify中间件从请求头X-Oem-Code设置）
+	// 1. 优先从Context获取OEM信息
+	// SystemIdentify中间件会优先使用用户oem_id（如果用户已认证且有oem_id），否则使用请求头X-Oem-Code
+	// 所以这里从Context获取的已经是优先级最高的OEM信息了
 	var oemId *int64
 	var oemCode string
 
 	if c != nil {
-		if code, exists := c.Get(string(constant.ContextKeyOemCode)); exists {
-			if codeStr, ok := code.(string); ok && codeStr != "" {
-				oemCode = codeStr
-			}
-		}
+		// 优先获取OEM ID（可能来自用户oem_id或请求头）
 		if id, exists := c.Get(string(constant.ContextKeyOemId)); exists {
 			if idInt64, ok := id.(int64); ok {
 				oemId = &idInt64
 			}
 		}
+		// 获取OEM Code（用于显示和fallback）
+		if code, exists := c.Get(string(constant.ContextKeyOemCode)); exists {
+			if codeStr, ok := code.(string); ok && codeStr != "" {
+				oemCode = codeStr
+			}
+		}
+		// 如果只有oemCode没有oemId，通过oemCode查询oemId
 		if oemId == nil && oemCode != "" {
 			oemConfig := model.GetOemConfigByCode(oemCode)
 			if oemConfig != nil {
@@ -562,7 +578,8 @@ func CalculatePriceChainForVideoTask(oemCode string, modelName string, vendorNam
 
 // GetOemUserDiscountForQuota 获取用于quota计算的OEM用户折扣
 // 用于在实际扣费时应用OEM给用户的折扣
-// 优先级：请求头X-Oem-Code > Context的OEM系统 > 默认nebula
+// 优先级：用户oem_id（从Context获取）> 请求头X-Oem-Code > 默认nebula
+// 注意：用户已认证时优先使用用户的oem_id，未认证或oem_id为空时使用请求头
 func GetOemUserDiscountForQuota(c *gin.Context, modelName string) float64 {
 	var oemId *int64
 	var oemCode string

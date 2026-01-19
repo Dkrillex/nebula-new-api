@@ -257,7 +257,7 @@ func PostWssConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, mod
 	other := GenerateWssOtherInfo(ctx, relayInfo, usage, modelRatio, groupRatio,
 		completionRatio.InexactFloat64(), audioRatio.InexactFloat64(), audioCompletionRatio.InexactFloat64(), modelPrice, relayInfo.PriceData.GroupRatioInfo.GroupSpecialRatio)
 
-	// 计算价格链条（使用请求头X-Oem-Code中的OEM信息）
+	// 计算价格链条（优先使用用户oem_id，fallback到请求头X-Oem-Code）
 	priceChain := CalculatePriceChainForLog(ctx, logModel, textInputTokens+audioInputTokens, textOutTokens+audioOutTokens, quota)
 
 	model.RecordConsumeLog(ctx, relayInfo.UserId, model.RecordConsumeLogParams{
@@ -503,7 +503,7 @@ func PostAudioConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, u
 	other := GenerateAudioOtherInfo(ctx, relayInfo, usage, modelRatio, groupRatio,
 		completionRatio.InexactFloat64(), audioRatio.InexactFloat64(), audioCompletionRatio.InexactFloat64(), modelPrice, relayInfo.PriceData.GroupRatioInfo.GroupSpecialRatio)
 
-	// 计算价格链条（使用请求头X-Oem-Code中的OEM信息）
+	// 计算价格链条（优先使用用户oem_id，fallback到请求头X-Oem-Code）
 	priceChain := CalculatePriceChainForLog(ctx, logModel, textInputTokens+audioInputTokens, textOutTokens+audioOutTokens, quota)
 
 	model.RecordConsumeLog(ctx, relayInfo.UserId, model.RecordConsumeLogParams{

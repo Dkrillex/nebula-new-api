@@ -60,7 +60,23 @@ func SystemIdentify() gin.HandlerFunc {
 			common.SysLog(fmt.Sprintf("OEM识别成功: oemCode=%s, oemId=%d, apiPrefix=%s", oemCode, oemConfig.Id, oemConfig.ApiPrefix))
 		}
 
+		// 执行后续中间件（包括认证）
 		c.Next()
+
+		// 认证后检查用户oem_id，优先使用用户的oem_id
+		if userOemId, exists := c.Get(string(constant.ContextKeyUserOemId)); exists {
+			if oemIdInt64, ok := userOemId.(int64); ok && oemIdInt64 > 0 {
+				// 用户有oem_id，优先使用
+				userOemConfig := model.GetOemConfigById(oemIdInt64)
+				if userOemConfig != nil {
+					common.SetContextKey(c, constant.ContextKeyOemCode, userOemConfig.OemCode)
+					common.SetContextKey(c, constant.ContextKeyOemId, userOemConfig.Id)
+					common.SetContextKey(c, constant.ContextKeyOemConfig, userOemConfig)
+					common.SysLog(fmt.Sprintf("使用用户oem_id: userId=%d, oemId=%d, oemCode=%s",
+						c.GetInt("id"), oemIdInt64, userOemConfig.OemCode))
+				}
+			}
+		}
 	}
 }
 
