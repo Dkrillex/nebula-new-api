@@ -559,6 +559,18 @@ func CovertGemini2OpenAI(c *gin.Context, textRequest dto.GeneralOpenAIRequest, i
 		}
 	}
 
+	// 上游要求 system_instruction 只能包含 text part，且空/纯空白的 system 指令可能触发 400。
+	// 因此这里过滤掉空字符串/纯空白的 system 内容；若最终为空则不生成 systemInstruction。
+	if len(system_content) > 0 {
+		filtered := make([]string, 0, len(system_content))
+		for _, s := range system_content {
+			if strings.TrimSpace(s) == "" {
+				continue
+			}
+			filtered = append(filtered, s)
+		}
+		system_content = filtered
+	}
 	if len(system_content) > 0 {
 		geminiRequest.SystemInstructions = &dto.GeminiChatContent{
 			Parts: []dto.GeminiPart{

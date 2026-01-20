@@ -129,11 +129,8 @@ func (e *NewAPIError) MaskSensitiveError() string {
 	if e.Err == nil {
 		return string(e.errorCode)
 	}
-	errStr := e.Err.Error()
-	if e.errorCode == ErrorCodeCountTokenFailed {
-		return errStr
-	}
-	return common.MaskSensitiveInfo(errStr)
+	// 不再对错误信息做 URL/IP/domain 脱敏，保持上游返回的原始 message（尤其是文档链接）
+	return e.Err.Error()
 }
 
 func (e *NewAPIError) SetMessage(message string) {
@@ -164,9 +161,7 @@ func (e *NewAPIError) ToOpenAIError() OpenAIError {
 			Code:    e.errorCode,
 		}
 	}
-	if e.errorCode != ErrorCodeCountTokenFailed {
-		result.Message = common.MaskSensitiveInfo(result.Message)
-	}
+	// 不再对错误信息做 URL/IP/domain 脱敏，保持上游返回的原始 message（尤其是文档链接）
 	if result.Message == "" {
 		result.Message = string(e.errorType)
 	}

@@ -523,7 +523,7 @@ func GeminiToOpenAIRequest(geminiRequest *dto.GeminiChatRequest, info *relaycomm
 			} else if part.FunctionCall != nil {
 				// 处理 Gemini 的工具调用
 				toolCall := dto.ToolCallRequest{
-					ID:   fmt.Sprintf("call_%d", len(toolCalls)+1), // 生成唯一ID
+					ID:   fmt.Sprintf("call_%d", len(toolCalls)+1), // 生成唯一ID（在本条 assistant 消息内自增）
 					Type: "function",
 					Function: dto.FunctionRequest{
 						Name:      part.FunctionCall.FunctionName,
@@ -533,9 +533,19 @@ func GeminiToOpenAIRequest(geminiRequest *dto.GeminiChatRequest, info *relaycomm
 				toolCalls = append(toolCalls, toolCall)
 			} else if part.FunctionResponse != nil {
 				// 处理 Gemini 的工具响应，创建单独的 tool 消息
+				// 注意：Gemini 的 functionResponse 没有显式携带 tool_call_id；这里尽量生成一个稳定且不为空的 id
+				toolCallID := fmt.Sprintf("call_%d", len(toolCalls))
+				if toolCallID == "call_0" {
+					// 如果响应在调用之前出现，兜底生成一个 id，避免空字符串导致下游转换失败
+					if part.FunctionResponse.Name != "" {
+						toolCallID = fmt.Sprintf("call_%s", part.FunctionResponse.Name)
+					} else {
+						toolCallID = "call_1"
+					}
+				}
 				toolMessage := dto.Message{
 					Role:       "tool",
-					ToolCallId: fmt.Sprintf("call_%d", len(toolCalls)), // 使用对应的调用ID
+					ToolCallId: toolCallID,
 				}
 				toolMessage.SetStringContent(toJSONString(part.FunctionResponse.Response))
 				messages = append(messages, toolMessage)
@@ -576,7 +586,11 @@ func GeminiToOpenAIRequest(geminiRequest *dto.GeminiChatRequest, info *relaycomm
 	}
 	// gemini stop sequences 最多 5 个，openai stop 最多 4 个
 	if len(geminiRequest.GenerationConfig.StopSequences) > 0 {
-		openaiRequest.Stop = geminiRequest.GenerationConfig.StopSequences[:4]
+		stopSeq := geminiRequest.GenerationConfig.StopSequences
+		if len(stopSeq) > 4 {
+			stopSeq = stopSeq[:4]
+		}
+		openaiRequest.Stop = stopSeq
 	}
 	if geminiRequest.GenerationConfig.CandidateCount > 0 {
 		openaiRequest.N = geminiRequest.GenerationConfig.CandidateCount

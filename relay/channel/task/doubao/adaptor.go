@@ -544,14 +544,6 @@ func convertVideoRequestToDoubaoPayload(request *dto.VideoRequest, upstreamModel
 	return payload
 }
 
-// maskApiKey 遮蔽API密钥的敏感部分用于日志打印
-func maskApiKey(apiKey string) string {
-	if len(apiKey) <= 8 {
-		return "***"
-	}
-	return apiKey[:4] + "***" + apiKey[len(apiKey)-4:]
-}
-
 // ParseTaskResult 解析豆包任务查询结果
 func (a *TaskAdaptor) ParseTaskResult(respBody []byte) (*relaycommon.TaskInfo, error) {
 	common.SysLog("[Doubao] ParseTaskResult - 开始解析任务结果")

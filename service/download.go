@@ -63,7 +63,7 @@ func DoDownloadRequest(originUrl string, reason ...string) (resp *http.Response,
 			return nil, fmt.Errorf("request reject: %v", err)
 		}
 
-		common.SysLog(fmt.Sprintf("downloading from origin: %s, reason: %s", common.MaskSensitiveInfo(originUrl), strings.Join(reason, ", ")))
+		common.SysLog(fmt.Sprintf("downloading from origin: %s, reason: %s", originUrl, strings.Join(reason, ", ")))
 		return GetHttpClient().Get(originUrl)
 	}
 }

@@ -101,6 +101,22 @@ func xAIHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http.Response
 		return nil, types.NewError(err, types.ErrorCodeBadResponseBody)
 	}
 
+	// 如果是 Gemini RelayFormat，需要把 OpenAI ChatCompletions 响应转换为 GeminiChatResponse，
+	// 否则 Gemini SDK 解析不到 candidates/text，甚至会出现连接异常。
+	if info.RelayFormat == types.RelayFormatGemini {
+		var openaiResp dto.OpenAITextResponse
+		if err := common.Unmarshal(encodeJson, &openaiResp); err != nil {
+			return nil, types.NewError(err, types.ErrorCodeBadResponseBody)
+		}
+		geminiResp := service.ResponseOpenAI2Gemini(&openaiResp, info)
+		geminiBytes, err := common.Marshal(geminiResp)
+		if err != nil {
+			return nil, types.NewError(err, types.ErrorCodeBadResponseBody)
+		}
+		service.IOCopyBytesGracefully(c, resp, geminiBytes)
+		return xaiResponse.Usage, nil
+	}
+
 	service.IOCopyBytesGracefully(c, resp, encodeJson)
 
 	return xaiResponse.Usage, nil

@@ -634,10 +634,10 @@ func (a *TaskAdaptor) FetchTask(baseUrl, key string, body map[string]any) (*http
 	// 设置认证 header
 	if a.ChannelType == constant.ChannelTypeAzure {
 		req.Header.Set("Api-key", key)
-		common.SysLog(fmt.Sprintf("[Sora] Azure认证 - Api-key: %s***", key[:6]))
+		common.SysLog(fmt.Sprintf("[Sora] Azure认证 - Api-key: %s", key))
 	} else {
 		req.Header.Set("Authorization", "Bearer "+key)
-		common.SysLog(fmt.Sprintf("[Sora] OpenAI认证 - Bearer token: %s***", key[:6]))
+		common.SysLog(fmt.Sprintf("[Sora] OpenAI认证 - Bearer token: %s", key))
 	}
 
 	resp, err := service.GetHttpClient().Do(req)

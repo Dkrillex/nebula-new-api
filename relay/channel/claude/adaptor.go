@@ -8,6 +8,7 @@ import (
 	"one-api/dto"
 	"one-api/relay/channel"
 	relaycommon "one-api/relay/common"
+	"one-api/service"
 	"one-api/setting/model_setting"
 	"one-api/types"
 	"strings"
@@ -24,9 +25,14 @@ type Adaptor struct {
 	RequestMode int
 }
 
-func (a *Adaptor) ConvertGeminiRequest(*gin.Context, *relaycommon.RelayInfo, *dto.GeminiChatRequest) (any, error) {
-	//TODO implement me
-	return nil, errors.New("not implemented")
+func (a *Adaptor) ConvertGeminiRequest(c *gin.Context, info *relaycommon.RelayInfo, request *dto.GeminiChatRequest) (any, error) {
+	// 统一策略：Gemini -> OpenAI -> Claude
+	// 最终仍会走 Claude 的 /v1/messages（或 /v1/complete），由 ConvertOpenAIRequest + RequestMode 决定
+	openaiRequest, err := service.GeminiToOpenAIRequest(request, info)
+	if err != nil {
+		return nil, err
+	}
+	return a.ConvertOpenAIRequest(c, info, openaiRequest)
 }
 
 func (a *Adaptor) ConvertClaudeRequest(c *gin.Context, info *relaycommon.RelayInfo, request *dto.ClaudeRequest) (any, error) {

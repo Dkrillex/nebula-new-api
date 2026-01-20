@@ -825,6 +825,15 @@ func HandleClaudeResponseData(c *gin.Context, info *relaycommon.RelayInfo, claud
 		}
 	case types.RelayFormatClaude:
 		responseData = data
+	case types.RelayFormatGemini:
+		// Claude -> OpenAI -> Gemini
+		openaiResponse := ResponseClaude2OpenAI(requestMode, &claudeResponse)
+		openaiResponse.Usage = *claudeInfo.Usage
+		geminiResp := service.ResponseOpenAI2Gemini(openaiResponse, info)
+		responseData, err = json.Marshal(geminiResp)
+		if err != nil {
+			return types.NewError(err, types.ErrorCodeBadResponseBody)
+		}
 	}
 
 	if claudeResponse.Usage.ServerToolUse != nil && claudeResponse.Usage.ServerToolUse.WebSearchRequests > 0 {

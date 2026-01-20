@@ -193,10 +193,10 @@ func (info *RelayInfo) ToString() string {
 	fmt.Fprintf(b, "SendResponseCount: %d, ", info.SendResponseCount)
 	fmt.Fprintf(b, "FinalPreConsumedQuota: %d, ", info.FinalPreConsumedQuota)
 
-	// User & token info (mask secrets)
+	// User & token info
 	fmt.Fprintf(b, "User{ Id: %d, Email: %q, Group: %q, UsingGroup: %q, Quota: %d }, ",
-		info.UserId, common.MaskEmail(info.UserEmail), info.UserGroup, info.UsingGroup, info.UserQuota)
-	fmt.Fprintf(b, "Token{ Id: %d, Unlimited: %t, Key: ***masked*** }, ", info.TokenId, info.TokenUnlimited)
+		info.UserId, info.UserEmail, info.UserGroup, info.UsingGroup, info.UserQuota)
+	fmt.Fprintf(b, "Token{ Id: %d, Unlimited: %t, Key: %q }, ", info.TokenId, info.TokenUnlimited, info.TokenKey)
 
 	// Time info
 	latencyMs := info.FirstResponseTime.Sub(info.StartTime).Milliseconds()
@@ -219,11 +219,11 @@ func (info *RelayInfo) ToString() string {
 		fmt.Fprintf(b, "PriceData{ %s }, ", info.PriceData.ToSetting())
 	}
 
-	// Channel metadata (mask ApiKey)
+	// Channel metadata
 	if info.ChannelMeta != nil {
 		cm := info.ChannelMeta
-		fmt.Fprintf(b, "ChannelMeta{ Type: %d, Id: %d, IsMultiKey: %t, MultiKeyIndex: %d, BaseURL: %q, ApiType: %d, ApiVersion: %q, Organization: %q, CreateTime: %d, UpstreamModelName: %q, IsModelMapped: %t, SupportStreamOptions: %t, ApiKey: ***masked*** }, ",
-			cm.ChannelType, cm.ChannelId, cm.ChannelIsMultiKey, cm.ChannelMultiKeyIndex, cm.ChannelBaseUrl, cm.ApiType, cm.ApiVersion, cm.Organization, cm.ChannelCreateTime, cm.UpstreamModelName, cm.IsModelMapped, cm.SupportStreamOptions)
+		fmt.Fprintf(b, "ChannelMeta{ Type: %d, Id: %d, IsMultiKey: %t, MultiKeyIndex: %d, BaseURL: %q, ApiType: %d, ApiVersion: %q, Organization: %q, CreateTime: %d, UpstreamModelName: %q, IsModelMapped: %t, SupportStreamOptions: %t, ApiKey: %q }, ",
+			cm.ChannelType, cm.ChannelId, cm.ChannelIsMultiKey, cm.ChannelMultiKeyIndex, cm.ChannelBaseUrl, cm.ApiType, cm.ApiVersion, cm.Organization, cm.ChannelCreateTime, cm.UpstreamModelName, cm.IsModelMapped, cm.SupportStreamOptions, cm.ApiKey)
 	}
 
 	// Responses usage info (non-sensitive)

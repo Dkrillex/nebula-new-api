@@ -143,6 +143,36 @@ type GeminiThinkingConfig struct {
 	ThinkingLevel string `json:"thinkingLevel,omitempty"`
 }
 
+// UnmarshalJSON custom unmarshaler for GeminiThinkingConfig to support snake_case and camelCase.
+// google-genai Python SDK may send:
+// - generationConfig.thinkingConfig.thinking_level (snake_case)
+// - generationConfig.thinkingConfig.thinking_budget (snake_case)
+// while upstream Gemini expects camelCase (thinkingLevel/thinkingBudget).
+func (c *GeminiThinkingConfig) UnmarshalJSON(data []byte) error {
+	type Alias GeminiThinkingConfig
+	var aux struct {
+		Alias
+		ThinkingLevelSnake   string `json:"thinking_level,omitempty"`
+		ThinkingBudgetSnake  *int   `json:"thinking_budget,omitempty"`
+		IncludeThoughtsSnake *bool  `json:"include_thoughts,omitempty"`
+	}
+	if err := common.Unmarshal(data, &aux); err != nil {
+		return err
+	}
+	*c = GeminiThinkingConfig(aux.Alias)
+	// Prefer snake_case if present
+	if aux.ThinkingLevelSnake != "" {
+		c.ThinkingLevel = aux.ThinkingLevelSnake
+	}
+	if aux.ThinkingBudgetSnake != nil {
+		c.ThinkingBudget = aux.ThinkingBudgetSnake
+	}
+	if aux.IncludeThoughtsSnake != nil {
+		c.IncludeThoughts = *aux.IncludeThoughtsSnake
+	}
+	return nil
+}
+
 func (c *GeminiThinkingConfig) SetThinkingBudget(budget int) {
 	c.ThinkingBudget = &budget
 }

@@ -77,9 +77,7 @@ func ValidateUserToken(key string) (token *Token, err error) {
 	token, err = GetTokenByKey(key, false)
 	if err == nil {
 		if token.Status == common.TokenStatusExhausted {
-			keyPrefix := key[:3]
-			keySuffix := key[len(key)-3:]
-			return token, errors.New("该令牌额度已用尽 TokenStatusExhausted[sk-" + keyPrefix + "***" + keySuffix + "]")
+			return token, errors.New("该令牌额度已用尽 TokenStatusExhausted")
 		} else if token.Status == common.TokenStatusExpired {
 			return token, errors.New("该令牌已过期")
 		}
@@ -105,9 +103,7 @@ func ValidateUserToken(key string) (token *Token, err error) {
 					common.SysLog("failed to update token status" + err.Error())
 				}
 			}
-			keyPrefix := key[:3]
-			keySuffix := key[len(key)-3:]
-			return token, errors.New(fmt.Sprintf("[sk-%s***%s] 该令牌额度已用尽 !token.UnlimitedQuota && token.RemainQuota = %d", keyPrefix, keySuffix, token.RemainQuota))
+			return token, errors.New(fmt.Sprintf("该令牌额度已用尽 !token.UnlimitedQuota && token.RemainQuota = %d", token.RemainQuota))
 		}
 		return token, nil
 	}

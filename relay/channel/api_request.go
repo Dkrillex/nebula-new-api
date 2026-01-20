@@ -320,9 +320,9 @@ func DoTaskApiRequest(a TaskAdaptor, c *gin.Context, info *common.RelayInfo, req
 	common2.SysLog(fmt.Sprintf("[DoTaskApiRequest] Method: %s, URL: %s", req.Method, fullRequestURL))
 	common2.SysLog(fmt.Sprintf("[DoTaskApiRequest] Headers: Content-Type=%s, Authorization=%s",
 		req.Header.Get("Content-Type"),
-		maskString(req.Header.Get("Authorization"))))
+		req.Header.Get("Authorization")))
 	if apiKey := req.Header.Get("Api-key"); apiKey != "" {
-		common2.SysLog(fmt.Sprintf("[DoTaskApiRequest] Api-key: %s", maskString(apiKey)))
+		common2.SysLog(fmt.Sprintf("[DoTaskApiRequest] Api-key: %s", apiKey))
 	}
 
 	resp, err := doRequest(c, req, info)
@@ -332,9 +332,4 @@ func DoTaskApiRequest(a TaskAdaptor, c *gin.Context, info *common.RelayInfo, req
 	return resp, nil
 }
 
-func maskString(s string) string {
-	if len(s) <= 10 {
-		return "***"
-	}
-	return s[:5] + "***" + s[len(s)-5:]
-}
+// maskString removed: do not mask any content

@@ -9,7 +9,6 @@ import (
 	"one-api/constant"
 	"one-api/dto"
 	"one-api/logger"
-	"one-api/relay/channel/gemini"
 	relaycommon "one-api/relay/common"
 	"one-api/relay/helper"
 	"one-api/service"
@@ -83,9 +82,9 @@ func GeminiHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *typ
 				}
 			}
 		}
-		if request.GenerationConfig.ThinkingConfig == nil {
-			gemini.ThinkingAdaptor(request, info)
-		}
+		// 重要：Gemini 原生请求（/v1beta/models/*）应“透传”为主。
+		// 如果 SDK 没有传 thinkingConfig，这里不能擅自注入默认 thinking_level=HIGH，
+		// 否则会导致像 gemini-3-pro-image-preview 这类不支持 thinking_level 的模型直接 400。
 	}
 
 	adaptor := GetAdaptor(info.ApiType)

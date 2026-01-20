@@ -615,7 +615,6 @@ func shouldRetryTaskRelay(c *gin.Context, channelId int, taskErr *dto.TaskError,
 }
 
 // formatRequestHeadersForLog 格式化请求头用于日志打印
-// 对敏感信息（如Authorization）进行脱敏处理
 func formatRequestHeadersForLog(headers http.Header) string {
 	if len(headers) == 0 {
 		return "(empty)"
@@ -623,17 +622,7 @@ func formatRequestHeadersForLog(headers http.Header) string {
 
 	headerStrs := make([]string, 0, len(headers))
 	for key, values := range headers {
-		// 对敏感信息进行脱敏
-		if strings.EqualFold(key, "Authorization") || strings.EqualFold(key, "Api-Key") || strings.EqualFold(key, "X-Api-Key") {
-			if len(values) > 0 && len(values[0]) > 10 {
-				masked := values[0][:5] + "***" + values[0][len(values[0])-5:]
-				headerStrs = append(headerStrs, fmt.Sprintf("%s: %s", key, masked))
-			} else {
-				headerStrs = append(headerStrs, fmt.Sprintf("%s: ***", key))
-			}
-		} else {
-			headerStrs = append(headerStrs, fmt.Sprintf("%s: %v", key, values))
-		}
+		headerStrs = append(headerStrs, fmt.Sprintf("%s: %v", key, values))
 	}
 	return strings.Join(headerStrs, ", ")
 }
