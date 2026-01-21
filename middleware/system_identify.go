@@ -20,13 +20,18 @@ func SystemIdentify() gin.HandlerFunc {
 		// 1. 优先从Nginx传递的Header获取
 		oemCode = c.GetHeader("X-Oem-Code")
 
-		// 2. 如果Header没有，从请求路径中提取
+		// 2. 如果Header没有，从Host/Referer头提取域名查询
+		if oemCode == "" {
+			oemCode = extractOemCodeFromDomain(c)
+		}
+
+		// 3. 如果还是没有，从请求路径中提取
 		if oemCode == "" {
 			requestURI := c.Request.RequestURI
 			oemCode = extractOemCodeFromPath(requestURI)
 		}
 
-		// 3. 如果还是没有，使用默认系统
+		// 4. 如果还是没有，使用默认系统
 		if oemCode == "" {
 			oemCode = "nebula"
 		}
@@ -115,6 +120,50 @@ func extractOemCodeFromPath(requestURI string) string {
 	// 尝试通过别名查询
 	oemConfig = model.GetOemConfigByApiPrefixAlias(apiPrefix)
 	if oemConfig != nil {
+		return oemConfig.OemCode
+	}
+
+	return ""
+}
+
+// extractOemCodeFromDomain 从请求的Host或Referer头中提取域名，并通过域名查询OEM代码
+func extractOemCodeFromDomain(c *gin.Context) string {
+	// 优先从Host头获取域名
+	host := c.Request.Host
+
+	// 如果Host头没有，尝试从Referer头提取域名
+	if host == "" {
+		referer := c.GetHeader("Referer")
+		if referer != "" {
+			// 简单提取域名（不依赖URL解析库）
+			// 移除协议前缀
+			if strings.HasPrefix(referer, "http://") {
+				referer = referer[7:]
+			} else if strings.HasPrefix(referer, "https://") {
+				referer = referer[8:]
+			}
+			// 提取域名部分（到第一个/或:之前）
+			if idx := strings.IndexAny(referer, "/:"); idx != -1 {
+				host = referer[:idx]
+			} else {
+				host = referer
+			}
+		}
+	}
+
+	if host == "" {
+		return ""
+	}
+
+	// 移除端口号（如果有）
+	if idx := strings.Index(host, ":"); idx != -1 {
+		host = host[:idx]
+	}
+
+	// 通过域名查询OEM配置
+	oemConfig := model.GetOemConfigByDomain(host)
+	if oemConfig != nil {
+		common.SysLog(fmt.Sprintf("通过域名识别OEM: domain=%s, oemCode=%s", host, oemConfig.OemCode))
 		return oemConfig.OemCode
 	}
 

@@ -149,6 +149,39 @@ func GetOemConfigByApiPrefixAlias(apiPrefixAlias string) *OemConfig {
 	return nil
 }
 
+// GetOemConfigByDomain 根据域名获取OEM配置
+func GetOemConfigByDomain(domain string) *OemConfig {
+	if domain == "" {
+		return nil
+	}
+
+	oemConfigCacheLock.RLock()
+	defer oemConfigCacheLock.RUnlock()
+
+	// 检查缓存是否过期
+	if time.Since(oemConfigCacheTime) > cacheExpireDuration {
+		// 异步刷新缓存
+		go RefreshOemConfigCache()
+	}
+
+	// 从缓存中查找
+	for _, config := range oemConfigCache {
+		if config.Domain != nil && *config.Domain == domain {
+			return config
+		}
+	}
+
+	// 缓存中没有找到,从数据库查询
+	var config OemConfig
+	err := DB.Where("domain = ? AND enabled = 1", domain).First(&config).Error
+	if err != nil {
+		return nil
+	}
+
+	// 如果找到,可以考虑更新缓存(但这里不更新,等待下次刷新)
+	return &config
+}
+
 // 向后兼容函数
 func GetSystemConfigByCode(systemCode string) *OemConfig {
 	return GetOemConfigByCode(systemCode)
