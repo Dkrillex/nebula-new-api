@@ -183,6 +183,10 @@ func StreamScannerHandler(c *gin.Context, resp *http.Response, info *relaycommon
 		// 按 SSE 规范聚合事件：多行以 data: 开头，空行表示一个事件结束
 		var eventBuilder strings.Builder
 		hasEvent := false
+		eventCount := 0
+		const maxDebugEvents = 5 // 打印前5个和后5个事件
+		var lastEvents []string  // 保存最后几个事件，用于最后打印
+		const maxLastEvents = 5
 
 		for scanner.Scan() {
 			// 检查是否需要停止
@@ -199,9 +203,6 @@ func StreamScannerHandler(c *gin.Context, resp *http.Response, info *relaycommon
 			ticker.Reset(streamingTimeout)
 			line := scanner.Text()
 			line = strings.TrimSuffix(line, "\r")
-			if common.DebugEnabled {
-				println(line)
-			}
 
 			// 空行：一个事件结束
 			if len(strings.TrimSpace(line)) == 0 {
@@ -212,10 +213,34 @@ func StreamScannerHandler(c *gin.Context, resp *http.Response, info *relaycommon
 
 					if strings.HasPrefix(payload, "[DONE]") {
 						if common.DebugEnabled {
+							// 打印最后几个事件
+							if len(lastEvents) > 0 {
+								println(fmt.Sprintf("--- last %d events (total: %d) ---", len(lastEvents), eventCount))
+								for i, event := range lastEvents {
+									truncatedContent := common.TruncateJsonValues(event)
+									println(fmt.Sprintf("event[%d]: data: %s", eventCount-len(lastEvents)+i, truncatedContent))
+								}
+							}
 							println("received [DONE], stopping scanner")
 						}
 						return
 					}
+
+					// 打印前5个事件
+					if common.DebugEnabled && eventCount < maxDebugEvents {
+						truncatedContent := common.TruncateJsonValues(payload)
+						println(fmt.Sprintf("event[%d]: data: %s", eventCount, truncatedContent))
+					}
+
+					// 保存最后几个事件（最多保存5个）
+					if common.DebugEnabled {
+						lastEvents = append(lastEvents, payload)
+						if len(lastEvents) > maxLastEvents {
+							lastEvents = lastEvents[1:] // 移除最旧的事件
+						}
+					}
+
+					eventCount++
 
 					info.SetFirstResponseTime()
 
@@ -256,6 +281,14 @@ func StreamScannerHandler(c *gin.Context, resp *http.Response, info *relaycommon
 			// 直接收到 [DONE]（有些上游会不加 data: 前缀）
 			if strings.HasPrefix(line, "[DONE]") {
 				if common.DebugEnabled {
+					// 打印最后几个事件
+					if len(lastEvents) > 0 {
+						println(fmt.Sprintf("--- last %d events (total: %d) ---", len(lastEvents), eventCount))
+						for i, event := range lastEvents {
+							truncatedContent := common.TruncateJsonValues(event)
+							println(fmt.Sprintf("event[%d]: data: %s", eventCount-len(lastEvents)+i, truncatedContent))
+						}
+					}
 					println("received [DONE], stopping scanner")
 				}
 				return
@@ -267,6 +300,22 @@ func StreamScannerHandler(c *gin.Context, resp *http.Response, info *relaycommon
 		if hasEvent && eventBuilder.Len() > 0 {
 			payload := eventBuilder.String()
 			if !strings.HasPrefix(payload, "[DONE]") {
+				// 打印前5个或后5个事件
+				if common.DebugEnabled {
+					if eventCount < maxDebugEvents {
+						// 前5个事件
+						truncatedContent := common.TruncateJsonValues(payload)
+						println(fmt.Sprintf("event[%d]: data: %s", eventCount, truncatedContent))
+					} else {
+						// 保存到最后5个事件中
+						lastEvents = append(lastEvents, payload)
+						if len(lastEvents) > maxLastEvents {
+							lastEvents = lastEvents[1:]
+						}
+					}
+				}
+				eventCount++
+
 				info.SetFirstResponseTime()
 				done := make(chan bool, 1)
 				go func(p string) {
@@ -288,6 +337,16 @@ func StreamScannerHandler(c *gin.Context, resp *http.Response, info *relaycommon
 				case <-stopChan:
 					return
 				}
+			}
+		}
+
+		// 打印最后几个事件（如果还有未打印的）
+		if common.DebugEnabled && len(lastEvents) > 0 && eventCount > maxDebugEvents {
+			println(fmt.Sprintf("--- last %d events (total: %d) ---", len(lastEvents), eventCount))
+			startIdx := eventCount - len(lastEvents)
+			for i, event := range lastEvents {
+				truncatedContent := common.TruncateJsonValues(event)
+				println(fmt.Sprintf("event[%d]: data: %s", startIdx+i, truncatedContent))
 			}
 		}
 
