@@ -1,6 +1,7 @@
 package common
 
 import (
+	"encoding/json"
 	"fmt"
 	"strings"
 )
@@ -303,4 +304,127 @@ func isBase64String(s string) bool {
 
 	// 如果超过80%的字符是base64字符，且长度足够，则认为是base64
 	return float64(base64CharCount)/float64(len(s)) > 0.8
+}
+
+// TruncateJsonValues 截断JSON字符串中每个属性值，如果值超过100个字符则截断（http/https开头的URL除外）
+// 递归处理嵌套对象和数组
+// 性能优化：
+// 1. 小JSON且无长字符串：直接返回（最快）
+// 2. 超大JSON（>100KB）：简单总长度截断（避免完整解析）
+// 3. 中等JSON：完整解析和截断
+func TruncateJsonValues(jsonStr string) string {
+	const maxValueLength = 100
+	const maxJsonSizeForFastPath = 5000    // 小于5KB的JSON，如果不需要截断则直接返回
+	const maxJsonSizeForFullParse = 100000 // 超过100KB的JSON，使用简单截断
+
+	// 快速路径1：如果JSON很小，先检查是否有需要截断的长字符串
+	if len(jsonStr) < maxJsonSizeForFastPath {
+		if !hasLongStringValueFast(jsonStr, maxValueLength) {
+			return jsonStr
+		}
+	}
+
+	// 性能优化：对于超大JSON，使用简单的总长度截断，避免完整解析
+	if len(jsonStr) > maxJsonSizeForFullParse {
+		const maxLogLength = 5000 // 日志最大长度
+		if len(jsonStr) > maxLogLength {
+			return jsonStr[:maxLogLength] + fmt.Sprintf("...[JSON已截断，总长度: %d]", len(jsonStr))
+		}
+		return jsonStr
+	}
+
+	// 尝试解析JSON
+	var jsonData interface{}
+	if err := json.Unmarshal([]byte(jsonStr), &jsonData); err != nil {
+		// 如果不是有效的JSON，直接返回原字符串
+		return jsonStr
+	}
+
+	// 递归处理JSON数据
+	truncatedData := truncateJsonValue(jsonData, maxValueLength)
+
+	// 重新序列化为JSON字符串
+	jsonBytes, err := json.Marshal(truncatedData)
+	if err != nil {
+		// 如果序列化失败，返回原字符串
+		return jsonStr
+	}
+
+	return string(jsonBytes)
+}
+
+// hasLongStringValueFast 快速检查JSON字符串中是否有超过指定长度的字符串值（排除URL）
+// 这是一个简化的预检查，用于快速路径优化
+func hasLongStringValueFast(jsonStr string, maxLength int) bool {
+	// 简单查找：查找 ": " 后跟长字符串的模式
+	// 注意：这是一个简化的检查，可能无法处理所有JSON转义情况，但足够用于快速路径判断
+	searchPattern := `": "`
+	patternLen := len(searchPattern)
+
+	for i := 0; i < len(jsonStr)-patternLen; i++ {
+		if jsonStr[i:i+patternLen] == searchPattern {
+			// 找到 ": "，检查后面的字符串
+			start := i + patternLen
+			// 检查是否是URL
+			if start+8 < len(jsonStr) {
+				prefix := jsonStr[start : start+8]
+				if strings.HasPrefix(prefix, "http://") || strings.HasPrefix(prefix, "https:/") {
+					// 是URL，跳过（找到下一个引号）
+					if quoteIdx := strings.IndexByte(jsonStr[start:], '"'); quoteIdx > 0 {
+						i = start + quoteIdx
+						continue
+					}
+				}
+			}
+
+			// 不是URL，查找字符串结束位置
+			// 简单查找下一个未转义的引号
+			for j := start; j < len(jsonStr) && j < start+maxLength+10; j++ {
+				if jsonStr[j] == '"' && (j == start || jsonStr[j-1] != '\\') {
+					// 找到字符串结束
+					strLen := j - start
+					if strLen > maxLength {
+						return true // 找到需要截断的长字符串
+					}
+					i = j
+					break
+				}
+			}
+		}
+	}
+
+	return false
+}
+
+// truncateJsonValue 递归处理JSON值，截断过长的字符串
+func truncateJsonValue(value interface{}, maxLength int) interface{} {
+	switch v := value.(type) {
+	case string:
+		// 如果是http://或https://开头的URL，不截断
+		if strings.HasPrefix(v, "http://") || strings.HasPrefix(v, "https://") {
+			return v
+		}
+		// 如果字符串长度超过限制，截断（包括base64数据）
+		if len(v) > maxLength {
+			return v[:maxLength] + "..."
+		}
+		return v
+	case map[string]interface{}:
+		// 递归处理对象
+		result := make(map[string]interface{})
+		for key, val := range v {
+			result[key] = truncateJsonValue(val, maxLength)
+		}
+		return result
+	case []interface{}:
+		// 递归处理数组
+		result := make([]interface{}, len(v))
+		for i, val := range v {
+			result[i] = truncateJsonValue(val, maxLength)
+		}
+		return result
+	default:
+		// 其他类型（数字、布尔值、null等）保持不变
+		return value
+	}
 }

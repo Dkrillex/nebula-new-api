@@ -84,8 +84,8 @@ func ImageHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *type
 			}
 
 			if common.DebugEnabled {
-				// 使用截断函数处理base64内容，保留其他信息
-				truncatedContent := common.TruncateBase64Content(string(jsonData))
+				// 使用截断函数处理JSON内容，包括base64数据
+				truncatedContent := common.TruncateJsonValues(string(jsonData))
 				logger.LogDebug(c, fmt.Sprintf("[image_Handler]image request body: %s", truncatedContent))
 			}
 			requestBody = bytes.NewBuffer(jsonData)

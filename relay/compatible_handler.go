@@ -81,7 +81,8 @@ func TextHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *types
 			return types.NewErrorWithStatusCode(err, types.ErrorCodeReadRequestBodyFailed, http.StatusBadRequest, types.ErrOptionWithSkipRetry())
 		}
 		if common.DebugEnabled {
-			println("requestBody: ", string(body))
+			truncatedBody := common.TruncateJsonValues(string(body))
+			println("requestBody: ", truncatedBody)
 		}
 		requestBody = bytes.NewBuffer(body)
 	} else {
@@ -151,12 +152,8 @@ func TextHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *types
 			}
 		}
 
-		logStr := string(jsonData)
-		const maxLogBodyLen = 2000 // 防止日志打印超大（如 base64）
-		if len(logStr) > maxLogBodyLen {
-			logStr = logStr[:maxLogBodyLen] + "...(truncated)"
-		}
-		logger.LogDebug(c, fmt.Sprintf("text request body: %s", logStr))
+		truncatedBody := common.TruncateJsonValues(string(jsonData))
+		logger.LogDebug(c, fmt.Sprintf("text request body: %s", truncatedBody))
 
 		requestBody = bytes.NewBuffer(jsonData)
 	}
