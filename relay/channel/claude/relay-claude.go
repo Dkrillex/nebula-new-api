@@ -191,9 +191,17 @@ func RequestOpenAI2ClaudeMessage(c *gin.Context, textRequest dto.GeneralOpenAIRe
 		}
 
 		// BudgetTokens 为 max_tokens 的 80%
+		budgetTokens := int(float64(claudeRequest.MaxTokens) * model_setting.GetClaudeSettings().ThinkingAdapterBudgetTokensPercentage)
+
+		// AWS Bedrock 要求 max_tokens 必须严格大于 budget_tokens
+		// 如果 budget_tokens >= max_tokens，则调整 max_tokens 使其至少比 budget_tokens 大 1
+		if budgetTokens >= int(claudeRequest.MaxTokens) {
+			claudeRequest.MaxTokens = uint(budgetTokens + 1)
+		}
+
 		claudeRequest.Thinking = &dto.Thinking{
 			Type:         "enabled",
-			BudgetTokens: common.GetPointer[int](int(float64(claudeRequest.MaxTokens) * model_setting.GetClaudeSettings().ThinkingAdapterBudgetTokensPercentage)),
+			BudgetTokens: common.GetPointer[int](budgetTokens),
 		}
 		// TODO: 临时处理
 		// https://docs.anthropic.com/en/docs/build-with-claude/extended-thinking#important-considerations-when-using-extended-thinking
@@ -203,22 +211,25 @@ func RequestOpenAI2ClaudeMessage(c *gin.Context, textRequest dto.GeneralOpenAIRe
 	}
 
 	if textRequest.ReasoningEffort != "" {
+		var budgetTokens int
 		switch textRequest.ReasoningEffort {
 		case "low":
-			claudeRequest.Thinking = &dto.Thinking{
-				Type:         "enabled",
-				BudgetTokens: common.GetPointer[int](1280),
-			}
+			budgetTokens = 1280
 		case "medium":
-			claudeRequest.Thinking = &dto.Thinking{
-				Type:         "enabled",
-				BudgetTokens: common.GetPointer[int](2048),
-			}
+			budgetTokens = 2048
 		case "high":
-			claudeRequest.Thinking = &dto.Thinking{
-				Type:         "enabled",
-				BudgetTokens: common.GetPointer[int](4096),
-			}
+			budgetTokens = 4096
+		}
+
+		// AWS Bedrock 要求 max_tokens 必须严格大于 budget_tokens
+		// 如果 budget_tokens >= max_tokens，则调整 max_tokens 使其至少比 budget_tokens 大 1
+		if budgetTokens >= int(claudeRequest.MaxTokens) {
+			claudeRequest.MaxTokens = uint(budgetTokens + 1)
+		}
+
+		claudeRequest.Thinking = &dto.Thinking{
+			Type:         "enabled",
+			BudgetTokens: common.GetPointer[int](budgetTokens),
 		}
 	}
 
@@ -231,6 +242,12 @@ func RequestOpenAI2ClaudeMessage(c *gin.Context, textRequest dto.GeneralOpenAIRe
 
 		budgetTokens := reasoning.MaxTokens
 		if budgetTokens > 0 {
+			// AWS Bedrock 要求 max_tokens 必须严格大于 budget_tokens
+			// 如果 budget_tokens >= max_tokens，则调整 max_tokens 使其至少比 budget_tokens 大 1
+			if budgetTokens >= int(claudeRequest.MaxTokens) {
+				claudeRequest.MaxTokens = uint(budgetTokens + 1)
+			}
+
 			claudeRequest.Thinking = &dto.Thinking{
 				Type:         "enabled",
 				BudgetTokens: &budgetTokens,

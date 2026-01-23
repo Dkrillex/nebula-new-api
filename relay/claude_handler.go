@@ -57,9 +57,17 @@ func ClaudeHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *typ
 			}
 
 			// BudgetTokens 为 max_tokens 的 80%
+			budgetTokens := int(float64(request.MaxTokens) * model_setting.GetClaudeSettings().ThinkingAdapterBudgetTokensPercentage)
+
+			// AWS Bedrock 要求 max_tokens 必须严格大于 budget_tokens
+			// 如果 budget_tokens >= max_tokens，则调整 max_tokens 使其至少比 budget_tokens 大 1
+			if budgetTokens >= int(request.MaxTokens) {
+				request.MaxTokens = uint(budgetTokens + 1)
+			}
+
 			request.Thinking = &dto.Thinking{
 				Type:         "enabled",
-				BudgetTokens: common.GetPointer[int](int(float64(request.MaxTokens) * model_setting.GetClaudeSettings().ThinkingAdapterBudgetTokensPercentage)),
+				BudgetTokens: common.GetPointer[int](budgetTokens),
 			}
 			// TODO: 临时处理
 			// https://docs.anthropic.com/en/docs/build-with-claude/extended-thinking#important-considerations-when-using-extended-thinking
