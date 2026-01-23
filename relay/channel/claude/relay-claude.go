@@ -255,6 +255,18 @@ func RequestOpenAI2ClaudeMessage(c *gin.Context, textRequest dto.GeneralOpenAIRe
 		}
 	}
 
+	// 统一检查：无论 thinking 是从哪里来的（用户传入、-thinking 后缀、reasoning_effort、reasoning 参数等），都要确保 max_tokens > budget_tokens
+	// 这个要求适用于所有 Claude API（Anthropic 官方 API 和 AWS Bedrock）
+	// budget_tokens 是思考预算，必须小于 max_tokens（总输出限制）
+	if claudeRequest.Thinking != nil && claudeRequest.Thinking.BudgetTokens != nil {
+		budgetTokens := *claudeRequest.Thinking.BudgetTokens
+		// Claude API 要求 max_tokens 必须严格大于 budget_tokens
+		// 如果 budget_tokens >= max_tokens，则调整 max_tokens 使其至少比 budget_tokens 大 1
+		if budgetTokens >= int(claudeRequest.MaxTokens) {
+			claudeRequest.MaxTokens = uint(budgetTokens + 1)
+		}
+	}
+
 	if textRequest.Stop != nil {
 		// stop maybe string/array string, convert to array string
 		switch textRequest.Stop.(type) {
