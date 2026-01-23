@@ -128,7 +128,7 @@ func ClaudeHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *typ
 
 		if common.DebugEnabled {
 			truncatedBody := common.TruncateJsonValues(string(jsonData))
-			println("requestBody: ", truncatedBody)
+			common.SysLog(fmt.Sprintf("requestBody: %s", truncatedBody))
 		}
 		requestBody = bytes.NewBuffer(jsonData)
 	}

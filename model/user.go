@@ -400,7 +400,11 @@ func (user *User) Insert(inviterId int) error {
 	// 用户创建成功后，根据角色初始化边栏配置
 	// 需要重新获取用户以确保有正确的ID和Role
 	var createdUser User
-	if err := DB.Where("username = ?", user.Username).First(&createdUser).Error; err == nil {
+	query := DB.Where("username = ?", user.Username)
+	if user.OemId != nil {
+		query = query.Where("oem_id = ?", *user.OemId)
+	}
+	if err := query.First(&createdUser).Error; err == nil {
 		// 生成基于角色的默认边栏配置
 		defaultSidebarConfig := generateDefaultSidebarConfigForRole(createdUser.Role)
 		if defaultSidebarConfig != "" {
@@ -499,6 +503,11 @@ func (user *User) HardDelete() error {
 
 // ValidateAndFill check password & user status
 func (user *User) ValidateAndFill() (err error) {
+	return user.ValidateAndFillWithOemId(nil)
+}
+
+// ValidateAndFillWithOemId check password & user status with OEM ID
+func (user *User) ValidateAndFillWithOemId(oemId *int64) (err error) {
 	// When querying with struct, GORM will only query with non-zero fields,
 	// that means if your field's value is 0, '', false or other zero values,
 	// it won't be used to build query conditions
@@ -507,8 +516,12 @@ func (user *User) ValidateAndFill() (err error) {
 	if username == "" || password == "" {
 		return errors.New("用户名或密码为空")
 	}
-	// find buy username or email
-	DB.Where("username = ? OR email = ?", username, username).First(user)
+	// find by username or email, with OEM ID if provided
+	query := DB.Where("username = ? OR email = ?", username, username)
+	if oemId != nil {
+		query = query.Where("oem_id = ?", *oemId)
+	}
+	query.First(user)
 	okay := common.ValidatePasswordAndHash(password, user.Password)
 	if !okay || user.Status != common.UserStatusEnabled {
 		return errors.New("用户名或密码错误，或用户已被封禁")

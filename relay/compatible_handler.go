@@ -82,7 +82,7 @@ func TextHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *types
 		}
 		if common.DebugEnabled {
 			truncatedBody := common.TruncateJsonValues(string(body))
-			println("requestBody: ", truncatedBody)
+			common.SysLog(fmt.Sprintf("requestBody: %s", truncatedBody))
 		}
 		requestBody = bytes.NewBuffer(body)
 	} else {

@@ -78,7 +78,7 @@ func ResponsesHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *
 
 		if common.DebugEnabled {
 			truncatedBody := common.TruncateJsonValues(string(jsonData))
-			println("requestBody: ", truncatedBody)
+			common.SysLog(fmt.Sprintf("requestBody: %s", truncatedBody))
 		}
 		requestBody = bytes.NewBuffer(jsonData)
 	}

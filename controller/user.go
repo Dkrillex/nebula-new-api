@@ -55,7 +55,14 @@ func Login(c *gin.Context) {
 		Username: username,
 		Password: password,
 	}
-	err = user.ValidateAndFill()
+	// 从context获取OEM ID
+	var oemId *int64
+	if id, exists := c.Get(string(constant.ContextKeyOemId)); exists {
+		if idInt64, ok := id.(int64); ok {
+			oemId = &idInt64
+		}
+	}
+	err = user.ValidateAndFillWithOemId(oemId)
 	if err != nil {
 		c.JSON(http.StatusOK, gin.H{
 			"message": err.Error(),

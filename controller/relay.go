@@ -69,12 +69,14 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 	group := common.GetContextKeyString(c, constant.ContextKeyUsingGroup)
 	originalModel := common.GetContextKeyString(c, constant.ContextKeyOriginalModel)
 
-	// 在函数开始就打印请求头和请求体，确保无论在哪里出错都能看到
+	// 在函数开始就读取请求体，确保无论在哪里出错都能重复读取
 	requestBody, _ := common.GetRequestBody(c)
-	//common.SysLog(fmt.Sprintf("[Relay] requestHeaders: %s", formatRequestHeadersForLog(c.Request.Header)))
-	//structure, data := formatRequestBodyForLog(requestBody)
-	//common.SysLog(fmt.Sprintf("[Relay] requestBody结构: %s", structure))
-	//common.SysLog(fmt.Sprintf("[Relay] requestBody数据: %s", data))
+	// 记录“用户调用接口的原始入参”（非透传与否都只记录这一份原始入参）
+	// 注意：使用 SysLog 才会写入 log 文件（/logs），println 不会。
+	if common.DebugEnabled {
+		truncated := common.TruncateJsonValues(string(requestBody))
+		common.SysLog(fmt.Sprintf("[Relay][UserRequest] %s %s | body=%s", c.Request.Method, c.Request.URL.Path, truncated))
+	}
 	c.Request.Body = io.NopCloser(bytes.NewBuffer(requestBody))
 
 	var (
@@ -507,6 +509,13 @@ func RelayNotFound(c *gin.Context) {
 
 func RelayTask(c *gin.Context) {
 	common.SysLog(fmt.Sprintf("[RelayTask] 请求方法: %s, 请求路径: %s", c.Request.Method, c.Request.URL.Path))
+	// 记录“用户调用接口的原始入参”（主要覆盖 /v1/video/generations 等任务接口）
+	if common.DebugEnabled {
+		requestBody, _ := common.GetRequestBody(c)
+		truncated := common.TruncateJsonValues(string(requestBody))
+		common.SysLog(fmt.Sprintf("[RelayTask][UserRequest] %s %s | body=%s", c.Request.Method, c.Request.URL.Path, truncated))
+		c.Request.Body = io.NopCloser(bytes.NewBuffer(requestBody))
+	}
 
 	retryTimes := common.RetryTimes
 	channelId := c.GetInt("channel_id")
