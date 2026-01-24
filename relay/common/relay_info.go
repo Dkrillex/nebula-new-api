@@ -427,6 +427,9 @@ func genBaseRelayInfo(c *gin.Context, request dto.Request) *RelayInfo {
 	if strings.HasPrefix(c.Request.URL.Path, "/api/sync/system/images/generations") {
 		info.IsPlayground = true
 	}
+	if strings.HasPrefix(c.Request.URL.Path, "/api/sync/system/images/edits") {
+		info.IsPlayground = true
+	}
 	if strings.HasPrefix(c.Request.URL.Path, "/api/sync/system/videos/generations") {
 		info.IsPlayground = true
 	}

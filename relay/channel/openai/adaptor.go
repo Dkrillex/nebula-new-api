@@ -535,11 +535,9 @@ func (a *Adaptor) ConvertImageRequest(c *gin.Context, info *relaycommon.RelayInf
 							filename = fmt.Sprintf("image%d.webp", i)
 						}
 
-						// 确定字段名：单图用 "image"，多图用 "image[]"
-						fieldName := "image"
-						if len(imageStrings) > 1 {
-							fieldName = "image[]"
-						}
+						// 确定字段名：根据官方文档，GPT-image-1 系列统一使用 "image[]"（即使单图）
+						// 官方文档示例：-F "image[]=@beach.png"（单图也使用 image[]）
+						fieldName := "image[]"
 
 						// 添加图片文件到 multipart（使用正确的 MIME 类型）
 						h := make(textproto.MIMEHeader)
@@ -601,11 +599,9 @@ func (a *Adaptor) ConvertImageRequest(c *gin.Context, info *relaycommon.RelayInf
 						return nil, fmt.Errorf("failed to open image file %d: %w", i, err)
 					}
 
-					// If multiple images, use image[] as the field name
-					fieldName := "image"
-					if len(imageFiles) > 1 {
-						fieldName = "image[]"
-					}
+					// 根据官方文档，GPT-image-1 系列统一使用 "image[]"（即使单图）
+					// 官方文档示例：-F "image[]=@beach.png"（单图也使用 image[]）
+					fieldName := "image[]"
 
 					// Determine MIME type based on file extension
 					mimeType := detectImageMimeType(fileHeader.Filename)

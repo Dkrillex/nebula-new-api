@@ -9,6 +9,7 @@ import (
 	"one-api/service"
 	"one-api/setting/ratio_setting"
 	"one-api/types"
+	"strings"
 
 	"github.com/gin-gonic/gin"
 )
@@ -48,15 +49,17 @@ func HandleGroupRatio(ctx *gin.Context, relayInfo *relaycommon.RelayInfo) types.
 }
 
 func ModelPriceHelper(c *gin.Context, info *relaycommon.RelayInfo, promptTokens int, meta *types.TokenCountMeta) (types.PriceData, error) {
-	// 优先级1：检查图像Token表定价（gpt-image-1等特殊图像模型）
-	imageTokenPricing, hasImageTokenPricing := ratio_setting.GetImageTokenPricing(info.OriginModelName)
-	if hasImageTokenPricing {
-		groupRatioInfo := HandleGroupRatio(c, info)
-		return types.PriceData{
-			UseImageTokenPricing: true,
-			ImageTokenPricing:    imageTokenPricing,
-			GroupRatioInfo:       groupRatioInfo,
-		}, nil
+	// 优先级1：检查图像Token表定价（排除 gpt-image-1，让它使用倍率计费）
+	if !strings.HasPrefix(info.OriginModelName, "gpt-image-1") {
+		imageTokenPricing, hasImageTokenPricing := ratio_setting.GetImageTokenPricing(info.OriginModelName)
+		if hasImageTokenPricing {
+			groupRatioInfo := HandleGroupRatio(c, info)
+			return types.PriceData{
+				UseImageTokenPricing: true,
+				ImageTokenPricing:    imageTokenPricing,
+				GroupRatioInfo:       groupRatioInfo,
+			}, nil
+		}
 	}
 
 	// 优先级2：检查按张计费（ImageModelPricePerImage）
