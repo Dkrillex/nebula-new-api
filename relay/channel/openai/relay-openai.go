@@ -750,16 +750,87 @@ func OpenaiHandlerWithUsage(c *gin.Context, info *relaycommon.RelayInfo, resp *h
 	// because the upstream has already consumed resources and returned content
 	// We should still perform billing even if parsing fails
 	// format
+
+	// 添加调试日志：打印解析后的响应数据
+	if common.DebugEnabled {
+		logger.LogDebug(c, fmt.Sprintf("[OpenaiHandlerWithUsage] 解析后的响应: InputTokens=%d, OutputTokens=%d, CompletionTokens=%d, PromptTokens=%d",
+			usageResp.InputTokens, usageResp.OutputTokens, usageResp.CompletionTokens, usageResp.PromptTokens))
+		logger.LogDebug(c, fmt.Sprintf("[OpenaiHandlerWithUsage] 模型名称: UpstreamModelName=%s, OriginModelName=%s",
+			info.UpstreamModelName, info.OriginModelName))
+	}
+
+	// 记录合并前的值
+	originalCompletionTokens := usageResp.CompletionTokens
+	originalOutputTokens := usageResp.OutputTokens
+
 	if usageResp.InputTokens > 0 {
 		usageResp.PromptTokens += usageResp.InputTokens
 	}
 	if usageResp.OutputTokens > 0 {
 		usageResp.CompletionTokens += usageResp.OutputTokens
 	}
+
+	// 添加调试日志：打印合并后的值
+	if common.DebugEnabled {
+		logger.LogDebug(c, fmt.Sprintf("[OpenaiHandlerWithUsage] 合并后的值: CompletionTokens=%d (原值=%d + OutputTokens=%d)",
+			usageResp.CompletionTokens, originalCompletionTokens, originalOutputTokens))
+	}
 	if usageResp.InputTokensDetails != nil {
 		usageResp.PromptTokensDetails.ImageTokens += usageResp.InputTokensDetails.ImageTokens
 		usageResp.PromptTokensDetails.TextTokens += usageResp.InputTokensDetails.TextTokens
 	}
+
+	// 对于 gpt-image-1，特殊处理 tokens 提取
+	if strings.HasPrefix(info.UpstreamModelName, "gpt-image-1") {
+		if common.DebugEnabled {
+			logger.LogDebug(c, fmt.Sprintf("[OpenaiHandlerWithUsage] 检测到 gpt-image-1 模型，开始特殊处理"))
+		}
+
+		// 如果没有 InputTokensDetails，需要估算
+		if usageResp.InputTokensDetails == nil && usageResp.PromptTokens > 0 {
+			// 估算：假设文本 tokens 为 80，其余为图像 tokens
+			estimatedTextTokens := 80
+			estimatedImageTokens := usageResp.PromptTokens - estimatedTextTokens
+			if estimatedImageTokens > 0 {
+				if usageResp.PromptTokensDetails.ImageTokens == 0 {
+					usageResp.PromptTokensDetails.ImageTokens = estimatedImageTokens
+				}
+				if usageResp.PromptTokensDetails.TextTokens == 0 {
+					usageResp.PromptTokensDetails.TextTokens = estimatedTextTokens
+				}
+			}
+			if common.DebugEnabled {
+				logger.LogDebug(c, fmt.Sprintf("[OpenaiHandlerWithUsage] gpt-image-1 输入tokens估算: TextTokens=%d, ImageTokens=%d",
+					estimatedTextTokens, estimatedImageTokens))
+			}
+		}
+
+		// 对于 gpt-image-1，completionTokens 就是图像输出 tokens
+		if usageResp.CompletionTokens > 0 {
+			// 设置到 context，供计费逻辑使用
+			c.Set("gpt_image_output_tokens", usageResp.CompletionTokens)
+
+			// 验证设置是否成功
+			if setValue, exists := c.Get("gpt_image_output_tokens"); exists {
+				if common.DebugEnabled {
+					logger.LogDebug(c, fmt.Sprintf("[OpenaiHandlerWithUsage] gpt-image-1 输出图像 tokens: %d, 已设置到context: %v",
+						usageResp.CompletionTokens, setValue))
+				}
+			} else {
+				logger.LogError(c, fmt.Sprintf("[OpenaiHandlerWithUsage] gpt-image-1 设置 gpt_image_output_tokens 失败! CompletionTokens=%d",
+					usageResp.CompletionTokens))
+			}
+		} else {
+			if common.DebugEnabled {
+				logger.LogDebug(c, fmt.Sprintf("[OpenaiHandlerWithUsage] gpt-image-1 CompletionTokens 为 0，未设置 gpt_image_output_tokens"))
+			}
+		}
+	} else {
+		if common.DebugEnabled {
+			logger.LogDebug(c, fmt.Sprintf("[OpenaiHandlerWithUsage] 非 gpt-image-1 模型，跳过特殊处理"))
+		}
+	}
+
 	applyUsagePostProcessing(info, &usageResp.Usage, responseBody)
 	return &usageResp.Usage, nil
 }

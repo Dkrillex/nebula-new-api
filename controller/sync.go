@@ -1427,8 +1427,16 @@ func SyncImageEdits(c *gin.Context) {
 		return
 	}
 
+	// 清除可能存在的 MultipartForm（避免适配器误判为 multipart 格式）
+	c.Request.MultipartForm = nil
+	c.Request.PostForm = nil
+
+	// 重新设置请求体
 	c.Request.Body = io.NopCloser(bytes.NewReader(requestBytes))
 	c.Request.ContentLength = int64(len(requestBytes))
+
+	// 显式设置 Content-Type 为 application/json（确保适配器正确识别为 JSON 格式）
+	c.Request.Header.Set("Content-Type", "application/json")
 
 	// 设置请求开始时间
 	common.SetContextKey(c, constant.ContextKeyRequestStartTime, time.Now())

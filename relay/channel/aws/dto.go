@@ -21,6 +21,25 @@ type AwsClaudeRequest struct {
 }
 
 func copyRequest(req *dto.ClaudeRequest) *AwsClaudeRequest {
+	// AWS Bedrock 要求 max_tokens 必须严格大于 thinking.budget_tokens
+	// 在发送到 AWS Bedrock 之前进行最终验证和调整
+	if req.Thinking != nil && req.Thinking.BudgetTokens != nil {
+		budgetTokens := *req.Thinking.BudgetTokens
+
+		// 情况1：客户没有提供 max_tokens（为0或未设置）
+		// 自动设置一个大于 budget_tokens 的默认值
+		if req.MaxTokens == 0 {
+			// 设置 max_tokens = budget_tokens + 100，确保有足够的输出空间
+			req.MaxTokens = uint(budgetTokens + 100)
+		} else {
+			// 情况2：客户提供了 max_tokens，但小于等于 budget_tokens
+			// 调整 max_tokens 使其至少比 budget_tokens 大 1
+			if budgetTokens >= int(req.MaxTokens) {
+				req.MaxTokens = uint(budgetTokens + 1)
+			}
+		}
+	}
+
 	// 使用通用白名单过滤函数，只保留 AWS Bedrock 支持的字段
 	filteredReq := filterAwsBedrockSupportedFields(req)
 
