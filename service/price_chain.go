@@ -23,6 +23,7 @@ type PriceChain struct {
 	UserDiscount   float64 // 用户折扣率（GroupRatio）
 	UserQuota      int64   // 用户支付价quota
 	OemSubsidy     int64   // OEM补贴quota（负数表示补贴，正数表示盈利）
+	VendorId       *int64  // 厂商ID（用于日志 other 持久化与账单导出）
 }
 
 // CalculatePriceChain 计算完整价格链条
@@ -223,6 +224,18 @@ func GetVendorNameFromModel(modelName string) string {
 	return vendor.Name
 }
 
+// GetVendorIdFromModel 从模型名称获取厂商ID
+// 通过查询 models 表获取 vendor_id，用于日志 other 持久化与账单导出
+func GetVendorIdFromModel(modelName string) *int64 {
+	var m model.Model
+	err := model.DB.Where("model_name = ?", modelName).First(&m).Error
+	if err != nil || m.VendorID == 0 {
+		return nil
+	}
+	id := int64(m.VendorID)
+	return &id
+}
+
 // CalculatePriceChainForLog 为日志记录计算价格链条
 // 这是一个辅助函数，用于在RecordConsumeLog中自动计算价格链条
 // 优先级：用户oem_id（从Context获取）> 请求头X-Oem-Code > 默认nebula
@@ -233,11 +246,12 @@ func GetVendorNameFromModel(modelName string) string {
 // 重要：这个函数现在基于实际 quota 反推官方价格，而不是基于 tokens 计算
 // 这样可以准确处理各种复杂场景（缓存、音频、图片等不同倍率的 tokens）
 func CalculatePriceChainForLog(c *gin.Context, modelName string, promptTokens int, completionTokens int, quota int) *model.PriceChainParams {
-	// 获取厂商名称
+	// 获取厂商名称与厂商ID
 	vendorName := GetVendorNameFromModel(modelName)
 	if vendorName == "" {
 		vendorName = ""
 	}
+	vendorId := GetVendorIdFromModel(modelName)
 
 	// 1. 优先从Context获取OEM信息
 	// SystemIdentify中间件会优先使用用户oem_id（如果用户已认证且有oem_id），否则使用请求头X-Oem-Code
@@ -352,6 +366,7 @@ func CalculatePriceChainForLog(c *gin.Context, modelName string, promptTokens in
 		UserQuota:      userQuotaValue,
 		PlatformProfit: platformProfit,
 		OemSubsidy:     oemSubsidy,
+		VendorId:       vendorId,
 	}
 }
 
@@ -400,11 +415,12 @@ func CalculatePriceChainForImageGeneration(c *gin.Context, modelName string, ima
 		}
 	}
 
-	// 获取厂商名称
+	// 获取厂商名称与厂商ID
 	vendorName := GetVendorNameFromModel(modelName)
 	if vendorName == "" {
 		vendorName = ""
 	}
+	vendorId := GetVendorIdFromModel(modelName)
 
 	// 2. 获取各种折扣率
 	// oem_user_discount: OEM给用户的折扣
@@ -480,6 +496,7 @@ func CalculatePriceChainForImageGeneration(c *gin.Context, modelName string, ima
 		UserQuota:      userQuotaValue,
 		PlatformProfit: platformProfit,
 		OemSubsidy:     oemSubsidy,
+		VendorId:       vendorId,
 	}
 }
 
@@ -503,10 +520,11 @@ func CalculatePriceChainForVideoTask(oemCode string, modelName string, vendorNam
 		oemId = &oemConfig.Id
 	}
 
-	// 获取厂商名称（如果未提供）
+	// 获取厂商名称与厂商ID（如果未提供）
 	if vendorName == "" {
 		vendorName = GetVendorNameFromModel(modelName)
 	}
+	vendorId := GetVendorIdFromModel(modelName)
 
 	// 确保折扣值有效
 	if oemUserDiscount <= 0 {
@@ -573,6 +591,7 @@ func CalculatePriceChainForVideoTask(oemCode string, modelName string, vendorNam
 		UserQuota:      userQuotaValue,
 		PlatformProfit: platformProfit,
 		OemSubsidy:     oemSubsidyValue,
+		VendorId:       vendorId,
 	}
 }
 

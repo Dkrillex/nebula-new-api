@@ -21,6 +21,13 @@ func GenerateTextOtherInfo(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, m
 	other["cache_ratio"] = cacheRatio
 	other["model_price"] = modelPrice
 	other["user_group_ratio"] = userGroupRatio
+	// 记录原始价格和倍率（应用OEM折扣前），用于原厂计费过程展示
+	if relayInfo != nil && relayInfo.PriceData.OfficialModelPrice > 0 {
+		other["official_model_price"] = relayInfo.PriceData.OfficialModelPrice
+	}
+	if relayInfo != nil && relayInfo.PriceData.OfficialModelRatio > 0 {
+		other["official_model_ratio"] = relayInfo.PriceData.OfficialModelRatio
+	}
 	other["frt"] = float64(relayInfo.FirstResponseTime.UnixMilli() - relayInfo.StartTime.UnixMilli())
 	if relayInfo.ReasoningEffort != "" {
 		other["reasoning_effort"] = relayInfo.ReasoningEffort
@@ -103,6 +110,10 @@ func GenerateMjOtherInfo(ctx *gin.Context, modelName string, priceData types.Per
 	other["group_ratio"] = priceData.GroupRatioInfo.GroupRatio
 	if priceData.GroupRatioInfo.HasSpecialRatio {
 		other["user_group_ratio"] = priceData.GroupRatioInfo.GroupSpecialRatio
+	}
+	// 记录原始价格（应用OEM折扣前），用于原厂计费过程展示
+	if priceData.OfficialModelPrice > 0 {
+		other["official_model_price"] = priceData.OfficialModelPrice
 	}
 
 	// 记录OEM用户折扣信息（用于溯源）

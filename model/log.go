@@ -170,6 +170,7 @@ type PriceChainParams struct {
 	UserQuota      int64  `json:"user_quota"`
 	PlatformProfit int64  `json:"platform_profit"`
 	OemSubsidy     int64  `json:"oem_subsidy"`
+	VendorId       *int64 `json:"vendor_id,omitempty"` // 厂商ID，存于 other 用于账单导出
 }
 
 func RecordConsumeLog(c *gin.Context, userId int, params RecordConsumeLogParams) {
@@ -178,7 +179,17 @@ func RecordConsumeLog(c *gin.Context, userId int, params RecordConsumeLogParams)
 	}
 	logger.LogInfo(c, fmt.Sprintf("record consume log: userId=%d, params=%s", userId, common.GetJsonString(params)))
 	username := c.GetString("username")
-	otherStr := common.MapToJsonStr(params.Other)
+	// 合并 other 与 vendor_id（来自 PriceChain），避免突变调用方传入的 map
+	other := make(map[string]interface{})
+	if params.Other != nil {
+		for k, v := range params.Other {
+			other[k] = v
+		}
+	}
+	if params.PriceChain != nil && params.PriceChain.VendorId != nil {
+		other["vendor_id"] = *params.PriceChain.VendorId
+	}
+	otherStr := common.MapToJsonStr(other)
 	// 判断是否需要记录 IP
 	needRecordIp := false
 	if settingMap, err := GetUserSetting(userId, false); err == nil {

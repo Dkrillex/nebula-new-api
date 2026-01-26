@@ -14,6 +14,8 @@ type GroupRatioInfo struct {
 type PriceData struct {
 	ModelPrice             float64
 	ModelRatio             float64
+	OfficialModelPrice     float64 // 原始模型价格（应用OEM折扣前）
+	OfficialModelRatio     float64 // 原始模型倍率（应用OEM折扣前）
 	CompletionRatio        float64
 	CacheRatio             float64
 	CacheCreationRatio     float64
@@ -30,9 +32,10 @@ type PriceData struct {
 }
 
 type PerCallPriceData struct {
-	ModelPrice     float64
-	Quota          int
-	GroupRatioInfo GroupRatioInfo
+	ModelPrice         float64
+	OfficialModelPrice float64 // 原始模型价格（应用OEM折扣前）
+	Quota              int
+	GroupRatioInfo     GroupRatioInfo
 }
 
 func (p PriceData) ToSetting() string {

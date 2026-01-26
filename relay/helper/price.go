@@ -62,6 +62,7 @@ func ModelPriceHelper(c *gin.Context, info *relaycommon.RelayInfo, promptTokens 
 	// 优先级2：检查按张计费（ImageModelPricePerImage）
 	imageModelPrice, hasImageModelPrice := ratio_setting.GetImageModelPricePerImage(info.OriginModelName)
 	if hasImageModelPrice && imageModelPrice > 0 {
+		officialImageModelPrice := imageModelPrice // 记录原始价格
 		// 应用OEM用户折扣到 imageModelPrice（oem_user_discount）
 		if c != nil {
 			oemCode := "nebula" // 默认系统
@@ -85,6 +86,7 @@ func ModelPriceHelper(c *gin.Context, info *relaycommon.RelayInfo, promptTokens 
 		return types.PriceData{
 			UsePrice:               true,            // 按张计费需要设置 UsePrice = true
 			ModelPrice:             imageModelPrice, // 已应用OEM用户折扣
+			OfficialModelPrice:     officialImageModelPrice,
 			GroupRatioInfo:         groupRatioInfo,
 			ShouldPreConsumedQuota: preConsumedQuota,
 		}, nil
@@ -92,6 +94,7 @@ func ModelPriceHelper(c *gin.Context, info *relaycommon.RelayInfo, promptTokens 
 
 	// 优先级3：检查按次计费（ModelPrice）
 	modelPrice, usePrice := ratio_setting.GetModelPrice(info.OriginModelName, false)
+	officialModelPrice := modelPrice // 记录原始价格
 
 	// 应用OEM用户折扣到 modelPrice（oem_user_discount）
 	if c != nil && usePrice && modelPrice > 0 {
@@ -108,11 +111,10 @@ func ModelPriceHelper(c *gin.Context, info *relaycommon.RelayInfo, promptTokens 
 				oemCode, info.OriginModelName, vendorName, oemUserDiscount))
 		}
 		if oemUserDiscount != 1.0 && oemUserDiscount > 0 {
-			originalPrice := modelPrice
 			modelPrice = modelPrice * oemUserDiscount
 			if common.DebugEnabled {
 				println(fmt.Sprintf("[ModelPriceHelper] 应用OEM用户折扣到modelPrice: oemCode=%s, modelName=%s, oemUserDiscount=%.4f, 原价=%.4f, 折后价=%.4f",
-					oemCode, info.OriginModelName, oemUserDiscount, originalPrice, modelPrice))
+					oemCode, info.OriginModelName, oemUserDiscount, officialModelPrice, modelPrice))
 			}
 		}
 	}
@@ -121,6 +123,7 @@ func ModelPriceHelper(c *gin.Context, info *relaycommon.RelayInfo, promptTokens 
 
 	var preConsumedQuota int
 	var modelRatio float64
+	var officialModelRatio float64 // 记录原始倍率（应用OEM折扣前）
 	var completionRatio float64
 	var cacheRatio float64
 	var imageRatio float64
@@ -135,6 +138,7 @@ func ModelPriceHelper(c *gin.Context, info *relaycommon.RelayInfo, promptTokens 
 		var success bool
 		var matchName string
 		modelRatio, success, matchName = ratio_setting.GetModelRatio(info.OriginModelName)
+		officialModelRatio = modelRatio // 记录原始倍率
 		if !success {
 			// 检查是否配置了视频每秒价格（第三种定价方式）
 			_, hasVideoPrice := ratio_setting.GetVideoModelPricePerSecond(info.OriginModelName)
@@ -198,6 +202,8 @@ func ModelPriceHelper(c *gin.Context, info *relaycommon.RelayInfo, promptTokens 
 	priceData := types.PriceData{
 		ModelPrice:             modelPrice,
 		ModelRatio:             modelRatio,
+		OfficialModelPrice:     officialModelPrice,
+		OfficialModelRatio:     officialModelRatio,
 		CompletionRatio:        completionRatio,
 		GroupRatioInfo:         groupRatioInfo,
 		UsePrice:               usePrice,
@@ -231,6 +237,7 @@ func ModelPriceHelperPerCall(c *gin.Context, info *relaycommon.RelayInfo) types.
 			modelPrice = defaultPrice
 		}
 	}
+	officialModelPrice := modelPrice // 记录原始价格
 
 	// 应用OEM用户折扣到 modelPrice（oem_user_discount）
 	if c != nil {
@@ -246,16 +253,17 @@ func ModelPriceHelperPerCall(c *gin.Context, info *relaycommon.RelayInfo) types.
 			modelPrice = modelPrice * oemUserDiscount
 			if common.DebugEnabled {
 				println(fmt.Sprintf("[ModelPriceHelperPerCall] 应用OEM用户折扣到modelPrice: oemCode=%s, modelName=%s, oemUserDiscount=%.4f, 原价=%.4f, 折后价=%.4f",
-					oemCode, info.OriginModelName, oemUserDiscount, modelPrice/oemUserDiscount, modelPrice))
+					oemCode, info.OriginModelName, oemUserDiscount, officialModelPrice, modelPrice))
 			}
 		}
 	}
 
 	quota := int(modelPrice * common.QuotaPerUnit * groupRatioInfo.GroupRatio)
 	priceData := types.PerCallPriceData{
-		ModelPrice:     modelPrice,
-		Quota:          quota,
-		GroupRatioInfo: groupRatioInfo,
+		ModelPrice:         modelPrice,
+		OfficialModelPrice: officialModelPrice,
+		Quota:              quota,
+		GroupRatioInfo:     groupRatioInfo,
 	}
 	return priceData
 }
