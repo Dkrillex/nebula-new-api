@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"one-api/common"
+	"one-api/constant"
 	"one-api/dto"
 	relaycommon "one-api/relay/common"
 	"one-api/service"
@@ -23,6 +24,7 @@ type requestPayload struct {
 	CallbackURL     string        `json:"callback_url,omitempty"`      // 可选的回调URL
 	GenerateAudio   *bool         `json:"generate_audio,omitempty"`    // 是否生成音频（1.5 Pro 新增）
 	ReturnLastFrame *bool         `json:"return_last_frame,omitempty"` // 是否返回最后一帧（1.5 Pro 新增）
+	TaskType        string        `json:"task_type,omitempty"`         // 任务类型：t2v / i2v 等
 }
 
 type ContentItem struct {
@@ -113,6 +115,25 @@ func (a *TaskAdaptor) ValidateRequestAndSetAction(c *gin.Context, info *relaycom
 		}
 	}
 
+	// 将原始请求体完整写入 Metadata，保留 content / 其他上游参数
+	if request.Metadata == nil {
+		if bodyBytes, err := common.GetRequestBody(c); err == nil && len(bodyBytes) > 0 {
+			var meta map[string]any
+			if err := json.Unmarshal(bodyBytes, &meta); err == nil {
+				request.Metadata = meta
+			} else {
+				common.SysError(fmt.Sprintf("[Doubao] 解析原始请求体到metadata失败: %v", err))
+			}
+		}
+	}
+
+	// 将中间件中判定好的 action 写入 RelayInfo，便于后续 task_type 推断和计费使用
+	if actionVal, exists := c.Get("action"); exists {
+		if actionStr, ok := actionVal.(string); ok && actionStr != "" {
+			info.Action = actionStr
+		}
+	}
+
 	common.SysLog("[Doubao] ValidateRequestAndSetAction - 验证通过")
 	return nil
 }
@@ -148,8 +169,11 @@ func (a *TaskAdaptor) BuildRequestBody(c *gin.Context, info *relaycommon.RelayIn
 		upstreamModel = req.Model
 	}
 
-	// 转换为豆包API格式，传入原始模型名和映射后的模型名
-	payload := convertVideoRequestToDoubaoPayload(req, upstreamModel)
+	// 推断任务类型（t2v / i2v）
+	taskType := inferDoubaoTaskType(req, info)
+
+	// 转换为豆包API格式，传入原始模型名、映射后的模型名以及任务类型
+	payload := convertVideoRequestToDoubaoPayload(req, upstreamModel, taskType)
 
 	// 序列化为JSON
 	jsonData, err := json.Marshal(payload)
@@ -163,10 +187,25 @@ func (a *TaskAdaptor) BuildRequestBody(c *gin.Context, info *relaycommon.RelayIn
 // DoRequest delegates to common helper.
 func (a *TaskAdaptor) DoRequest(c *gin.Context, info *relaycommon.RelayInfo, requestBody io.Reader) (*http.Response, error) {
 
-	// 构建请求URL
-	url, err := a.BuildRequestURL(info)
+	// 构建请求URL，并根据模型/动作决定 task_type 查询参数
+	baseURL, err := a.BuildRequestURL(info)
 	if err != nil {
 		return nil, err
+	}
+	url := baseURL
+
+	// 从上下文还原 VideoRequest，用于推断 task_type
+	if v, exists := c.Get("task_request"); exists {
+		if req, ok := v.(*dto.VideoRequest); ok {
+			taskType := inferDoubaoTaskType(req, info)
+			if taskType != "" {
+				sep := "?"
+				if strings.Contains(url, "?") {
+					sep = "&"
+				}
+				url = fmt.Sprintf("%s%stask_type=%s", url, sep, taskType)
+			}
+		}
 	}
 
 	// 读取请求体内容用于调试（需要重新创建Reader）
@@ -466,9 +505,11 @@ func (a *TaskAdaptor) GetChannelName() string {
 // 现在直接从 Metadata 中提取 content 和 callback_url，按照豆包官方格式传递
 // request: 原始请求（包含原始模型名，用于判断参数）
 // upstreamModel: 映射后的模型名（用于发送到上游API）
-func convertVideoRequestToDoubaoPayload(request *dto.VideoRequest, upstreamModel string) *requestPayload {
+// taskType: 任务类型（t2v/i2v），用于传递给上游
+func convertVideoRequestToDoubaoPayload(request *dto.VideoRequest, upstreamModel string, taskType string) *requestPayload {
 	payload := &requestPayload{
-		Model: upstreamModel, // 使用映射后的模型名发送到上游
+		Model:    upstreamModel, // 使用映射后的模型名发送到上游
+		TaskType: taskType,
 	}
 
 	common.SysLog(fmt.Sprintf("[Doubao] Original Model: %s, Upstream Model: %s", request.Model, upstreamModel))
@@ -664,18 +705,49 @@ func defaultInt(value, defaultValue int) int {
 
 // convertInterfaceToContent 将interface{}转换为[]ContentItem
 func convertInterfaceToContent(contentInterface interface{}, target *[]ContentItem) error {
-
-	// 先将interface{}转换为JSON字节，再反序列化为[]ContentItem
+	// 优先走通用 JSON 编解码路径
 	jsonBytes, err := json.Marshal(contentInterface)
-	if err != nil {
-		return fmt.Errorf("序列化content失败: %v", err)
+	if err == nil {
+		if err := json.Unmarshal(jsonBytes, target); err == nil && len(*target) > 0 {
+			return nil
+		}
 	}
 
-	// 截断图片内容后打印
-	if err := json.Unmarshal(jsonBytes, target); err != nil {
-		return fmt.Errorf("反序列化content失败: %v", err)
+	// 如果 JSON 路径失败，做一次手工解析，尽量保留文本和图片信息
+	slice, ok := contentInterface.([]interface{})
+	if !ok {
+		return fmt.Errorf("unsupported content type: %T", contentInterface)
 	}
 
+	items := make([]ContentItem, 0, len(slice))
+	for _, elem := range slice {
+		m, ok := elem.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		item := ContentItem{}
+		if t, ok := m["type"].(string); ok {
+			item.Type = t
+		}
+		if text, ok := m["text"].(string); ok {
+			item.Text = text
+		}
+		if imageVal, ok := m["image_url"].(map[string]interface{}); ok {
+			if url, ok := imageVal["url"].(string); ok && url != "" {
+				item.ImageURL = &ImageURL{URL: url}
+			}
+		}
+		// 只保留至少有 type/text/image_url 之一的项
+		if item.Type != "" || item.Text != "" || item.ImageURL != nil {
+			items = append(items, item)
+		}
+	}
+
+	if len(items) == 0 {
+		return fmt.Errorf("no valid content items parsed")
+	}
+
+	*target = items
 	return nil
 }
 
@@ -689,4 +761,66 @@ func truncateBase64InMetadata(metadata map[string]any) string {
 		return common.TruncateBase64Content(string(jsonBytes))
 	}
 	return fmt.Sprintf("%+v", metadata)
+}
+
+// inferDoubaoTaskType 推断豆包视频任务类型（t2v / i2v）
+func inferDoubaoTaskType(request *dto.VideoRequest, info *relaycommon.RelayInfo) string {
+	// 1. 先看模型名称（包含 i2v / t2v 直观标识）
+	modelName := strings.ToLower(request.Model)
+	if info != nil && info.OriginModelName != "" {
+		modelName = strings.ToLower(info.OriginModelName)
+	}
+	if strings.Contains(modelName, "i2v") {
+		return "i2v"
+	}
+	if strings.Contains(modelName, "t2v") {
+		return "t2v"
+	}
+
+	// 2. 其次看动作类型（由中间件 / 通用校验写入）
+	if info != nil {
+		switch info.Action {
+		case constant.TaskActionGenerate, constant.TaskActionFirstTailGenerate, constant.TaskActionReferenceGenerate:
+			return "i2v"
+		case constant.TaskActionTextGenerate:
+			return "t2v"
+		}
+	}
+
+	// 3. 再看 Metadata 中是否包含图片输入
+	if request.Metadata != nil {
+		if contentInterface, ok := request.Metadata["content"]; ok {
+			if hasImageInContent(contentInterface) {
+				return "i2v"
+			}
+		}
+		if imageInputs, ok := request.Metadata["image_inputs"]; ok && imageInputs != nil {
+			return "i2v"
+		}
+	}
+
+	// 4. 默认按文生视频处理
+	return "t2v"
+}
+
+// hasImageInContent 判断 content 结构中是否包含 image_url
+func hasImageInContent(contentInterface interface{}) bool {
+	slice, ok := contentInterface.([]interface{})
+	if !ok {
+		return false
+	}
+	for _, elem := range slice {
+		m, ok := elem.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		if t, ok := m["type"].(string); ok && t == "image_url" {
+			if imageVal, ok := m["image_url"].(map[string]interface{}); ok {
+				if url, ok := imageVal["url"].(string); ok && url != "" {
+					return true
+				}
+			}
+		}
+	}
+	return false
 }
