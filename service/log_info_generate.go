@@ -42,7 +42,7 @@ func GenerateTextOtherInfo(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, m
 		other["is_system_prompt_overwritten"] = true
 	}
 
-	// 记录OEM用户折扣信息（用于溯源）
+	// 记录OEM用户折扣信息和厂商名称（用于溯源和导出）
 	if ctx != nil {
 		oemCode := "nebula" // 默认系统
 		if code, exists := ctx.Get(string(constant.ContextKeyOemCode)); exists {
@@ -51,12 +51,15 @@ func GenerateTextOtherInfo(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, m
 			}
 		}
 		vendorName := GetVendorNameFromModel(relayInfo.OriginModelName)
+		// 总是记录厂商名称，用于导出
+		if vendorName != "" {
+			other["vendor_name"] = vendorName
+		}
 		oemUserDiscount := model.GetOemUserDiscountByCode(oemCode, relayInfo.OriginModelName, vendorName)
-		// 只有当折扣不是1.0时才记录，避免日志冗余
+		// 只有当折扣不是1.0时才记录折扣信息，避免日志冗余
 		if oemUserDiscount != 1.0 && oemUserDiscount > 0 {
 			other["oem_user_discount"] = oemUserDiscount
 			other["oem_code"] = oemCode
-			other["vendor_name"] = vendorName
 		}
 	}
 
@@ -116,7 +119,7 @@ func GenerateMjOtherInfo(ctx *gin.Context, modelName string, priceData types.Per
 		other["official_model_price"] = priceData.OfficialModelPrice
 	}
 
-	// 记录OEM用户折扣信息（用于溯源）
+	// 记录OEM用户折扣信息和厂商名称（用于溯源和导出）
 	if ctx != nil {
 		oemCode := "nebula" // 默认系统
 		if code, exists := ctx.Get(string(constant.ContextKeyOemCode)); exists {
@@ -125,12 +128,15 @@ func GenerateMjOtherInfo(ctx *gin.Context, modelName string, priceData types.Per
 			}
 		}
 		vendorName := GetVendorNameFromModel(modelName)
+		// 总是记录厂商名称，用于导出
+		if vendorName != "" {
+			other["vendor_name"] = vendorName
+		}
 		oemUserDiscount := model.GetOemUserDiscountByCode(oemCode, modelName, vendorName)
-		// 只有当折扣不是1.0时才记录，避免日志冗余
+		// 只有当折扣不是1.0时才记录折扣信息，避免日志冗余
 		if oemUserDiscount != 1.0 && oemUserDiscount > 0 {
 			other["oem_user_discount"] = oemUserDiscount
 			other["oem_code"] = oemCode
-			other["vendor_name"] = vendorName
 		}
 	}
 
