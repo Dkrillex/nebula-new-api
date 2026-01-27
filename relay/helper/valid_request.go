@@ -388,11 +388,78 @@ func GetAndValidateClaudeRequest(c *gin.Context) (textRequest *dto.ClaudeRequest
 		return nil, errors.New("field model is required")
 	}
 
+	// 清理 assistant 消息中可能被篡改的 thinking 块
+	// AWS Bedrock 要求 thinking 块必须保持原样（包括 signature 字段）
+	// 为了避免用户错误修改导致 ValidationException，这里提供两种处理方式：
+	// 1. 移除缺少 signature 的 thinking 块（可能是用户伪造的）
+	// 2. 保留有 signature 的 thinking 块（可能是合法的历史消息）
+	for i := range textRequest.Messages {
+		if textRequest.Messages[i].Role == "assistant" {
+			textRequest.Messages[i].Content = cleanThinkingBlocks(textRequest.Messages[i].Content)
+		}
+	}
+
 	//if textRequest.Stream {
 	//	relayInfo.IsStream = true
 	//}
 
 	return textRequest, nil
+}
+
+// cleanThinkingBlocks 清理消息中的 thinking 块，移除可能导致 AWS Bedrock 验证失败的内容
+// AWS Bedrock 要求：thinking/redacted_thinking 块必须包含有效的 signature，且内容不能被修改
+// 策略：移除所有缺少 signature 字段的 thinking 块（防止用户伪造）
+func cleanThinkingBlocks(content any) any {
+	if content == nil {
+		return nil
+	}
+
+	// 如果是字符串，直接返回
+	if _, ok := content.(string); ok {
+		return content
+	}
+
+	// 如果是数组，过滤 thinking 块
+	contentSlice, ok := content.([]any)
+	if !ok {
+		return content
+	}
+
+	cleaned := make([]any, 0, len(contentSlice))
+	for _, item := range contentSlice {
+		if itemMap, ok := item.(map[string]any); ok {
+			blockType, hasType := itemMap["type"].(string)
+			if !hasType {
+				// 没有 type 字段，保留
+				cleaned = append(cleaned, item)
+				continue
+			}
+
+			// 检查是否是 thinking 或 redacted_thinking 块
+			if blockType == "thinking" || blockType == "redacted_thinking" {
+				// 检查是否有 signature 字段
+				if _, hasSignature := itemMap["signature"]; !hasSignature {
+					// 没有 signature 的 thinking 块，很可能是用户伪造的，移除
+					if common.DebugEnabled {
+						common.SysLog(fmt.Sprintf("Removed %s block without signature to prevent AWS Bedrock validation error", blockType))
+					}
+					continue
+				}
+				// 有 signature 的 thinking 块，保留（可能是合法的历史消息）
+				// 注意：即使保留，如果用户修改了 thinking 内容但保留了旧的 signature，
+				// AWS Bedrock 仍然会验证失败。这种情况下，用户需要自己保证不修改 thinking 块。
+				cleaned = append(cleaned, item)
+			} else {
+				// 非 thinking 块，保留
+				cleaned = append(cleaned, item)
+			}
+		} else {
+			// 不是 map，保留
+			cleaned = append(cleaned, item)
+		}
+	}
+
+	return cleaned
 }
 
 func GetAndValidateTextRequest(c *gin.Context, relayMode int) (*dto.GeneralOpenAIRequest, error) {
