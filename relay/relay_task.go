@@ -458,7 +458,6 @@ func sunoFetchByIDRespBodyBuilder(c *gin.Context) (respBody []byte, taskResp *dt
 }
 
 func videoFetchByIDRespBodyBuilder(c *gin.Context) (respBody []byte, taskResp *dto.TaskError) {
-	common.SysLog("[VideoTask] videoFetchByIDRespBodyBuilder - 开始查询视频任务")
 
 	taskId := c.Param("task_id")
 	if taskId == "" {
@@ -496,12 +495,6 @@ func videoFetchByIDRespBodyBuilder(c *gin.Context) (respBody []byte, taskResp *d
 		originTask.ID, originTask.TaskID, originTask.Status, originTask.Platform))
 	common.SysLog(fmt.Sprintf("[VideoTask] 任务表字段: ModelName=%s, ApiKey(TokenName)=%s, Quota=%d",
 		originTask.ModelName, originTask.ApiKey, originTask.Quota))
-
-	// 检查任务是否成功
-	if originTask.Status == model.TaskStatusSuccess {
-		common.SysLog("[VideoTask] 任务已成功，返回结果")
-		// 不再进行扣费操作，扣费由轮询线程统一处理
-	}
 
 	// 转换为统一视频生成接口文档格式
 	response := convertToUnifiedVideoResponse(originTask)

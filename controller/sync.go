@@ -1200,10 +1200,8 @@ func SyncGetVideoTask(c *gin.Context) {
 	_ = middleware.SetupContextForToken(c, tempToken)
 
 	// 修改请求路径为标准视频任务查询路径
-	originalPath := c.Request.URL.Path
 	newPath := "/v1/video/generations/" + taskId
 	c.Request.URL.Path = newPath
-	common.SysLog(fmt.Sprintf("[SyncGetVideoTask] 路径转换: %s -> %s", originalPath, newPath))
 
 	// 设置请求开始时间
 	common.SetContextKey(c, constant.ContextKeyRequestStartTime, time.Now())

@@ -206,19 +206,11 @@ func postConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, usage 
 	tokenName := ctx.GetString("token_name")
 	groupRatio := relayInfo.PriceData.GroupRatioInfo.GroupRatio
 
-	// 添加调试日志
-	logger.LogDebug(ctx, fmt.Sprintf("[postConsumeQuota] UseImageTokenPricing: %v", relayInfo.PriceData.UseImageTokenPricing))
-	logger.LogDebug(ctx, fmt.Sprintf("[postConsumeQuota] ModelName: %s", modelName))
-
 	// ========== 特殊计费：图像Token表定价（gpt-image-1）==========
 	if relayInfo.PriceData.UseImageTokenPricing {
-		logger.LogDebug(ctx, "[postConsumeQuota] 使用 ImageTokenPricing 计费")
 		quota := calculateImageTokenPricingQuota(ctx, relayInfo, usage, extraContent)
-		logger.LogDebug(ctx, fmt.Sprintf("[postConsumeQuota] 计算出的 quota: %d", quota))
 		recordImageTokenPricingConsume(ctx, relayInfo, usage, quota, tokenName)
 		return
-	} else {
-		logger.LogDebug(ctx, "[postConsumeQuota] 使用常规计费")
 	}
 
 	// ========== 常规计费流程 ==========
@@ -372,37 +364,15 @@ func postConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, usage 
 			}
 		}
 		// 计算输入配额（详细日志）
-		logger.LogDebug(ctx, fmt.Sprintf("[postConsumeQuota] ========== 输入配额计算 =========="))
-		logger.LogDebug(ctx, fmt.Sprintf("[postConsumeQuota] baseTokens (文本tokens): %d", promptTokens))
-		logger.LogDebug(ctx, fmt.Sprintf("[postConsumeQuota] cacheTokens: %d, cacheRatio: %.2f, cachedTokensWithRatio: %s",
-			cacheTokens, cacheRatio, cachedTokensWithRatio.String()))
-		logger.LogDebug(ctx, fmt.Sprintf("[postConsumeQuota] imageTokens: %d, imageRatio: %.2f, imageTokensWithRatio: %s",
-			imageTokens, imageRatio, imageTokensWithRatio.String()))
-		logger.LogDebug(ctx, fmt.Sprintf("[postConsumeQuota] cachedCreationTokens: %d, cachedCreationRatio: %.2f, dCachedCreationTokensWithRatio: %s",
-			cachedCreationTokens, cachedCreationRatio, dCachedCreationTokensWithRatio.String()))
-
 		promptQuota := baseTokens.Add(cachedTokensWithRatio).
 			Add(imageTokensWithRatio).
 			Add(dCachedCreationTokensWithRatio)
-
-		logger.LogDebug(ctx, fmt.Sprintf("[postConsumeQuota] 输入配额总计: %s (baseTokens=%s + cachedTokensWithRatio=%s + imageTokensWithRatio=%s + cachedCreationTokensWithRatio=%s)",
-			promptQuota.String(), baseTokens.String(), cachedTokensWithRatio.String(), imageTokensWithRatio.String(), dCachedCreationTokensWithRatio.String()))
 
 		// 检查是否有图片输出（包括 gpt-image-1 和 Gemini）
 		var completionQuota decimal.Decimal
 		gptImageOutputTokens := ctx.GetInt("gpt_image_output_tokens")
 
-		// 添加调试日志：打印关键变量
-		logger.LogDebug(ctx, fmt.Sprintf("[postConsumeQuota] ========== 输出配额计算 =========="))
-		logger.LogDebug(ctx, fmt.Sprintf("[postConsumeQuota] gpt-image-1 计费检查: gptImageOutputTokens=%d, imageCompletionRatio=%.2f, completionRatio=%.2f, completionTokens=%d",
-			gptImageOutputTokens, imageCompletionRatio, completionRatio, completionTokens))
-		logger.LogDebug(ctx, fmt.Sprintf("[postConsumeQuota] 模型信息: OriginModelName=%s, UpstreamModelName=%s",
-			relayInfo.OriginModelName, relayInfo.UpstreamModelName))
-
 		if gptImageOutputTokens > 0 && imageCompletionRatio > 0 {
-			// gpt-image-1 的图像输出
-			logger.LogDebug(ctx, fmt.Sprintf("[postConsumeQuota] ✅ 进入 gpt-image-1 特殊计费逻辑: gptImageOutputTokens=%d, imageCompletionRatio=%.2f",
-				gptImageOutputTokens, imageCompletionRatio))
 
 			imageTokens := decimal.NewFromInt(int64(gptImageOutputTokens))
 			dImageCompletionRatio := decimal.NewFromFloat(imageCompletionRatio)
@@ -412,8 +382,6 @@ func postConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, usage 
 			extraContent += fmt.Sprintf("，图片输出 %d tokens × %.2f",
 				gptImageOutputTokens, imageCompletionRatio)
 
-			logger.LogDebug(ctx, fmt.Sprintf("[postConsumeQuota] gpt-image-1 计算配额: imageTokens=%d × imageCompletionRatio=%.2f = %s",
-				gptImageOutputTokens, imageCompletionRatio, imageCompletionQuota.String()))
 		} else if geminiImageOutputTokens > 0 && imageCompletionRatio > 0 {
 			// 原有的 Gemini 逻辑
 			// 分别计算文本输出和图片输出费用
@@ -442,65 +410,41 @@ func postConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, usage 
 		} else {
 			// 常规计费：所有 completion tokens 使用 CompletionRatio
 			if gptImageOutputTokens > 0 {
-				logger.LogDebug(ctx, fmt.Sprintf("[postConsumeQuota] ⚠️ gptImageOutputTokens=%d 但未进入特殊计费逻辑，可能 imageCompletionRatio=%.2f 为 0",
-					gptImageOutputTokens, imageCompletionRatio))
+
 			}
 			completionQuota = dCompletionTokens.Mul(dCompletionRatio)
-			logger.LogDebug(ctx, fmt.Sprintf("[postConsumeQuota] 使用常规计费: completionTokens=%d × completionRatio=%.2f = %s",
-				completionTokens, completionRatio, completionQuota.String()))
 		}
 
-		logger.LogDebug(ctx, fmt.Sprintf("[postConsumeQuota] 输出配额总计: %s", completionQuota.String()))
-
-		// 计算总配额（应用倍率）
-		logger.LogDebug(ctx, fmt.Sprintf("[postConsumeQuota] ========== 总配额计算 =========="))
-		logger.LogDebug(ctx, fmt.Sprintf("[postConsumeQuota] 输入配额: %s", promptQuota.String()))
-		logger.LogDebug(ctx, fmt.Sprintf("[postConsumeQuota] 输出配额: %s", completionQuota.String()))
-		logger.LogDebug(ctx, fmt.Sprintf("[postConsumeQuota] 输入+输出: %s + %s = %s",
-			promptQuota.String(), completionQuota.String(), promptQuota.Add(completionQuota).String()))
-
-		// ratio 是 modelRatio，已经在 price.go 的 ModelPriceHelper 中应用了 OEM 用户折扣
-		logger.LogDebug(ctx, fmt.Sprintf("[postConsumeQuota] modelRatio (已应用OEM用户折扣): %.4f", modelRatio))
-		logger.LogDebug(ctx, fmt.Sprintf("[postConsumeQuota] groupRatio: %.4f", groupRatio))
-
 		quotaCalculateDecimal = promptQuota.Add(completionQuota).Mul(ratio)
-		logger.LogDebug(ctx, fmt.Sprintf("[postConsumeQuota] 总配额 (应用modelRatio): (%s + %s) × %.4f = %s",
-			promptQuota.String(), completionQuota.String(), modelRatio, quotaCalculateDecimal.String()))
-
 		// 注意：oemUserDiscount 已经在 price.go 的 ModelPriceHelper 中应用到 modelRatio 了
 		// 所以这里不需要再乘以 oemUserDiscount，否则会重复应用折扣
 
 		if !ratio.IsZero() && quotaCalculateDecimal.LessThanOrEqual(decimal.Zero) {
-			logger.LogDebug(ctx, fmt.Sprintf("[postConsumeQuota] ⚠️ 配额计算结果 <= 0，设置为 1"))
 			quotaCalculateDecimal = decimal.NewFromInt(1)
 		}
 	} else {
 		// 按次计费（例如图片生成）——支持按图片数量乘以单价
 		multiplier := 1
 		if relayInfo.RelayMode == relayconstant.RelayModeImagesGenerations {
-			logger.LogDebug(ctx, "[postConsumeQuota] 进入图片生成计费分支")
 			// 获取图片数量
 			if v, exists := ctx.Get("generated_images_count"); exists {
 				if n, ok := v.(int); ok && n > 0 {
 					multiplier = n
-					logger.LogDebug(ctx, fmt.Sprintf("[postConsumeQuota] 从 generated_images_count 获取数量: %d", n))
 				}
 			} else if usage != nil && usage.TotalTokens > 0 {
 				// 兜底：没有透传图片数量时，使用 usage.TotalTokens（在 ImageHandler 中默认为请求 N）
 				multiplier = usage.TotalTokens
-				logger.LogDebug(ctx, fmt.Sprintf("[postConsumeQuota] 从 usage.TotalTokens 获取数量: %d", usage.TotalTokens))
 			}
 
 			// 优先检查是否有按张计费配置
 			imagePrice, hasImagePrice := ratio_setting.GetImageModelPricePerImage(modelName)
-			logger.LogDebug(ctx, fmt.Sprintf("[postConsumeQuota] 检查按张计费: modelName=%s, hasImagePrice=%v, imagePrice=%.4f", modelName, hasImagePrice, imagePrice))
 
 			if hasImagePrice && imagePrice > 0 {
 				// 获取OEM代码和厂商名称（用于OEM价格链条计算）
-				oemCode := "nebula" // 默认系统
+				// 默认系统
 				if code, exists := ctx.Get(string(constant.ContextKeyOemCode)); exists {
 					if codeStr, ok := code.(string); ok && codeStr != "" {
-						oemCode = codeStr
+
 					}
 				}
 				vendorName := service.GetVendorNameFromModel(modelName)
@@ -510,14 +454,10 @@ func postConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, usage 
 				// systemDiscount 是平台给OEM的折扣，用于计算系统销售价和平台利润
 				// oemUserDiscount 是OEM给用户的折扣，用于计算用户实际支付价
 				discountedImagePrice := imagePrice * oemUserDiscount
-				logger.LogDebug(ctx, fmt.Sprintf("[postConsumeQuota] OEM用户折扣: oemCode=%s, oemUserDiscount=%.4f, groupRatio=%.4f, 原价=%.4f, 折后价=%.4f",
-					oemCode, oemUserDiscount, groupRatio, imagePrice, discountedImagePrice))
-
 				// 更新 relayInfo.PriceData.ModelPrice 为折扣后的价格，用于后续日志记录
 				relayInfo.PriceData.ModelPrice = discountedImagePrice
 
 				// 使用按张价格计费（单位：美元/张），已应用OEM用户折扣和分组倍率
-				logger.LogDebug(ctx, fmt.Sprintf("[postConsumeQuota] 使用按张计费: %.4f USD/张 × %d张 × groupRatio %.4f (已应用OEM用户折扣)", discountedImagePrice, multiplier, groupRatio))
 				quotaCalculateDecimal = decimal.NewFromFloat(discountedImagePrice).
 					Mul(decimal.NewFromInt(int64(multiplier))).
 					Mul(dQuotaPerUnit).
@@ -541,14 +481,7 @@ func postConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, usage 
 			quotaCalculateDecimal = dModelPrice.Mul(dQuotaPerUnit).Mul(dGroupRatio)
 		}
 	}
-	// 添加 responses tools call 调用的配额
-	logger.LogDebug(ctx, fmt.Sprintf("[postConsumeQuota] ========== 额外配额计算 =========="))
-	logger.LogDebug(ctx, fmt.Sprintf("[postConsumeQuota] Web Search 配额: %s", dWebSearchQuota.String()))
-	logger.LogDebug(ctx, fmt.Sprintf("[postConsumeQuota] File Search 配额: %s", dFileSearchQuota.String()))
-	logger.LogDebug(ctx, fmt.Sprintf("[postConsumeQuota] Audio Input 配额: %s", audioInputQuota.String()))
-	logger.LogDebug(ctx, fmt.Sprintf("[postConsumeQuota] Image Generation Call 配额: %s", dImageGenerationCallQuota.String()))
 
-	quotaBeforeExtra := quotaCalculateDecimal
 	quotaCalculateDecimal = quotaCalculateDecimal.Add(dWebSearchQuota)
 	quotaCalculateDecimal = quotaCalculateDecimal.Add(dFileSearchQuota)
 	// 添加 audio input 独立计费
@@ -556,16 +489,7 @@ func postConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, usage 
 	// 添加 image generation call 计费
 	quotaCalculateDecimal = quotaCalculateDecimal.Add(dImageGenerationCallQuota)
 
-	logger.LogDebug(ctx, fmt.Sprintf("[postConsumeQuota] 基础配额: %s", quotaBeforeExtra.String()))
-	logger.LogDebug(ctx, fmt.Sprintf("[postConsumeQuota] 额外配额总计: %s (WebSearch=%s + FileSearch=%s + AudioInput=%s + ImageGenCall=%s)",
-		quotaCalculateDecimal.Sub(quotaBeforeExtra).String(),
-		dWebSearchQuota.String(), dFileSearchQuota.String(), audioInputQuota.String(), dImageGenerationCallQuota.String()))
-	logger.LogDebug(ctx, fmt.Sprintf("[postConsumeQuota] 最终配额 (基础+额外): %s", quotaCalculateDecimal.String()))
-
 	quota := int(quotaCalculateDecimal.Round(0).IntPart())
-	logger.LogDebug(ctx, fmt.Sprintf("[postConsumeQuota] ========== 最终配额 =========="))
-	logger.LogDebug(ctx, fmt.Sprintf("[postConsumeQuota] 配额 (decimal): %s", quotaCalculateDecimal.String()))
-	logger.LogDebug(ctx, fmt.Sprintf("[postConsumeQuota] 配额 (int, 四舍五入): %d", quota))
 	totalTokens := promptTokens + completionTokens
 
 	var logContent string
@@ -690,8 +614,6 @@ func postConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, usage 
 		if imageCompletionRatio > 0 {
 			other["image_completion_ratio"] = imageCompletionRatio
 		}
-		logger.LogDebug(ctx, fmt.Sprintf("[postConsumeQuota] 记录到 other 字段: gpt_image_output_tokens=%d, image_completion_ratio=%.2f",
-			gptImageOutputTokens, imageCompletionRatio))
 	}
 
 	// 记录 Gemini 图片和文本输出 tokens 详情

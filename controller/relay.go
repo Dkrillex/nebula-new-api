@@ -508,12 +508,9 @@ func RelayNotFound(c *gin.Context) {
 }
 
 func RelayTask(c *gin.Context) {
-	common.SysLog(fmt.Sprintf("[RelayTask] 请求方法: %s, 请求路径: %s", c.Request.Method, c.Request.URL.Path))
 	// 记录“用户调用接口的原始入参”（主要覆盖 /v1/video/generations 等任务接口）
 	if common.DebugEnabled {
 		requestBody, _ := common.GetRequestBody(c)
-		truncated := common.TruncateJsonValues(string(requestBody))
-		common.SysLog(fmt.Sprintf("[RelayTask][UserRequest] %s %s | body=%s", c.Request.Method, c.Request.URL.Path, truncated))
 		c.Request.Body = io.NopCloser(bytes.NewBuffer(requestBody))
 	}
 
@@ -564,9 +561,6 @@ func RelayTask(c *gin.Context) {
 }
 
 func taskRelayHandler(c *gin.Context, relayInfo *relaycommon.RelayInfo) *dto.TaskError {
-	common.SysLog(fmt.Sprintf("[taskRelayHandler] RelayMode: %d", relayInfo.RelayMode))
-	common.SysLog(fmt.Sprintf("[taskRelayHandler] 请求路径: %s", c.Request.URL.Path))
-
 	var err *dto.TaskError
 	switch relayInfo.RelayMode {
 	case relayconstant.RelayModeSunoFetch, relayconstant.RelayModeSunoFetchByID, relayconstant.RelayModeVideoFetchByID:
@@ -578,8 +572,6 @@ func taskRelayHandler(c *gin.Context, relayInfo *relaycommon.RelayInfo) *dto.Tas
 	}
 	if err != nil {
 		common.SysError(fmt.Sprintf("[taskRelayHandler] 处理失败: %+v", err))
-	} else {
-		common.SysLog("[taskRelayHandler] 处理成功")
 	}
 	return err
 }
