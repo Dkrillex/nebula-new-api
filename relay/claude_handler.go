@@ -146,6 +146,23 @@ func ClaudeHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *typ
 			}
 		}
 
+		// 最终校验：参数覆盖可能导致 max_tokens <= thinking.budget_tokens
+		// 这个约束对 Anthropic 官方 API 和 AWS Bedrock 都成立（Bedrock 会直接 400）
+		var finalReq dto.ClaudeRequest
+		if err := common.Unmarshal(jsonData, &finalReq); err == nil {
+			if finalReq.Thinking != nil && finalReq.Thinking.BudgetTokens != nil {
+				budgetTokens := *finalReq.Thinking.BudgetTokens
+				if finalReq.MaxTokens == 0 {
+					finalReq.MaxTokens = uint(budgetTokens + 100)
+				} else if budgetTokens >= int(finalReq.MaxTokens) {
+					finalReq.MaxTokens = uint(budgetTokens + 1)
+				}
+				if patched, mErr := common.Marshal(finalReq); mErr == nil {
+					jsonData = patched
+				}
+			}
+		}
+
 		if common.DebugEnabled {
 			truncatedBody := common.TruncateJsonValues(string(jsonData))
 			common.SysLog(fmt.Sprintf("requestBody: %s", truncatedBody))

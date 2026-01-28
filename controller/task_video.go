@@ -672,6 +672,32 @@ func handleVideoTaskBilling(ctx context.Context, task *model.Task, taskResult *r
 		groupRatio,
 	)
 
+	// 计算并存储OEM平台价格和倍率（用于导出和计费过程展示）
+	if priceChain != nil && priceChain.OfficialQuota > 0 && priceChain.SystemQuota > 0 {
+		// 计算OEM折扣率：systemQuota = officialQuota * oemDiscount
+		oemDiscount := float64(priceChain.SystemQuota) / float64(priceChain.OfficialQuota)
+
+		// 如果有原厂价格，计算OEM平台价格
+		// 对于视频任务，modelPrice 是应用了折扣后的价格，需要反推原厂价格
+		// 原厂价格 = modelPrice / (oemUserDiscount * groupRatio)
+		if modelPrice > 0 {
+			officialPrice := modelPrice / (oemUserDiscount * groupRatio)
+			oemPlatformPrice := officialPrice * oemDiscount
+			other["oem_model_price"] = oemPlatformPrice
+			// 同时存储原厂价格，用于一致性
+			other["official_model_price"] = officialPrice
+		}
+
+		// 如果有原厂倍率，计算OEM平台倍率
+		if modelRatio > 0 {
+			officialRatio := modelRatio / (oemUserDiscount * groupRatio)
+			oemPlatformRatio := officialRatio * oemDiscount
+			other["oem_model_ratio"] = oemPlatformRatio
+			// 同时存储原厂倍率，用于一致性
+			other["official_model_ratio"] = officialRatio
+		}
+	}
+
 	// 记录消费日志
 	otherStr := common.MapToJsonStr(other)
 	consumeLog := &model.Log{
@@ -995,6 +1021,25 @@ func handleVeoTaskBilling(ctx context.Context, task *model.Task, channel *model.
 	other["token_name"] = tokenName
 	other["token_id"] = tokenId
 	other["video_seconds"] = requestedSeconds
+	// 记录原始视频价格（应用OEM折扣前）
+	officialVideoPrice := videoPrice / oemUserDiscount
+	// 计算OEM平台视频价格（原厂价格 * OEM折扣）
+	var oemVideoPrice float64
+	oemCode := "nebula"
+	if taskData != nil {
+		if code, ok := taskData["oem_code"].(string); ok && code != "" {
+			oemCode = code
+		}
+	}
+	vendorName := service.GetVendorNameFromModel(modelName)
+	oemDiscount := model.GetOemDiscountByCode(oemCode, modelName, vendorName)
+	if oemDiscount <= 0 {
+		oemDiscount = 1.0
+	}
+	oemVideoPrice = officialVideoPrice * oemDiscount
+	// 存储三层视频价格
+	other["official_video_price_per_second"] = officialVideoPrice
+	other["oem_video_price_per_second"] = oemVideoPrice
 	other["video_price_per_second"] = videoPrice
 	other["group_ratio"] = groupRatio
 	other["oem_user_discount"] = oemUserDiscount
@@ -1257,6 +1302,25 @@ func handleSora2TaskBilling(ctx context.Context, task *model.Task, channel *mode
 	other["token_name"] = tokenName
 	other["token_id"] = tokenId
 	other["video_seconds"] = requestedSeconds
+	// 记录原始视频价格（应用OEM折扣前）
+	officialVideoPrice := videoPrice / oemUserDiscount
+	// 计算OEM平台视频价格（原厂价格 * OEM折扣）
+	var oemVideoPrice float64
+	oemCode := "nebula"
+	if taskData != nil {
+		if code, ok := taskData["oem_code"].(string); ok && code != "" {
+			oemCode = code
+		}
+	}
+	vendorName := service.GetVendorNameFromModel(modelName)
+	oemDiscount := model.GetOemDiscountByCode(oemCode, modelName, vendorName)
+	if oemDiscount <= 0 {
+		oemDiscount = 1.0
+	}
+	oemVideoPrice = officialVideoPrice * oemDiscount
+	// 存储三层视频价格
+	other["official_video_price_per_second"] = officialVideoPrice
+	other["oem_video_price_per_second"] = oemVideoPrice
 	other["video_price_per_second"] = videoPrice
 	other["group_ratio"] = groupRatio
 	other["oem_user_discount"] = oemUserDiscount
@@ -1440,6 +1504,25 @@ func handleWan25TaskBilling(ctx context.Context, task *model.Task, taskResult *r
 	other["token_id"] = tokenId
 	other["video_seconds"] = actualDuration
 	other["video_resolution"] = resolution
+	// 记录原始视频价格（应用OEM折扣前）
+	officialVideoPrice := videoPrice / oemUserDiscount
+	// 计算OEM平台视频价格（原厂价格 * OEM折扣）
+	var oemVideoPrice float64
+	oemCode := "nebula"
+	if taskData != nil {
+		if code, ok := taskData["oem_code"].(string); ok && code != "" {
+			oemCode = code
+		}
+	}
+	vendorName := service.GetVendorNameFromModel(modelName)
+	oemDiscount := model.GetOemDiscountByCode(oemCode, modelName, vendorName)
+	if oemDiscount <= 0 {
+		oemDiscount = 1.0
+	}
+	oemVideoPrice = officialVideoPrice * oemDiscount
+	// 存储三层视频价格
+	other["official_video_price_per_second"] = officialVideoPrice
+	other["oem_video_price_per_second"] = oemVideoPrice
 	other["video_price_per_second"] = videoPrice
 	other["group_ratio"] = groupRatio
 	other["oem_user_discount"] = oemUserDiscount

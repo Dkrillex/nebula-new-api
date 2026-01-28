@@ -306,7 +306,7 @@ func ProcessOemSubsidy(c *gin.Context, oemCode string, oemSubsidy int64, logId i
 			BalanceAfter:   balanceAfter,
 			RelatedLogId:   &logId,
 			RelatedUserId:  &userId,
-			Content:        fmt.Sprintf("OEM补贴：-¥%.6f（用户消费产生亏损）", subsidyRmb),
+			Content:        fmt.Sprintf("OEM：-¥%.6f", subsidyRmb),
 		}
 		if err := RecordOemAccountLog(accountLog); err != nil {
 			common.SysLog(fmt.Sprintf("记录OEM账户变动日志失败: error=%v", err))
@@ -338,7 +338,7 @@ func ProcessOemSubsidy(c *gin.Context, oemCode string, oemSubsidy int64, logId i
 			BalanceAfter:   balanceAfter,
 			RelatedLogId:   &logId,
 			RelatedUserId:  &userId,
-			Content:        fmt.Sprintf("OEM盈利：+¥%.6f（用户消费产生盈利）", profitRmb),
+			Content:        fmt.Sprintf("OEM：+¥%.6f", profitRmb),
 		}
 		if err := RecordOemAccountLog(accountLog); err != nil {
 			common.SysLog(fmt.Sprintf("记录OEM账户变动日志失败: error=%v", err))

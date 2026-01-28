@@ -1080,7 +1080,14 @@ func handleVideoTaskBillingBySeconds(c *gin.Context, task *model.Task, taskResul
 		videoPrice, hasVideoPrice = ratio_setting.GetVideoModelPricePerSecond(modelName)
 	}
 
+	// 三层视频每秒价格（仅在 per_second 计费时写入 other）
+	var officialVideoPricePerSecond float64
+	var oemVideoPricePerSecond float64
+	var userVideoPricePerSecond float64
+
 	if hasVideoPrice && videoPrice > 0 && actualSeconds > 0 {
+		// 记录原始视频价格（应用OEM用户折扣前）
+		officialVideoPrice := videoPrice
 		// 应用OEM用户折扣到 videoPrice（用于用户实际支付价）
 		oemUserDiscount := service.GetOemUserDiscountForQuota(c, modelName)
 		if oemUserDiscount != 1.0 {
@@ -1088,10 +1095,32 @@ func handleVideoTaskBillingBySeconds(c *gin.Context, task *model.Task, taskResul
 			common.SysLog(fmt.Sprintf("[VideoTask] 应用OEM用户折扣到videoPrice: oemUserDiscount=%.4f, 原价=%.4f, 折后价=%.4f",
 				oemUserDiscount, videoPrice/oemUserDiscount, videoPrice))
 		}
+		// 计算OEM平台视频价格（原厂价格 * OEM折扣）
+		var oemVideoPrice float64
+		if c != nil {
+			oemCode := "nebula"
+			if code, exists := c.Get(string(constant.ContextKeyOemCode)); exists {
+				if codeStr, ok := code.(string); ok && codeStr != "" {
+					oemCode = codeStr
+				}
+			}
+			vendorName := service.GetVendorNameFromModel(modelName)
+			oemDiscount := model.GetOemDiscountByCode(oemCode, modelName, vendorName)
+			if oemDiscount <= 0 {
+				oemDiscount = 1.0
+			}
+			oemVideoPrice = officialVideoPrice * oemDiscount
+		} else {
+			oemVideoPrice = officialVideoPrice
+		}
 		// 按秒计费：价格 * 秒数
 		actualQuota = int(videoPrice * float64(actualSeconds) * common.QuotaPerUnit * groupRatio)
 		billingType = "per_second"
 		videoPricePerSecond = videoPrice
+		// 暂存三层视频价格，等 other 初始化后再写入
+		officialVideoPricePerSecond = officialVideoPrice
+		oemVideoPricePerSecond = oemVideoPrice
+		userVideoPricePerSecond = videoPricePerSecond
 		common.SysLog(fmt.Sprintf("[VideoTask] Per-second billing: %d seconds × $%.4f/sec × group_ratio %.2f × oem_user_discount %.4f = quota %d",
 			actualSeconds, videoPrice, groupRatio, oemUserDiscount, actualQuota))
 	} else if modelPrice > 0 {
@@ -1198,6 +1227,16 @@ func handleVideoTaskBillingBySeconds(c *gin.Context, task *model.Task, taskResul
 		other["model_price"] = videoPricePerSecond // 使用折扣后的 videoPricePerSecond
 		other["video_seconds"] = actualSeconds
 		other["video_price_per_second"] = videoPricePerSecond
+		// 写入三层视频价格（导出用）
+		if officialVideoPricePerSecond > 0 {
+			other["official_video_price_per_second"] = officialVideoPricePerSecond
+		}
+		if oemVideoPricePerSecond > 0 {
+			other["oem_video_price_per_second"] = oemVideoPricePerSecond
+		}
+		if userVideoPricePerSecond > 0 {
+			other["video_price_per_second"] = userVideoPricePerSecond
+		}
 	} else if billingType == "per_token" {
 		other["total_tokens"] = taskResult.TotalTokens
 		other["model_ratio"] = modelRatio

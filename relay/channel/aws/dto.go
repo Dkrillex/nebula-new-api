@@ -71,6 +71,19 @@ func copyRequest(req *dto.ClaudeRequest) *AwsClaudeRequest {
 	}
 	// 如果两者都没有，则都不设置
 
+	// 最终验证：确保 max_tokens 严格大于 thinking.budget_tokens
+	// 这是 AWS Bedrock 的硬性要求，必须在发送请求前最后检查一次
+	if awsReq.Thinking != nil && awsReq.Thinking.BudgetTokens != nil {
+		budgetTokens := *awsReq.Thinking.BudgetTokens
+		// 如果 max_tokens 为 0，设置默认值
+		if awsReq.MaxTokens == 0 {
+			awsReq.MaxTokens = uint(budgetTokens + 100)
+		} else if budgetTokens >= int(awsReq.MaxTokens) {
+			// 如果 budget_tokens >= max_tokens，调整 max_tokens 使其至少比 budget_tokens 大 1
+			awsReq.MaxTokens = uint(budgetTokens + 1)
+		}
+	}
+
 	return awsReq
 }
 

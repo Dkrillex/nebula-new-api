@@ -86,12 +86,36 @@ func ModelPriceHelper(c *gin.Context, info *relaycommon.RelayInfo, promptTokens 
 		}
 		groupRatioInfo := HandleGroupRatio(c, info)
 		preConsumedQuota := int(imageModelPrice * common.QuotaPerUnit * groupRatioInfo.GroupRatio)
+
+		// 计算OEM平台价格（原厂价格 * OEM折扣）
+		var oemImageModelPrice float64
+		if c != nil {
+			oemCode := "nebula" // 默认系统
+			if code, exists := c.Get(string(constant.ContextKeyOemCode)); exists {
+				if codeStr, ok := code.(string); ok && codeStr != "" {
+					oemCode = codeStr
+				}
+			}
+			vendorName := service.GetVendorNameFromModel(info.OriginModelName)
+			oemDiscount := model.GetOemDiscountByCode(oemCode, info.OriginModelName, vendorName)
+			if oemDiscount <= 0 {
+				oemDiscount = 1.0
+			}
+			oemImageModelPrice = officialImageModelPrice * oemDiscount
+		} else {
+			oemImageModelPrice = officialImageModelPrice
+		}
+
 		return types.PriceData{
-			UsePrice:               true,            // 按张计费需要设置 UsePrice = true
-			ModelPrice:             imageModelPrice, // 已应用OEM用户折扣
-			OfficialModelPrice:     officialImageModelPrice,
-			GroupRatioInfo:         groupRatioInfo,
-			ShouldPreConsumedQuota: preConsumedQuota,
+			UsePrice:                   true,            // 按张计费需要设置 UsePrice = true
+			ModelPrice:                 imageModelPrice, // 已应用OEM用户折扣
+			OfficialModelPrice:         officialImageModelPrice,
+			OemModelPrice:              oemImageModelPrice,
+			ImagePricePerImage:         imageModelPrice, // 用户使用的图片每张价格
+			OfficialImagePricePerImage: officialImageModelPrice,
+			OemImagePricePerImage:      oemImageModelPrice,
+			GroupRatioInfo:             groupRatioInfo,
+			ShouldPreConsumedQuota:     preConsumedQuota,
 		}, nil
 	}
 
@@ -130,8 +154,10 @@ func ModelPriceHelper(c *gin.Context, info *relaycommon.RelayInfo, promptTokens 
 	var completionRatio float64
 	var cacheRatio float64
 	var imageRatio float64
+	var officialImageRatio float64
 	var cacheCreationRatio float64
 	var audioRatio float64
+	var officialAudioRatio float64
 	var audioCompletionRatio float64
 	if !usePrice {
 		preConsumedTokens := common.Max(promptTokens, common.PreConsumedQuota)
@@ -188,9 +214,30 @@ func ModelPriceHelper(c *gin.Context, info *relaycommon.RelayInfo, promptTokens 
 		completionRatio = ratio_setting.GetCompletionRatio(info.OriginModelName)
 		cacheRatio, _ = ratio_setting.GetCacheRatio(info.OriginModelName)
 		cacheCreationRatio, _ = ratio_setting.GetCreateCacheRatio(info.OriginModelName)
-		imageRatio, _ = ratio_setting.GetImageRatio(info.OriginModelName)
-		audioRatio = ratio_setting.GetAudioRatio(info.OriginModelName)
+		// 获取原始图片倍率和音频倍率
+		officialImageRatio, _ = ratio_setting.GetImageRatio(info.OriginModelName)
+		officialAudioRatio = ratio_setting.GetAudioRatio(info.OriginModelName)
+		imageRatio = officialImageRatio // 用户侧倍率（后续应用 oem_user_discount）
+		audioRatio = officialAudioRatio // 用户侧倍率（后续应用 oem_user_discount）
 		audioCompletionRatio = ratio_setting.GetAudioCompletionRatio(info.OriginModelName)
+
+		// 应用OEM用户折扣到 imageRatio / audioRatio（逻辑与 modelRatio 一致）
+		// 目的：用户实际扣费/账单展示使用折后倍率；原始倍率保留在 official_* 字段里
+		if c != nil {
+			oemCode := "nebula" // 默认系统
+			if code, exists := c.Get(string(constant.ContextKeyOemCode)); exists {
+				if codeStr, ok := code.(string); ok && codeStr != "" {
+					oemCode = codeStr
+				}
+			}
+			vendorName := service.GetVendorNameFromModel(info.OriginModelName)
+			oemUserDiscount := model.GetOemUserDiscountByCode(oemCode, info.OriginModelName, vendorName)
+			if oemUserDiscount != 1.0 && oemUserDiscount > 0 {
+				imageRatio = imageRatio * oemUserDiscount
+				audioRatio = audioRatio * oemUserDiscount
+			}
+		}
+
 		ratio := modelRatio * groupRatioInfo.GroupRatio
 		preConsumedQuota = int(float64(preConsumedTokens) * ratio)
 	} else {
@@ -202,17 +249,56 @@ func ModelPriceHelper(c *gin.Context, info *relaycommon.RelayInfo, promptTokens 
 
 	imageCompletionRatio := ratio_setting.GetImageCompletionRatio(info.OriginModelName)
 
+	// 计算OEM平台价格和倍率（原厂价格/倍率 * OEM折扣）
+	var oemModelPrice float64
+	var oemModelRatio float64
+	var oemImageRatio float64
+	var oemAudioRatio float64
+	if c != nil {
+		oemCode := "nebula" // 默认系统
+		if code, exists := c.Get(string(constant.ContextKeyOemCode)); exists {
+			if codeStr, ok := code.(string); ok && codeStr != "" {
+				oemCode = codeStr
+			}
+		}
+		vendorName := service.GetVendorNameFromModel(info.OriginModelName)
+		oemDiscount := model.GetOemDiscountByCode(oemCode, info.OriginModelName, vendorName)
+		if oemDiscount <= 0 {
+			oemDiscount = 1.0
+		}
+		// OEM平台价格 = 原厂价格 * OEM折扣
+		oemModelPrice = officialModelPrice * oemDiscount
+		// OEM平台倍率 = 原厂倍率 * OEM折扣
+		oemModelRatio = officialModelRatio * oemDiscount
+		// OEM平台图片倍率 = 原厂图片倍率 * OEM折扣
+		oemImageRatio = officialImageRatio * oemDiscount
+		// OEM平台音频倍率 = 原厂音频倍率 * OEM折扣
+		oemAudioRatio = officialAudioRatio * oemDiscount
+	} else {
+		// 如果没有context，使用原厂价格和倍率
+		oemModelPrice = officialModelPrice
+		oemModelRatio = officialModelRatio
+		oemImageRatio = officialImageRatio
+		oemAudioRatio = officialAudioRatio
+	}
+
 	priceData := types.PriceData{
 		ModelPrice:             modelPrice,
 		ModelRatio:             modelRatio,
 		OfficialModelPrice:     officialModelPrice,
 		OfficialModelRatio:     officialModelRatio,
+		OemModelPrice:          oemModelPrice,
+		OemModelRatio:          oemModelRatio,
 		CompletionRatio:        completionRatio,
 		GroupRatioInfo:         groupRatioInfo,
 		UsePrice:               usePrice,
 		CacheRatio:             cacheRatio,
 		ImageRatio:             imageRatio,
+		OfficialImageRatio:     officialImageRatio,
+		OemImageRatio:          oemImageRatio,
 		AudioRatio:             audioRatio,
+		OfficialAudioRatio:     officialAudioRatio,
+		OemAudioRatio:          oemAudioRatio,
 		AudioCompletionRatio:   audioCompletionRatio,
 		ImageCompletionRatio:   imageCompletionRatio,
 		CacheCreationRatio:     cacheCreationRatio,
@@ -242,15 +328,23 @@ func ModelPriceHelperPerCall(c *gin.Context, info *relaycommon.RelayInfo) types.
 	}
 	officialModelPrice := modelPrice // 记录原始价格
 
-	// 应用OEM用户折扣到 modelPrice（oem_user_discount）
+	// 计算OEM平台价格（原厂价格 * OEM折扣）
+	var oemModelPrice float64
+	oemCode := "nebula" // 默认系统
 	if c != nil {
-		oemCode := "nebula" // 默认系统
 		if code, exists := c.Get(string(constant.ContextKeyOemCode)); exists {
 			if codeStr, ok := code.(string); ok && codeStr != "" {
 				oemCode = codeStr
 			}
 		}
 		vendorName := service.GetVendorNameFromModel(info.OriginModelName)
+		oemDiscount := model.GetOemDiscountByCode(oemCode, info.OriginModelName, vendorName)
+		if oemDiscount <= 0 {
+			oemDiscount = 1.0
+		}
+		oemModelPrice = officialModelPrice * oemDiscount
+
+		// 应用OEM用户折扣到 modelPrice（oem_user_discount）
 		oemUserDiscount := model.GetOemUserDiscountByCode(oemCode, info.OriginModelName, vendorName)
 		if oemUserDiscount != 1.0 {
 			modelPrice = modelPrice * oemUserDiscount
@@ -259,14 +353,19 @@ func ModelPriceHelperPerCall(c *gin.Context, info *relaycommon.RelayInfo) types.
 					oemCode, info.OriginModelName, oemUserDiscount, officialModelPrice, modelPrice))
 			}
 		}
+	} else {
+		oemModelPrice = officialModelPrice
 	}
 
 	quota := int(modelPrice * common.QuotaPerUnit * groupRatioInfo.GroupRatio)
 	priceData := types.PerCallPriceData{
-		ModelPrice:         modelPrice,
-		OfficialModelPrice: officialModelPrice,
-		Quota:              quota,
-		GroupRatioInfo:     groupRatioInfo,
+		ModelPrice:                 modelPrice,
+		OfficialModelPrice:         officialModelPrice,
+		OemModelPrice:              oemModelPrice,
+		OfficialImagePricePerImage: officialModelPrice, // 对于按次计费的图片任务，可以视为每次=每张
+		OemImagePricePerImage:      oemModelPrice,
+		Quota:                      quota,
+		GroupRatioInfo:             groupRatioInfo,
 	}
 	return priceData
 }

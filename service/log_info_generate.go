@@ -28,6 +28,41 @@ func GenerateTextOtherInfo(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, m
 	if relayInfo != nil && relayInfo.PriceData.OfficialModelRatio > 0 {
 		other["official_model_ratio"] = relayInfo.PriceData.OfficialModelRatio
 	}
+	// 记录OEM平台价格和倍率（原厂价格/倍率 * OEM折扣），用于OEM平台计费过程展示
+	if relayInfo != nil && relayInfo.PriceData.OemModelPrice > 0 {
+		other["oem_model_price"] = relayInfo.PriceData.OemModelPrice
+	}
+	if relayInfo != nil && relayInfo.PriceData.OemModelRatio > 0 {
+		other["oem_model_ratio"] = relayInfo.PriceData.OemModelRatio
+	}
+	// 记录图片倍率的三层价格体系
+	if relayInfo != nil && relayInfo.PriceData.OfficialImageRatio > 0 {
+		other["official_image_ratio"] = relayInfo.PriceData.OfficialImageRatio
+	}
+	if relayInfo != nil && relayInfo.PriceData.OemImageRatio > 0 {
+		other["oem_image_ratio"] = relayInfo.PriceData.OemImageRatio
+	}
+	// 记录音频倍率的三层价格体系
+	if relayInfo != nil && relayInfo.PriceData.OfficialAudioRatio > 0 {
+		other["official_audio_ratio"] = relayInfo.PriceData.OfficialAudioRatio
+	}
+	if relayInfo != nil && relayInfo.PriceData.OemAudioRatio > 0 {
+		other["oem_audio_ratio"] = relayInfo.PriceData.OemAudioRatio
+	}
+	// 记录视频每秒价格的三层价格体系
+	if relayInfo != nil && relayInfo.PriceData.OfficialVideoPricePerSecond > 0 {
+		other["official_video_price_per_second"] = relayInfo.PriceData.OfficialVideoPricePerSecond
+	}
+	if relayInfo != nil && relayInfo.PriceData.OemVideoPricePerSecond > 0 {
+		other["oem_video_price_per_second"] = relayInfo.PriceData.OemVideoPricePerSecond
+	}
+	// 记录图片每张价格的三层价格体系
+	if relayInfo != nil && relayInfo.PriceData.OfficialImagePricePerImage > 0 {
+		other["official_image_price_per_image"] = relayInfo.PriceData.OfficialImagePricePerImage
+	}
+	if relayInfo != nil && relayInfo.PriceData.OemImagePricePerImage > 0 {
+		other["oem_image_price_per_image"] = relayInfo.PriceData.OemImagePricePerImage
+	}
 	other["frt"] = float64(relayInfo.FirstResponseTime.UnixMilli() - relayInfo.StartTime.UnixMilli())
 	if relayInfo.ReasoningEffort != "" {
 		other["reasoning_effort"] = relayInfo.ReasoningEffort
@@ -117,6 +152,17 @@ func GenerateMjOtherInfo(ctx *gin.Context, modelName string, priceData types.Per
 	// 记录原始价格（应用OEM折扣前），用于原厂计费过程展示
 	if priceData.OfficialModelPrice > 0 {
 		other["official_model_price"] = priceData.OfficialModelPrice
+	}
+	// 记录OEM平台价格（原厂价格 * OEM折扣），用于OEM平台计费过程展示
+	if priceData.OemModelPrice > 0 {
+		other["oem_model_price"] = priceData.OemModelPrice
+	}
+	// 记录图片每张价格的三层价格体系
+	if priceData.OfficialImagePricePerImage > 0 {
+		other["official_image_price_per_image"] = priceData.OfficialImagePricePerImage
+	}
+	if priceData.OemImagePricePerImage > 0 {
+		other["oem_image_price_per_image"] = priceData.OemImagePricePerImage
 	}
 
 	// 记录OEM用户折扣信息和厂商名称（用于溯源和导出）

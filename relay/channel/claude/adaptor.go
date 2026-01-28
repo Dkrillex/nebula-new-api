@@ -36,6 +36,19 @@ func (a *Adaptor) ConvertGeminiRequest(c *gin.Context, info *relaycommon.RelayIn
 }
 
 func (a *Adaptor) ConvertClaudeRequest(c *gin.Context, info *relaycommon.RelayInfo, request *dto.ClaudeRequest) (any, error) {
+	// 最终验证：确保 max_tokens 严格大于 thinking.budget_tokens
+	// 这个要求适用于所有 Claude API（Anthropic 官方 API 和 AWS Bedrock）
+	// 必须在发送请求前最后检查一次，因为参数可能在序列化/反序列化或参数覆盖后发生变化
+	if request.Thinking != nil && request.Thinking.BudgetTokens != nil {
+		budgetTokens := *request.Thinking.BudgetTokens
+		// 如果 max_tokens 为 0，设置默认值
+		if request.MaxTokens == 0 {
+			request.MaxTokens = uint(budgetTokens + 100)
+		} else if budgetTokens >= int(request.MaxTokens) {
+			// 如果 budget_tokens >= max_tokens，调整 max_tokens 使其至少比 budget_tokens 大 1
+			request.MaxTokens = uint(budgetTokens + 1)
+		}
+	}
 	return request, nil
 }
 
