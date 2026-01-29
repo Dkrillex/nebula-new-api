@@ -170,9 +170,11 @@ func (a *Adaptor) GetRequestURL(info *relaycommon.RelayInfo) (string, error) {
 	suffix := ""
 	if a.RequestMode == RequestModeGemini {
 		// 使用 Google 官方 OpenAI 兼容端点（仅 Service Account 有 project，可构建 URL）
+		// 图片生成（imagen、*-image、*-image-preview）走原生端点，请求体为 contents/generationConfig，与 chat/completions 的 messages 格式不兼容
 		useCompat := model_setting.GetGeminiSettings().UseOpenAICompatibleEndpoint
-		common.SysLog(fmt.Sprintf("[Vertex][Gemini] GetRequestURL: UseOpenAICompatibleEndpoint=%v", useCompat))
-		if useCompat && !gemini.IsGeminiLiveModel(info.UpstreamModelName) &&
+		isImageModel := strings.HasPrefix(info.UpstreamModelName, "imagen") || strings.Contains(info.UpstreamModelName, "-image")
+		common.SysLog(fmt.Sprintf("[Vertex][Gemini] GetRequestURL: UseOpenAICompatibleEndpoint=%v, isImageModel=%v", useCompat, isImageModel))
+		if useCompat && !gemini.IsGeminiLiveModel(info.UpstreamModelName) && !isImageModel &&
 			info.ChannelOtherSettings.VertexKeyType != dto.VertexKeyTypeAPIKey {
 			adc := &Credentials{}
 			if err := common.Unmarshal([]byte(info.ApiKey), adc); err == nil && adc.ProjectID != "" {
