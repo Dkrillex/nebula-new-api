@@ -242,9 +242,12 @@ func (r *GeneralOpenAIRequest) GetSystemRoleName() string {
 }
 
 type ToolCallRequest struct {
-	ID       string          `json:"id,omitempty"`
-	Type     string          `json:"type"`
-	Function FunctionRequest `json:"function"`
+	ID               string          `json:"id,omitempty"`
+	Type             string          `json:"type"`
+	Function         FunctionRequest `json:"function"`
+	ThoughtSignature string          `json:"thought_signature,omitempty"`
+	// ExtraContent 供 Vertex/Gemini 等使用，如 extra_content.google.thought_signature（Chat Completions 要求 thought_signature 放此处）
+	ExtraContent map[string]any `json:"extra_content,omitempty"`
 }
 
 type FunctionRequest struct {

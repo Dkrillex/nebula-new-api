@@ -463,6 +463,7 @@ func CovertGemini2OpenAI(c *gin.Context, textRequest dto.GeneralOpenAIRequest, i
 						FunctionName: call.Function.Name,
 						Arguments:    args,
 					},
+					ThoughtSignature: call.ThoughtSignature,
 				}
 				parts = append(parts, toolCall)
 				tool_call_ids[call.ID] = call.Function.Name
@@ -613,6 +614,21 @@ func cleanFunctionParameters(params interface{}) interface{} {
 		delete(cleanedMap, "exclusiveMinimum")
 		delete(cleanedMap, "$schema")
 		delete(cleanedMap, "additionalProperties")
+
+		// Vertex AI 要求 type 为单一字符串，不接受数组（如 ["string","null"]），需规范化为单值
+		if typeVal, exists := cleanedMap["type"]; exists {
+			if typeArr, ok := typeVal.([]interface{}); ok && len(typeArr) > 0 {
+				for _, t := range typeArr {
+					if s, ok := t.(string); ok && s != "null" {
+						cleanedMap["type"] = s
+						break
+					}
+				}
+				if _, stillArray := cleanedMap["type"].([]interface{}); stillArray {
+					cleanedMap["type"] = "string"
+				}
+			}
+		}
 
 		// Check and clean 'format' for string types
 		if propType, typeExists := cleanedMap["type"].(string); typeExists && propType == "string" {
@@ -828,7 +844,7 @@ func getResponseToolCall(item *dto.GeminiPart) *dto.ToolCallResponse {
 	if err != nil {
 		return nil
 	}
-	return &dto.ToolCallResponse{
+	resp := &dto.ToolCallResponse{
 		ID:   fmt.Sprintf("call_%s", common.GetUUID()),
 		Type: "function",
 		Function: dto.FunctionResponse{
@@ -836,6 +852,10 @@ func getResponseToolCall(item *dto.GeminiPart) *dto.ToolCallResponse {
 			Name:      item.FunctionCall.FunctionName,
 		},
 	}
+	if item.ThoughtSignature != "" {
+		resp.ThoughtSignature = item.ThoughtSignature
+	}
+	return resp
 }
 
 // 检查是否为图像生成响应
@@ -1080,6 +1100,7 @@ func GeminiChatStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *
 	var usage = &dto.Usage{}
 	var imageCount int
 	finishReason := constant.FinishReasonStop
+	var sentToolCallContent bool // 整次流是否发送过带 tool_calls 内容的 chunk
 
 	helper.StreamScannerHandler(c, resp, info, func(data string) bool {
 		var geminiResponse dto.GeminiChatResponse
@@ -1156,9 +1177,15 @@ func GeminiChatStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *
 			}
 		}
 
-		err = handleStream(c, info, response)
-		if err != nil {
-			logger.LogError(c, err.Error())
+		// 仅在有内容时向客户端发送内容块和 stop 块，避免「仅有 usage、无 candidates」时仍 200+ 计费
+		if len(response.Choices) > 0 {
+			if response.IsToolCall() && len(response.Choices[0].Delta.ToolCalls) > 0 {
+				sentToolCallContent = true
+			}
+			err = handleStream(c, info, response)
+			if err != nil {
+				logger.LogError(c, err.Error())
+			}
 		}
 		if isStop {
 			// 在最后一个响应块中提取图片和文本输出 tokens
@@ -1176,7 +1203,9 @@ func GeminiChatStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *
 				c.Set("gemini_image_output_tokens", imageOutputTokens)
 				c.Set("gemini_text_output_tokens", textOutputTokens)
 			}
-			_ = handleStream(c, info, helper.GenerateStopResponse(id, createAt, info.UpstreamModelName, finishReason))
+			if len(response.Choices) > 0 {
+				_ = handleStream(c, info, helper.GenerateStopResponse(id, createAt, info.UpstreamModelName, finishReason))
+			}
 		}
 		return true
 	})
@@ -1184,6 +1213,14 @@ func GeminiChatStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *
 	if info.SendResponseCount == 0 {
 		// 空补全，报错不计费
 		// empty response, throw an error
+		return nil, types.NewOpenAIError(errors.New("no response received from Gemini API"), types.ErrorCodeEmptyResponse, http.StatusInternalServerError)
+	}
+	// 整次流只发了起始 chunk、无任何正文或 tool 内容时，按空响应报错且不计费（不依赖 usage 是否>0，因单 chunk 可能未带 usage）
+	if responseText.Len() == 0 && info.SendResponseCount <= 1 {
+		return nil, types.NewOpenAIError(errors.New("no response received from Gemini API"), types.ErrorCodeEmptyResponse, http.StatusInternalServerError)
+	}
+	// 无正文且整次流从未发送过 tool call 内容（如上一轮 assistant 纯文本、本轮要求必须用 tool 时 Vertex 只回 usage/空 content），按空响应报错且不计费
+	if responseText.Len() == 0 && !sentToolCallContent {
 		return nil, types.NewOpenAIError(errors.New("no response received from Gemini API"), types.ErrorCodeEmptyResponse, http.StatusInternalServerError)
 	}
 

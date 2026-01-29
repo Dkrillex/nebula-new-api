@@ -107,6 +107,8 @@ type RelayInfo struct {
 	SendResponseCount      int
 	FinalPreConsumedQuota  int  // 最终预消耗的配额
 	IsClaudeBetaQuery      bool // /v1/messages?beta=true
+	// UseGeminiOpenAICompatibleEndpoint 本次请求使用 Google OpenAI 兼容端点，响应已是 OpenAI 格式
+	UseGeminiOpenAICompatibleEndpoint bool
 
 	PriceData types.PriceData
 

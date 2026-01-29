@@ -6,11 +6,13 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"one-api/common"
 	"one-api/dto"
 	"one-api/relay/channel"
 	"one-api/relay/channel/openai"
 	relaycommon "one-api/relay/common"
 	"one-api/relay/constant"
+	"one-api/relay/helper"
 	"one-api/service"
 	"one-api/setting/model_setting"
 	"one-api/types"
@@ -512,6 +514,35 @@ func (a *Adaptor) GetRequestURL(info *relaycommon.RelayInfo) (string, error) {
 		return fmt.Sprintf("%s/%s/models/%s:%s", info.ChannelBaseUrl, version, info.UpstreamModelName, action), nil
 	}
 
+	// 使用 Google 官方 OpenAI 兼容端点（协议适配器）：请求体保持 OpenAI 格式，由 Google 端转换
+	useCompat := model_setting.GetGeminiSettings().UseOpenAICompatibleEndpoint
+	common.SysLog(fmt.Sprintf("[Gemini] GetRequestURL: UseOpenAICompatibleEndpoint=%v, ChannelBaseUrl=%s", useCompat, info.ChannelBaseUrl))
+	if useCompat {
+		info.UseGeminiOpenAICompatibleEndpoint = true
+		baseURL := strings.TrimSuffix(strings.TrimSpace(info.ChannelBaseUrl), "/")
+		if strings.Contains(baseURL, "aiplatform.googleapis.com") {
+			// Vertex AI: .../v1/projects/{project}/locations/{location}/publishers/google -> .../locations/{location}/endpoints/openapi/chat/completions
+			const publishersGoogle = "/publishers/google"
+			if idx := strings.LastIndex(baseURL, publishersGoogle); idx != -1 {
+				baseURL = baseURL[:idx] + "/endpoints/openapi/chat/completions"
+				common.SysLog(fmt.Sprintf("[Gemini] 使用 OpenAI 兼容端点 URL: %s", baseURL))
+				return baseURL, nil
+			}
+		}
+		if strings.Contains(baseURL, "generativelanguage.googleapis.com") {
+			// Gemini API (Google AI Studio)
+			if !strings.HasPrefix(baseURL, "http") {
+				baseURL = "https://" + baseURL
+			}
+			url := fmt.Sprintf("%s/v1beta/openai/chat/completions", strings.TrimSuffix(baseURL, "/"))
+			common.SysLog(fmt.Sprintf("[Gemini] 使用 OpenAI 兼容端点 URL: %s", url))
+			return url, nil
+		}
+		// 无法推导 openapi base 时不启用兼容端点
+		common.SysLog("[Gemini] 无法从 ChannelBaseUrl 推导 OpenAI 兼容端点，回退到原生端点")
+		info.UseGeminiOpenAICompatibleEndpoint = false
+	}
+
 	action := "generateContent"
 	if info.IsStream {
 		action = "streamGenerateContent?alt=sse"
@@ -536,7 +567,12 @@ func (a *Adaptor) SetupRequestHeader(c *gin.Context, req *http.Header, info *rel
 		}
 		// 注意：Google AI Studio 的 API Key 会在 URL 查询参数中传递（在 GetRequestURL 中处理）
 	} else {
-		req.Set("x-goog-api-key", info.ApiKey)
+		// Vertex OpenAI 兼容端点仅支持 Bearer；Gemini API 兼容端点可用 x-goog-api-key 或 Bearer
+		if info.UseGeminiOpenAICompatibleEndpoint && strings.Contains(info.ChannelBaseUrl, "aiplatform.googleapis.com") {
+			req.Set("Authorization", "Bearer "+info.ApiKey)
+		} else {
+			req.Set("x-goog-api-key", info.ApiKey)
+		}
 	}
 	return nil
 }
@@ -546,6 +582,16 @@ func (a *Adaptor) ConvertOpenAIRequest(c *gin.Context, info *relaycommon.RelayIn
 		return nil, errors.New("request is nil")
 	}
 
+	// 使用 Google 官方 OpenAI 兼容端点：透传 OpenAI 格式，仅做 model 映射为 google/xxx
+	if model_setting.GetGeminiSettings().UseOpenAICompatibleEndpoint {
+		pass := *request
+		pass.Model = "google/" + info.UpstreamModelName
+		helper.EnsureGeminiThoughtSignaturesForOpenAIRequest(&pass)
+		common.SysLog(fmt.Sprintf("[Gemini] ConvertOpenAIRequest: 使用兼容端点，透传 OpenAI 格式，model=%s", pass.Model))
+		return &pass, nil
+	}
+
+	common.SysLog(fmt.Sprintf("[Gemini] ConvertOpenAIRequest: 使用原生 Gemini 格式转换，model=%s", info.UpstreamModelName))
 	geminiRequest, err := CovertGemini2OpenAI(c, *request, info)
 	if err != nil {
 		return nil, err
@@ -619,6 +665,14 @@ func (a *Adaptor) DoResponse(c *gin.Context, resp *http.Response, info *relaycom
 	if IsGeminiLiveModel(info.UpstreamModelName) && info.TargetWs != nil {
 		newErr, realtimeUsage := GeminiLiveHandler(c, info)
 		return realtimeUsage, newErr
+	}
+
+	// 使用 Google OpenAI 兼容端点时，响应已是 OpenAI 格式，直接走 OpenAI 解析
+	if info.UseGeminiOpenAICompatibleEndpoint {
+		if info.IsStream {
+			return openai.OaiStreamHandler(c, info, resp)
+		}
+		return openai.OpenaiHandler(c, info, resp)
 	}
 
 	if info.RelayMode == constant.RelayModeGemini {

@@ -86,6 +86,11 @@ func TextHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *types
 		}
 		requestBody = bytes.NewBuffer(body)
 	} else {
+		// 先调用 GetRequestURL，以便 Vertex/Gemini 设置 info.UseGeminiOpenAICompatibleEndpoint；
+		// ConvertOpenAIRequest 依赖该标志决定透传 OpenAI 格式还是转为原生格式。
+		if _, err := adaptor.GetRequestURL(info); err != nil {
+			return types.NewError(err, types.ErrorCodeConvertRequestFailed, types.ErrOptionWithSkipRetry())
+		}
 		convertedRequest, err := adaptor.ConvertOpenAIRequest(c, info, request)
 		if err != nil {
 			return types.NewError(err, types.ErrorCodeConvertRequestFailed, types.ErrOptionWithSkipRetry())

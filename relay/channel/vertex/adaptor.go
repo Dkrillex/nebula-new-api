@@ -14,6 +14,7 @@ import (
 	"one-api/relay/channel/openai"
 	relaycommon "one-api/relay/common"
 	"one-api/relay/constant"
+	"one-api/relay/helper"
 	"one-api/setting/model_setting"
 	"one-api/types"
 	"strings"
@@ -168,6 +169,29 @@ func (a *Adaptor) getRequestUrl(info *relaycommon.RelayInfo, modelName, suffix s
 func (a *Adaptor) GetRequestURL(info *relaycommon.RelayInfo) (string, error) {
 	suffix := ""
 	if a.RequestMode == RequestModeGemini {
+		// 使用 Google 官方 OpenAI 兼容端点（仅 Service Account 有 project，可构建 URL）
+		useCompat := model_setting.GetGeminiSettings().UseOpenAICompatibleEndpoint
+		common.SysLog(fmt.Sprintf("[Vertex][Gemini] GetRequestURL: UseOpenAICompatibleEndpoint=%v", useCompat))
+		if useCompat && !gemini.IsGeminiLiveModel(info.UpstreamModelName) &&
+			info.ChannelOtherSettings.VertexKeyType != dto.VertexKeyTypeAPIKey {
+			adc := &Credentials{}
+			if err := common.Unmarshal([]byte(info.ApiKey), adc); err == nil && adc.ProjectID != "" {
+				region := GetModelRegion(info.ApiVersion, info.OriginModelName)
+				var baseURL string
+				if region == "global" {
+					baseURL = fmt.Sprintf("https://aiplatform.googleapis.com/v1/projects/%s/locations/global/endpoints/openapi/chat/completions", adc.ProjectID)
+				} else {
+					baseURL = fmt.Sprintf("https://%s-aiplatform.googleapis.com/v1/projects/%s/locations/%s/endpoints/openapi/chat/completions", region, adc.ProjectID, region)
+				}
+				info.UseGeminiOpenAICompatibleEndpoint = true
+				common.SysLog(fmt.Sprintf("[Vertex][Gemini] 使用 OpenAI 兼容端点 URL: %s", baseURL))
+				return baseURL, nil
+			}
+			if useCompat && info.ChannelOtherSettings.VertexKeyType == dto.VertexKeyTypeAPIKey {
+				common.SysLog("[Vertex][Gemini] API Key 模式无 project，无法使用 OpenAI 兼容端点，回退到原生端点")
+			}
+		}
+
 		// Check if this is a Gemini Live API request (WebSocket)
 		if gemini.IsGeminiLiveModel(info.UpstreamModelName) {
 			// H15: WebSocket URL 应该包含项目和区域信息，类似于 REST API
@@ -385,6 +409,14 @@ func (a *Adaptor) ConvertOpenAIRequest(c *gin.Context, info *relaycommon.RelayIn
 		info.UpstreamModelName = claudeReq.Model
 		return vertexClaudeReq, nil
 	} else if a.RequestMode == RequestModeGemini {
+		if info.UseGeminiOpenAICompatibleEndpoint {
+			pass := *request
+			pass.Model = "google/" + info.UpstreamModelName
+			helper.EnsureGeminiThoughtSignaturesForOpenAIRequest(&pass)
+			common.SysLog(fmt.Sprintf("[Vertex][Gemini] ConvertOpenAIRequest: 使用兼容端点，透传 OpenAI 格式，model=%s", pass.Model))
+			c.Set("request_model", request.Model)
+			return &pass, nil
+		}
 		geminiRequest, err := gemini.CovertGemini2OpenAI(c, *request, info)
 		if err != nil {
 			return nil, err
@@ -431,6 +463,9 @@ func (a *Adaptor) DoResponse(c *gin.Context, resp *http.Response, info *relaycom
 		case RequestModeClaude:
 			return claude.ClaudeStreamHandler(c, resp, info, claude.RequestModeMessage)
 		case RequestModeGemini:
+			if info.UseGeminiOpenAICompatibleEndpoint {
+				return openai.OaiStreamHandler(c, info, resp)
+			}
 			if info.RelayMode == constant.RelayModeGemini {
 				return gemini.GeminiTextGenerationStreamHandler(c, info, resp)
 			} else {
@@ -444,6 +479,9 @@ func (a *Adaptor) DoResponse(c *gin.Context, resp *http.Response, info *relaycom
 		case RequestModeClaude:
 			return claude.ClaudeHandler(c, resp, info, claude.RequestModeMessage)
 		case RequestModeGemini:
+			if info.UseGeminiOpenAICompatibleEndpoint {
+				return openai.OpenaiHandler(c, info, resp)
+			}
 			if info.RelayMode == constant.RelayModeGemini {
 				return gemini.GeminiTextGenerationHandler(c, info, resp)
 			} else {

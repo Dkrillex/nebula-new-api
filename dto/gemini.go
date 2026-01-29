@@ -240,15 +240,18 @@ type GeminiPart struct {
 	FileData            *GeminiFileData                `json:"fileData,omitempty"`
 	ExecutableCode      *GeminiPartExecutableCode      `json:"executableCode,omitempty"`
 	CodeExecutionResult *GeminiPartCodeExecutionResult `json:"codeExecutionResult,omitempty"`
+	// ThoughtSignature: Gemini 3 要求 function call 回传时带上，用于验证
+	ThoughtSignature string `json:"thoughtSignature,omitempty"`
 }
 
-// UnmarshalJSON custom unmarshaler for GeminiPart to support snake_case and camelCase for InlineData
+// UnmarshalJSON custom unmarshaler for GeminiPart to support snake_case and camelCase for InlineData / ThoughtSignature
 func (p *GeminiPart) UnmarshalJSON(data []byte) error {
 	// Alias to avoid recursion during unmarshalling
 	type Alias GeminiPart
 	var aux struct {
 		Alias
-		InlineDataSnake *GeminiInlineData `json:"inline_data,omitempty"` // snake_case variant
+		InlineDataSnake       *GeminiInlineData `json:"inline_data,omitempty"`
+		ThoughtSignatureSnake string            `json:"thought_signature,omitempty"`
 	}
 
 	if err := common.Unmarshal(data, &aux); err != nil {
@@ -258,14 +261,14 @@ func (p *GeminiPart) UnmarshalJSON(data []byte) error {
 	// Assign fields from alias
 	*p = GeminiPart(aux.Alias)
 
-	// Prioritize snake_case for InlineData if present
 	if aux.InlineDataSnake != nil {
 		p.InlineData = aux.InlineDataSnake
-	} else if aux.InlineData != nil { // Fallback to camelCase from Alias
+	} else if aux.InlineData != nil {
 		p.InlineData = aux.InlineData
 	}
-	// Other fields like Text, FunctionCall etc. are already populated via aux.Alias
-
+	if aux.ThoughtSignatureSnake != "" {
+		p.ThoughtSignature = aux.ThoughtSignatureSnake
+	}
 	return nil
 }
 

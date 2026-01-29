@@ -11,6 +11,8 @@ type GeminiSettings struct {
 	SupportedImagineModels                []string          `json:"supported_imagine_models"`
 	ThinkingAdapterEnabled                bool              `json:"thinking_adapter_enabled"`
 	ThinkingAdapterBudgetTokensPercentage float64           `json:"thinking_adapter_budget_tokens_percentage"`
+	// UseOpenAICompatibleEndpoint 使用 Google 官方 OpenAI 兼容端点（协议适配器），请求体保持 OpenAI 格式由 Google 端转换，避免上游参数变更导致需改代码
+	UseOpenAICompatibleEndpoint bool `json:"use_openai_compatible_endpoint"`
 }
 
 // 默认配置
@@ -29,6 +31,7 @@ var defaultGeminiSettings = GeminiSettings{
 	},
 	ThinkingAdapterEnabled:                false,
 	ThinkingAdapterBudgetTokensPercentage: 0.6,
+	UseOpenAICompatibleEndpoint:           true,
 }
 
 // 全局实例

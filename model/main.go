@@ -247,10 +247,10 @@ func InitLogDB() (err error) {
 }
 
 func migrateDB() error {
-	err := DB.AutoMigrate(
+	// 先迁移除 User 外的表，避免 User 表索引已达 64 个时整次迁移失败
+	tablesWithoutUser := []interface{}{
 		&Channel{},
 		&Token{},
-		&User{},
 		&PasskeyCredential{},
 		&Option{},
 		&Redemption{},
@@ -266,12 +266,19 @@ func migrateDB() error {
 		&Setup{},
 		&TwoFA{},
 		&TwoFABackupCode{},
-		// OEM系统相关表
 		&PlatformCost{},
 		&OemConfig{},
 		&OemDiscount{},
-	)
-	if err != nil {
+	}
+	if err := DB.AutoMigrate(tablesWithoutUser...); err != nil {
+		return err
+	}
+	// User 表单独迁移：若因 MySQL「Too many keys; max 64」失败，仅打日志并继续，保证应用能启动
+	if err := DB.AutoMigrate(&User{}); err != nil {
+		if strings.Contains(err.Error(), "Too many keys") || strings.Contains(err.Error(), "1069") {
+			common.SysLog("database migration: User table skipped due to too many keys (max 64). Please run: SHOW INDEX FROM `users`; and drop redundant indexes, then restart.")
+			return nil
+		}
 		return err
 	}
 	return nil
