@@ -31,7 +31,7 @@ var defaultGeminiSettings = GeminiSettings{
 	},
 	ThinkingAdapterEnabled:                false,
 	ThinkingAdapterBudgetTokensPercentage: 0.6,
-	UseOpenAICompatibleEndpoint:           true,
+	UseOpenAICompatibleEndpoint:           false,
 }
 
 // 全局实例
