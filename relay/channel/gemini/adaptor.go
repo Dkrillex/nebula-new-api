@@ -514,10 +514,10 @@ func (a *Adaptor) GetRequestURL(info *relaycommon.RelayInfo) (string, error) {
 		return fmt.Sprintf("%s/%s/models/%s:%s", info.ChannelBaseUrl, version, info.UpstreamModelName, action), nil
 	}
 
-	// 使用 Google 官方 OpenAI 兼容端点（协议适配器）：请求体保持 OpenAI 格式，由 Google 端转换
+	// 使用 Google 官方 OpenAI 兼容端点（协议适配器）：仅当请求来自 OpenAI 风格路径时使用，请求体保持 OpenAI 格式
 	useCompat := model_setting.GetGeminiSettings().UseOpenAICompatibleEndpoint
 	common.SysLog(fmt.Sprintf("[Gemini] GetRequestURL: UseOpenAICompatibleEndpoint=%v, ChannelBaseUrl=%s", useCompat, info.ChannelBaseUrl))
-	if useCompat {
+	if useCompat && info.RelayMode == constant.RelayModeChatCompletions {
 		info.UseGeminiOpenAICompatibleEndpoint = true
 		baseURL := strings.TrimSuffix(strings.TrimSpace(info.ChannelBaseUrl), "/")
 		if strings.Contains(baseURL, "aiplatform.googleapis.com") {

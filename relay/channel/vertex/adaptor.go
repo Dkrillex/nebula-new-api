@@ -174,7 +174,7 @@ func (a *Adaptor) GetRequestURL(info *relaycommon.RelayInfo) (string, error) {
 		useCompat := model_setting.GetGeminiSettings().UseOpenAICompatibleEndpoint
 		isImageModel := strings.HasPrefix(info.UpstreamModelName, "imagen") || strings.Contains(info.UpstreamModelName, "-image")
 		common.SysLog(fmt.Sprintf("[Vertex][Gemini] GetRequestURL: UseOpenAICompatibleEndpoint=%v, isImageModel=%v", useCompat, isImageModel))
-		if useCompat && !gemini.IsGeminiLiveModel(info.UpstreamModelName) && !isImageModel &&
+		if useCompat && info.RelayMode == constant.RelayModeChatCompletions && !gemini.IsGeminiLiveModel(info.UpstreamModelName) && !isImageModel &&
 			info.ChannelOtherSettings.VertexKeyType != dto.VertexKeyTypeAPIKey {
 			adc := &Credentials{}
 			if err := common.Unmarshal([]byte(info.ApiKey), adc); err == nil && adc.ProjectID != "" {
