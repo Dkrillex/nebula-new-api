@@ -9,6 +9,14 @@ import (
 )
 
 func SetApiRouter(router *gin.Engine) {
+	// Nebula V1 Models API - 顶层路由
+	nebulaV1Router := router.Group("/nebula/v1")
+	nebulaV1Router.Use(middleware.SystemIdentify())
+	nebulaV1Router.Use(middleware.TokenAuth())
+	{
+		nebulaV1Router.GET("/models", controller.GetNebulaModels)
+	}
+
 	apiRouter := router.Group("/api")
 	apiRouter.Use(middleware.SystemIdentify()) // 系统识别中间件（优先级最高）
 	apiRouter.Use(gzip.Gzip(gzip.DefaultCompression))
