@@ -248,12 +248,18 @@ type ToolCallRequest struct {
 	ThoughtSignature string          `json:"thought_signature,omitempty"`
 	// ExtraContent 供 Vertex/Gemini 等使用，如 extra_content.google.thought_signature（Chat Completions 要求 thought_signature 放此处）
 	ExtraContent map[string]any `json:"extra_content,omitempty"`
+	// Cursor/OpenAPI 扁平格式：无 "function" 包裹时，name/description/input_schema 在顶层
+	Name        string `json:"name,omitempty"`
+	Description string `json:"description,omitempty"`
+	Parameters  any    `json:"parameters,omitempty"`
+	InputSchema any    `json:"input_schema,omitempty"`
 }
 
 type FunctionRequest struct {
 	Description string `json:"description,omitempty"`
 	Name        string `json:"name"`
 	Parameters  any    `json:"parameters,omitempty"`
+	InputSchema any    `json:"input_schema,omitempty"` // Cursor/OpenAPI 风格，与 parameters 二选一
 	Arguments   string `json:"arguments,omitempty"`
 }
 

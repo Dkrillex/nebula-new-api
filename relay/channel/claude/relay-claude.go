@@ -76,14 +76,42 @@ func RequestOpenAI2ClaudeMessage(c *gin.Context, textRequest dto.GeneralOpenAIRe
 	claudeTools := make([]any, 0, len(textRequest.Tools))
 
 	for _, tool := range textRequest.Tools {
-		if params, ok := tool.Function.Parameters.(map[string]any); ok {
+		// 有效 name：优先 function，否则用 Cursor/扁平格式的顶层 name
+		name := tool.Function.Name
+		if name == "" {
+			name = tool.Name
+		}
+		desc := tool.Function.Description
+		if desc == "" {
+			desc = tool.Description
+		}
+		// 有效 params：优先 function.parameters，否则 function.input_schema，再否则顶层 parameters/input_schema（Cursor 扁平格式）
+		params, _ := tool.Function.Parameters.(map[string]any)
+		usedInputSchema := false
+		if params == nil {
+			params, _ = tool.Function.InputSchema.(map[string]any)
+			usedInputSchema = params != nil
+		}
+		if params == nil {
+			params, _ = tool.Parameters.(map[string]any)
+		}
+		if params == nil {
+			params, _ = tool.InputSchema.(map[string]any)
+			usedInputSchema = params != nil
+		}
+		if params != nil && name != "" {
 			claudeTool := dto.Tool{
-				Name:        tool.Function.Name,
-				Description: tool.Function.Description,
+				Name:        name,
+				Description: desc,
 			}
 			claudeTool.InputSchema = make(map[string]interface{})
 			if params["type"] != nil {
-				claudeTool.InputSchema["type"] = params["type"].(string)
+				if s, ok := params["type"].(string); ok {
+					claudeTool.InputSchema["type"] = s
+				}
+			}
+			if claudeTool.InputSchema["type"] == nil {
+				claudeTool.InputSchema["type"] = "object"
 			}
 			claudeTool.InputSchema["properties"] = params["properties"]
 			claudeTool.InputSchema["required"] = params["required"]
@@ -104,7 +132,15 @@ func RequestOpenAI2ClaudeMessage(c *gin.Context, textRequest dto.GeneralOpenAIRe
 				claudeTool.InputSchema[s] = a
 			}
 			claudeTools = append(claudeTools, &claudeTool)
+			if common.DebugEnabled && usedInputSchema {
+				logger.LogDebug(c, fmt.Sprintf("[Claude tools] tool from input_schema: name=%s", name))
+			}
+		} else {
+			logger.LogWarn(c, fmt.Sprintf("[Claude tools] tool skipped (no parameters/input_schema or name): name=%s", name))
 		}
+	}
+	if len(textRequest.Tools) > 0 {
+		logger.LogInfo(c, fmt.Sprintf("[Claude tools] request_tools=%d converted=%d", len(textRequest.Tools), len(claudeTools)))
 	}
 
 	// Web search tool
@@ -305,7 +341,10 @@ func RequestOpenAI2ClaudeMessage(c *gin.Context, textRequest dto.GeneralOpenAIRe
 				formatMessages = formatMessages[:len(formatMessages)-1]
 			}
 		}
+		// 空内容或空数组会导致上游模型丢失上下文（如 Cursor Plan/Agent 出现重复“你好”），统一用占位
 		if fmtMessage.Content == nil {
+			fmtMessage.SetStringContent("...")
+		} else if arr, ok := fmtMessage.Content.([]any); ok && len(arr) == 0 {
 			fmtMessage.SetStringContent("...")
 		}
 		formatMessages = append(formatMessages, fmtMessage)
@@ -472,7 +511,48 @@ func RequestOpenAI2ClaudeMessage(c *gin.Context, textRequest dto.GeneralOpenAIRe
 						})
 					}
 				}
-				claudeMessage.Content = claudeMediaMessages
+				// Cursor 等客户端可能把 tool_use 放在 content 数组里而非 tool_calls 字段，需从 content 中解析
+				if message.ToolCalls == nil && message.Content != nil {
+					var contentArr []map[string]any
+					contentBytes, _ := json.Marshal(message.Content)
+					if err := json.Unmarshal(contentBytes, &contentArr); err == nil {
+						for _, item := range contentArr {
+							if t, _ := item["type"].(string); t == "tool_use" {
+								id, _ := item["id"].(string)
+								name, _ := item["name"].(string)
+								input := item["input"]
+								if input == nil {
+									input = map[string]any{}
+								}
+								claudeMediaMessages = append(claudeMediaMessages, dto.ClaudeMediaMessage{
+									Type:  "tool_use",
+									Id:    id,
+									Name:  name,
+									Input: input,
+								})
+								continue
+							}
+							// Cursor 等可能把多条 tool 结果放在一条 user 消息的 content 里（type: tool_result），ParseContent 不识别会丢
+							if message.Role == "user" {
+								if t, _ := item["type"].(string); t == "tool_result" {
+									toolUseId, _ := item["tool_use_id"].(string)
+									content := item["content"]
+									claudeMediaMessages = append(claudeMediaMessages, dto.ClaudeMediaMessage{
+										Type:      "tool_result",
+										ToolUseId: toolUseId,
+										Content:   content,
+									})
+								}
+							}
+						}
+					}
+				}
+				// 若转换后仍为空（如 Cursor 发来 content:[]），避免上游收到空内容导致上下文丢失
+				if len(claudeMediaMessages) == 0 {
+					claudeMessage.Content = "..."
+				} else {
+					claudeMessage.Content = claudeMediaMessages
+				}
 			}
 			claudeMessages = append(claudeMessages, claudeMessage)
 		}
@@ -488,7 +568,7 @@ func RequestOpenAI2ClaudeMessage(c *gin.Context, textRequest dto.GeneralOpenAIRe
 	return &claudeRequest, nil
 }
 
-func StreamResponseClaude2OpenAI(reqMode int, claudeResponse *dto.ClaudeResponse) *dto.ChatCompletionsStreamResponse {
+func StreamResponseClaude2OpenAI(reqMode int, claudeResponse *dto.ClaudeResponse, claudeInfo *ClaudeResponseInfo) *dto.ChatCompletionsStreamResponse {
 	var response dto.ChatCompletionsStreamResponse
 	response.Object = "chat.completion.chunk"
 	response.Model = claudeResponse.Model
@@ -500,6 +580,9 @@ func StreamResponseClaude2OpenAI(reqMode int, claudeResponse *dto.ClaudeResponse
 		if fcIdx < 0 {
 			fcIdx = 0
 		}
+		if claudeInfo != nil {
+			claudeInfo.CurrentToolIndex = fcIdx
+		}
 	}
 	var choice dto.ChatCompletionsStreamResponseChoice
 	if reqMode == RequestModeCompletion {
@@ -510,11 +593,19 @@ func StreamResponseClaude2OpenAI(reqMode int, claudeResponse *dto.ClaudeResponse
 		}
 	} else {
 		if claudeResponse.Type == "message_start" {
+			// 方案D调试日志：记录每个SSE事件
+			common.SysLog(fmt.Sprintf("[Claude SSE] event=message_start message_id=%s model=%s", claudeResponse.Message.Id, claudeResponse.Message.Model))
 			response.Id = claudeResponse.Message.Id
 			response.Model = claudeResponse.Message.Model
 			//claudeUsage = &claudeResponse.Message.Usage
 			choice.Delta.SetContentString("")
 			choice.Delta.Role = "assistant"
+			if claudeInfo != nil {
+				claudeInfo.ToolCallCount = 0
+				claudeInfo.ToolArgsBuffer = make(map[int]string)
+				claudeInfo.LastToolCallNames = make(map[int]string)
+				claudeInfo.PendingToolCalls = make(map[int]*PendingToolCall) // 方案D：初始化工具缓冲区
+			}
 		} else if claudeResponse.Type == "content_block_start" {
 			if claudeResponse.ContentBlock != nil {
 				// 如果是文本块，尽可能发送首段文本（若存在）
@@ -522,33 +613,133 @@ func StreamResponseClaude2OpenAI(reqMode int, claudeResponse *dto.ClaudeResponse
 					choice.Delta.SetContentString(*claudeResponse.ContentBlock.Text)
 				}
 				if claudeResponse.ContentBlock.Type == "tool_use" {
-					tools = append(tools, dto.ToolCallResponse{
-						Index: common.GetPointer(fcIdx),
-						ID:    claudeResponse.ContentBlock.Id,
-						Type:  "function",
-						Function: dto.FunctionResponse{
-							Name:      claudeResponse.ContentBlock.Name,
-							Arguments: "",
-						},
-					})
+					// ========== 方案D：只缓冲，不立即 flush ==========
+					if claudeInfo != nil {
+						toolId := claudeResponse.ContentBlock.Id
+						if toolId == "" {
+							toolId = claudeResponse.ContentBlock.ToolUseId
+						}
+						toolName := claudeResponse.ContentBlock.Name
+
+						// 方案D调试日志：记录每个content_block_start事件的完整信息
+						common.SysLog(fmt.Sprintf("[Claude SSE] event=content_block_start type=tool_use index=%v id=%s name=%s ToolUseId=%s", claudeResponse.Index, toolId, toolName, claudeResponse.ContentBlock.ToolUseId))
+
+						// 检查是否是对同一 tool 的重复/补充 content_block_start（按 ID 去重）
+						existingIdx := -1
+						for idx, pending := range claudeInfo.PendingToolCalls {
+							if pending != nil && pending.ID == toolId {
+								existingIdx = idx
+								break
+							}
+						}
+
+						if existingIdx >= 0 {
+							// 同 ID 的补充包：只更新 name（如果有）
+							common.SysLog(fmt.Sprintf("[Claude SSE] tool_use same_id update: existingIdx=%d id=%s newName=%s", existingIdx, toolId, toolName))
+							if toolName != "" {
+								claudeInfo.PendingToolCalls[existingIdx].Name = toolName
+								claudeInfo.LastToolCallNames[existingIdx] = toolName
+							}
+							fcIdx = existingIdx
+							claudeInfo.CurrentToolIndex = fcIdx
+						} else {
+							// 新工具：分配新 index，存入缓冲区
+							fcIdx = claudeInfo.ToolCallCount
+							claudeInfo.CurrentToolIndex = fcIdx
+							claudeInfo.ToolCallCount++
+
+							// 初始化各种 map
+							if claudeInfo.LastToolCallIds == nil {
+								claudeInfo.LastToolCallIds = make(map[int]string)
+							}
+							if claudeInfo.LastToolCallNames == nil {
+								claudeInfo.LastToolCallNames = make(map[int]string)
+							}
+							if claudeInfo.ToolArgsBuffer == nil {
+								claudeInfo.ToolArgsBuffer = make(map[int]string)
+							}
+							if claudeInfo.PendingToolCalls == nil {
+								claudeInfo.PendingToolCalls = make(map[int]*PendingToolCall)
+							}
+
+							claudeInfo.LastToolCallIds[fcIdx] = toolId
+							claudeInfo.LastToolCallNames[fcIdx] = toolName
+							claudeInfo.PendingToolCalls[fcIdx] = &PendingToolCall{
+								ID:   toolId,
+								Name: toolName,
+							}
+							common.SysLog(fmt.Sprintf("[Claude SSE] tool_use new_tool: fcIdx=%d id=%s name=%s", fcIdx, toolId, toolName))
+						}
+
+						// 处理 Input（参数）
+						argsStr := ""
+						if claudeResponse.ContentBlock.Input != nil {
+							if b, err := json.Marshal(claudeResponse.ContentBlock.Input); err == nil {
+								argsStr = string(b)
+							}
+							argsNotEmpty := argsStr != "" && argsStr != "{}"
+							if argsNotEmpty {
+								if claudeInfo.SentFullToolInput == nil {
+									claudeInfo.SentFullToolInput = make(map[int]bool)
+								}
+								claudeInfo.SentFullToolInput[fcIdx] = true
+							}
+							if argsStr == "{}" {
+								argsStr = ""
+							}
+						}
+
+						// 更新 buffer（只有新值非空才覆盖）
+						if argsStr != "" {
+							claudeInfo.ToolArgsBuffer[fcIdx] = argsStr
+							claudeInfo.PendingToolCalls[fcIdx].Arguments = argsStr
+						}
+					}
+					// 方案D：不在此处发 chunk，等 message_delta 时一次性 flush 所有 pending tools
 				}
 			} else {
 				return nil
 			}
 		} else if claudeResponse.Type == "content_block_delta" {
+			// 方案D调试日志
+			common.SysLog(fmt.Sprintf("[Claude SSE] event=content_block_delta index=%v delta_type=%s", claudeResponse.Index, claudeResponse.Delta.Type))
+
 			if claudeResponse.Delta != nil {
 				choice.Delta.Content = claudeResponse.Delta.Text
+				// 部分上游（如 Bedrock 流式）在 content_block_start 中不传 name，而在 delta 中传；补全 LastToolCallNames 和 PendingToolCalls
+				deltaName := claudeResponse.Delta.Name
+				if deltaName == "" && claudeResponse.ContentBlock != nil {
+					deltaName = claudeResponse.ContentBlock.Name
+				}
+				if deltaName != "" && claudeInfo != nil {
+					fcIdxForName := fcIdx
+					if claudeResponse.Index == nil {
+						fcIdxForName = claudeInfo.CurrentToolIndex
+					}
+					common.SysLog(fmt.Sprintf("[Claude SSE] content_block_delta updating name: fcIdxForName=%d name=%s", fcIdxForName, deltaName))
+					if claudeInfo.LastToolCallNames != nil {
+						claudeInfo.LastToolCallNames[fcIdxForName] = deltaName
+					}
+					// 方案D：同步更新 PendingToolCalls 中的 name
+					if claudeInfo.PendingToolCalls != nil && claudeInfo.PendingToolCalls[fcIdxForName] != nil {
+						claudeInfo.PendingToolCalls[fcIdxForName].Name = deltaName
+					}
+				}
 				switch claudeResponse.Delta.Type {
 				case "input_json_delta":
-					tools = append(tools, dto.ToolCallResponse{
-						Type:  "function",
-						Index: common.GetPointer(fcIdx),
-						Function: dto.FunctionResponse{
-							Arguments: *claudeResponse.Delta.PartialJson,
-						},
-					})
+					// 始终用 CurrentToolIndex：上游的 Index 是 content_block 序号（0 可能是 text），不是“第几个 tool”，否则 arguments 会错写到 index=0 导致 args_len=0
+					if claudeInfo != nil {
+						fcIdx = claudeInfo.CurrentToolIndex
+					}
+					// 若该 tool call 已在 content_block_start 中发送过完整 Arguments，则不再追加 buffer
+					if claudeInfo != nil && claudeInfo.SentFullToolInput != nil && claudeInfo.SentFullToolInput[fcIdx] {
+						break
+					}
+					// 只追加到 buffer，不在此处发 chunk；等 message_delta 时一次性 flush
+					if claudeInfo != nil && claudeInfo.ToolArgsBuffer != nil && claudeResponse.Delta.PartialJson != nil {
+						claudeInfo.ToolArgsBuffer[fcIdx] += *claudeResponse.Delta.PartialJson
+					}
 				case "signature_delta":
-					// 加密的不处理
 					signatureContent := "\n"
 					choice.Delta.ReasoningContent = &signatureContent
 				case "thinking_delta":
@@ -556,7 +747,50 @@ func StreamResponseClaude2OpenAI(reqMode int, claudeResponse *dto.ClaudeResponse
 					choice.Delta.ReasoningContent = &thinkingContent
 				}
 			}
+		} else if claudeResponse.Type == "content_block_stop" {
+			// 方案D调试日志：content_block_stop 表示一个 content block 结束
+			common.SysLog(fmt.Sprintf("[Claude SSE] event=content_block_stop index=%v", claudeResponse.Index))
+			// 不在此处 flush，等 message_delta 统一处理
 		} else if claudeResponse.Type == "message_delta" {
+			// 方案D调试日志
+			common.SysLog(fmt.Sprintf("[Claude SSE] event=message_delta stop_reason=%v", claudeResponse.Delta.StopReason))
+
+			// ========== 方案D：一次性 flush 所有 pending tools ==========
+			if claudeInfo != nil && claudeInfo.PendingToolCalls != nil {
+				for idx := 0; idx < claudeInfo.ToolCallCount; idx++ {
+					pending := claudeInfo.PendingToolCalls[idx]
+					if pending == nil || pending.Flushed {
+						continue
+					}
+
+					// 从 ToolArgsBuffer 获取最终的 arguments（可能在 delta 中累积）
+					finalArgs := claudeInfo.ToolArgsBuffer[idx]
+					// 从 LastToolCallNames 获取最终的 name（可能在 delta 中更新）
+					finalName := claudeInfo.LastToolCallNames[idx]
+					if finalName == "" {
+						finalName = pending.Name
+					}
+
+					// 如果 name 为空，记录警告日志（Cursor 会报 Tool not found）
+					if finalName == "" {
+						common.SysLog(fmt.Sprintf("[Claude SSE] WARNING: flushing tool with empty name at message_delta, tool_call_id=%s, idx=%d", pending.ID, idx))
+					}
+
+					common.SysLog(fmt.Sprintf("[Claude SSE] flushing tool: idx=%d id=%s name=%s args_len=%d", idx, pending.ID, finalName, len(finalArgs)))
+
+					tools = append(tools, dto.ToolCallResponse{
+						Index: common.GetPointer(idx),
+						ID:    pending.ID,
+						Type:  "function",
+						Function: dto.FunctionResponse{
+							Name:      finalName,
+							Arguments: finalArgs,
+						},
+					})
+					pending.Flushed = true
+				}
+			}
+
 			finishReason := stopReasonClaude2OpenAI(*claudeResponse.Delta.StopReason)
 			if finishReason != "null" {
 				choice.FinishReason = &finishReason
@@ -647,13 +881,28 @@ func ResponseClaude2OpenAI(reqMode int, claudeResponse *dto.ClaudeResponse) *dto
 	return &fullTextResponse
 }
 
+// PendingToolCall 用于缓冲单个工具调用的完整信息，直到 message_delta 时一次性 flush
+type PendingToolCall struct {
+	ID        string // tool_call id (如 toolu_xxx)
+	Name      string // 工具名 (如 LS, Read, Write)
+	Arguments string // 已累积的 arguments JSON
+	Flushed   bool   // 是否已 flush 给客户端
+}
+
 type ClaudeResponseInfo struct {
-	ResponseId   string
-	Created      int64
-	Model        string
-	ResponseText strings.Builder
-	Usage        *dto.Usage
-	Done         bool
+	ResponseId        string
+	Created           int64
+	Model             string
+	ResponseText      strings.Builder
+	Usage             *dto.Usage
+	Done              bool
+	LastToolCallIds   map[int]string           // index -> tool_call id
+	LastToolCallNames map[int]string           // index -> tool_call name，flush 时拼完整 chunk 用
+	ToolArgsBuffer    map[int]string           // index -> 已拼接的 arguments，每个 tool 只发一条完整 chunk 避免 Cursor 收到多条同 id 报 400 tool_use ids must be unique
+	SentFullToolInput map[int]bool             // index -> 是否已在 content_block_start 中发送完整 Arguments，若已发送则不再转发 input_json_delta，避免 Cursor 拼出无效 JSON
+	CurrentToolIndex  int                      // 当前正在流式输出的 tool_use 的 index；上游 content_block_delta 常不带 index，用此值避免所有 delta 被错误归到 0 导致 Write 等工具参数错乱/无效 JSON
+	ToolCallCount     int                      // 本消息内已出现的 tool_use 个数；发给 Cursor 的 index 必须用“第几个 tool”的 0-based 序号，不能用上游的 content_block index（含 text 块会导致首 tool 变成 1 从而 Write 收空）
+	PendingToolCalls  map[int]*PendingToolCall // 方案D：缓冲所有工具调用，只在 message_delta 时一次性 flush
 }
 
 func FormatClaudeResponseInfo(requestMode int, claudeResponse *dto.ClaudeResponse, oaiResponse *dto.ChatCompletionsStreamResponse, claudeInfo *ClaudeResponseInfo) bool {
@@ -663,6 +912,9 @@ func FormatClaudeResponseInfo(requestMode int, claudeResponse *dto.ClaudeRespons
 		if claudeResponse.Type == "message_start" {
 			claudeInfo.ResponseId = claudeResponse.Message.Id
 			claudeInfo.Model = claudeResponse.Message.Model
+			claudeInfo.ToolCallCount = 0
+			claudeInfo.ToolArgsBuffer = make(map[int]string)
+			claudeInfo.LastToolCallNames = make(map[int]string)
 
 			// message_start, 获取usage
 			claudeInfo.Usage.PromptTokens = claudeResponse.Message.Usage.InputTokens
@@ -688,6 +940,7 @@ func FormatClaudeResponseInfo(requestMode int, claudeResponse *dto.ClaudeRespons
 			// 判断是否完整
 			claudeInfo.Done = true
 		} else if claudeResponse.Type == "content_block_start" {
+			// 方案D：tool_use 的 index/计数只由 StreamResponseClaude2OpenAI 维护，此处不再更新 ToolCallCount/CurrentToolIndex/LastToolCallIds，避免首工具被错配到 index=1、arguments 错写到 index=0
 		} else {
 			return false
 		}
@@ -732,11 +985,12 @@ func HandleStreamResponseData(c *gin.Context, info *relaycommon.RelayInfo, claud
 	var claudeResponse dto.ClaudeResponse
 	err := common.UnmarshalJsonStr(data, &claudeResponse)
 	if err != nil {
-		common.SysLog("error unmarshalling stream response: " + err.Error())
+		logger.LogError(c, "claude stream unmarshal failed: "+err.Error())
 		return types.NewError(err, types.ErrorCodeBadResponseBody)
 	}
 	if claudeError := claudeResponse.GetClaudeError(); claudeError != nil && claudeError.Type != "" {
 		statusCode := mapClaudeErrorToStatusCode(claudeError)
+		logger.LogError(c, fmt.Sprintf("claude stream upstream error: type=%s message=%s", claudeError.Type, claudeError.Message))
 		return types.WithClaudeError(*claudeError, statusCode)
 	}
 	if info.RelayFormat == types.RelayFormatClaude {
@@ -753,10 +1007,19 @@ func HandleStreamResponseData(c *gin.Context, info *relaycommon.RelayInfo, claud
 		}
 		helper.ClaudeChunkData(c, claudeResponse, data)
 	} else if info.RelayFormat == types.RelayFormatOpenAI {
-		response := StreamResponseClaude2OpenAI(requestMode, &claudeResponse)
-
-		if !FormatClaudeResponseInfo(requestMode, &claudeResponse, response, claudeInfo) {
+		if !FormatClaudeResponseInfo(requestMode, &claudeResponse, nil, claudeInfo) {
 			return nil
+		}
+		response := StreamResponseClaude2OpenAI(requestMode, &claudeResponse, claudeInfo)
+		if response != nil {
+			response.Id = claudeInfo.ResponseId
+		}
+
+		if response != nil && len(response.Choices) > 0 && response.Choices[0].Delta.ToolCalls != nil && len(response.Choices[0].Delta.ToolCalls) > 0 {
+			logger.LogDebug(c, fmt.Sprintf("[Claude stream] chunk has tool_calls: count=%d", len(response.Choices[0].Delta.ToolCalls)))
+		}
+		if response != nil && len(response.Choices) > 0 && response.Choices[0].FinishReason != nil && *response.Choices[0].FinishReason == "tool_calls" {
+			logger.LogInfo(c, "[Claude stream] chunk finish_reason=tool_calls")
 		}
 
 		err = helper.ObjectData(c, response)
@@ -790,9 +1053,10 @@ func HandleStreamFinalResponse(c *gin.Context, info *relaycommon.RelayInfo, clau
 			response := helper.GenerateFinalUsageResponse(claudeInfo.ResponseId, claudeInfo.Created, info.UpstreamModelName, *claudeInfo.Usage)
 			err := helper.ObjectData(c, response)
 			if err != nil {
-				common.SysLog("send final response failed: " + err.Error())
+				logger.LogError(c, "claude stream send final usage failed: "+err.Error())
 			}
 		}
+		logger.LogInfo(c, "claude stream sending [DONE]")
 		helper.Done(c)
 	}
 }
@@ -809,11 +1073,13 @@ func ClaudeStreamHandler(c *gin.Context, resp *http.Response, info *relaycommon.
 	helper.StreamScannerHandler(c, resp, info, func(data string) bool {
 		err = HandleStreamResponseData(c, info, claudeInfo, data, requestMode)
 		if err != nil {
+			logger.LogError(c, "claude stream stopped by dataHandler: "+err.Error())
 			return false
 		}
 		return true
 	})
 	if err != nil {
+		logger.LogError(c, "claude stream handler exit with error: "+err.Error())
 		return nil, err
 	}
 
