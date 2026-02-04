@@ -21,6 +21,7 @@ import (
 	"one-api/setting"
 	"one-api/types"
 	"strings"
+	"time"
 
 	"github.com/bytedance/gopkg/util/gopool"
 
@@ -309,6 +310,14 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 
 		if !shouldRetry(c, newAPIError, common.RetryTimes-i) {
 			break
+		}
+
+		// 图片生成重试前等待 3 秒
+		if relayInfo.RelayMode == relayconstant.RelayModeImagesGenerations ||
+			relayInfo.RelayMode == relayconstant.RelayModeImagesEdits {
+			logger.LogInfo(c, "[图片重试] 开始等待 3 秒，等待结束后将切换渠道重试")
+			time.Sleep(3 * time.Second)
+			logger.LogInfo(c, "[图片重试] 等待 3 秒结束，开始下一轮请求")
 		}
 	}
 
