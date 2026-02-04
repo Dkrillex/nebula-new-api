@@ -534,6 +534,24 @@ func aliImageHandler(c *gin.Context, resp *http.Response, info *relaycommon.Rela
 
 	fullTextResponse := responseAli2OpenAIImage(c, aliResponse, originRespBody, info, responseFormat)
 
+	// 提取图片数量用于计费并写入响应的 usage（与对话接口一致）
+	usage := &dto.Usage{}
+	if aliResponse.Usage.ImageCount > 0 {
+		usage.TotalTokens = aliResponse.Usage.ImageCount
+		usage.PromptTokens = aliResponse.Usage.ImageCount
+		c.Set("generated_images_count", aliResponse.Usage.ImageCount)
+		logger.LogDebug(c, fmt.Sprintf("[aliImageHandler] 提取图片数量: %d", aliResponse.Usage.ImageCount))
+	} else {
+		imageCount := len(fullTextResponse.Data)
+		if imageCount > 0 {
+			usage.TotalTokens = imageCount
+			usage.PromptTokens = imageCount
+			c.Set("generated_images_count", imageCount)
+			logger.LogDebug(c, fmt.Sprintf("[aliImageHandler] 使用生成图片数量作为兜底: %d", imageCount))
+		}
+	}
+	fullTextResponse.Usage = usage
+
 	// 记录最终响应信息
 	common.SysLog(fmt.Sprintf("aliImageHandler: Final ImageResponse - Created: %d, Data count: %d",
 		fullTextResponse.Created, len(fullTextResponse.Data)))
@@ -548,24 +566,6 @@ func aliImageHandler(c *gin.Context, resp *http.Response, info *relaycommon.Rela
 
 	logger.LogDebug(c, fmt.Sprintf("aliImageHandler: Response JSON length: %d bytes", len(jsonResponse)))
 	service.IOCopyBytesGracefully(c, resp, jsonResponse)
-
-	// 提取图片数量用于计费
-	usage := &dto.Usage{}
-	if aliResponse.Usage.ImageCount > 0 {
-		// 图片数量写入 TotalTokens，供计费逻辑使用
-		usage.TotalTokens = aliResponse.Usage.ImageCount
-		// 透传图片数量给后续计费流程
-		c.Set("generated_images_count", aliResponse.Usage.ImageCount)
-		logger.LogDebug(c, fmt.Sprintf("[aliImageHandler] 提取图片数量: %d", aliResponse.Usage.ImageCount))
-	} else {
-		// 如果没有返回 image_count，使用生成的图片数量作为兜底
-		imageCount := len(fullTextResponse.Data)
-		if imageCount > 0 {
-			usage.TotalTokens = imageCount
-			c.Set("generated_images_count", imageCount)
-			logger.LogDebug(c, fmt.Sprintf("[aliImageHandler] 使用生成图片数量作为兜底: %d", imageCount))
-		}
-	}
 
 	return nil, usage
 }
@@ -603,27 +603,30 @@ func aliImageEditHandler(c *gin.Context, resp *http.Response, info *relaycommon.
 	var mapResponse map[string]any
 	_ = common.Unmarshal(responseBody, &mapResponse)
 	fullTextResponse.Metadata = mapResponse
+
+	// 提取图片数量用于计费并写入响应的 usage（与对话接口一致）
+	usage := &dto.Usage{}
+	if aliResponse.Usage.ImageCount > 0 {
+		usage.TotalTokens = aliResponse.Usage.ImageCount
+		usage.PromptTokens = aliResponse.Usage.ImageCount
+		c.Set("generated_images_count", aliResponse.Usage.ImageCount)
+		logger.LogDebug(c, fmt.Sprintf("[aliImageEditHandler] 提取图片数量: %d", aliResponse.Usage.ImageCount))
+	} else {
+		imageCount := len(fullTextResponse.Data)
+		if imageCount > 0 {
+			usage.TotalTokens = imageCount
+			usage.PromptTokens = imageCount
+			c.Set("generated_images_count", imageCount)
+			logger.LogDebug(c, fmt.Sprintf("[aliImageEditHandler] 使用生成图片数量作为兜底: %d", imageCount))
+		}
+	}
+	fullTextResponse.Usage = usage
+
 	jsonResponse, err := common.Marshal(fullTextResponse)
 	if err != nil {
 		return types.NewError(err, types.ErrorCodeBadResponseBody), nil
 	}
 	service.IOCopyBytesGracefully(c, resp, jsonResponse)
-
-	// 提取图片数量用于计费
-	usage := &dto.Usage{}
-	if aliResponse.Usage.ImageCount > 0 {
-		usage.TotalTokens = aliResponse.Usage.ImageCount
-		c.Set("generated_images_count", aliResponse.Usage.ImageCount)
-		logger.LogDebug(c, fmt.Sprintf("[aliImageEditHandler] 提取图片数量: %d", aliResponse.Usage.ImageCount))
-	} else {
-		// 使用生成的图片数量作为兜底
-		imageCount := len(fullTextResponse.Data)
-		if imageCount > 0 {
-			usage.TotalTokens = imageCount
-			c.Set("generated_images_count", imageCount)
-			logger.LogDebug(c, fmt.Sprintf("[aliImageEditHandler] 使用生成图片数量作为兜底: %d", imageCount))
-		}
-	}
 
 	return nil, usage
 }

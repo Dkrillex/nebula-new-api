@@ -204,6 +204,7 @@ func (i *ImageRequest) SetModelName(modelName string) {
 type ImageResponse struct {
 	Data     []ImageData `json:"data"`
 	Created  int64       `json:"created"`
+	Usage    *Usage      `json:"usage,omitempty"`    // 与对话接口一致：使用的 tokens 数
 	Metadata any         `json:"metadata,omitempty"` // 厂家原始响应数据
 }
 type ImageData struct {

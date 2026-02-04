@@ -516,6 +516,28 @@ func (a *Adaptor) doubaoImageHandler(c *gin.Context, resp *http.Response, info *
 		}
 	}
 
+	// 计算使用量并写入响应的 usage（与对话接口一致）
+	usage := &dto.Usage{}
+	if usageData, ok := doubaoResponse["usage"].(map[string]interface{}); ok {
+		if generatedImages, exists := usageData["generated_images"]; exists {
+			count := int(generatedImages.(float64))
+			usage.TotalTokens = count
+			usage.PromptTokens = count
+			c.Set("generated_images_count", count)
+		}
+		if outputTokens, exists := usageData["output_tokens"]; exists {
+			usage.CompletionTokens = int(outputTokens.(float64))
+		}
+		if totalTokens, exists := usageData["total_tokens"]; exists && usage.TotalTokens == 0 {
+			usage.TotalTokens = int(totalTokens.(float64))
+			usage.PromptTokens = usage.TotalTokens
+		}
+	} else if len(imageResponse.Data) > 0 {
+		usage.TotalTokens = len(imageResponse.Data)
+		usage.PromptTokens = len(imageResponse.Data)
+	}
+	imageResponse.Usage = usage
+
 	// 序列化响应
 	jsonResponse, err := json.Marshal(imageResponse)
 	if err != nil {
@@ -525,25 +547,6 @@ func (a *Adaptor) doubaoImageHandler(c *gin.Context, resp *http.Response, info *
 	c.Writer.Header().Set("Content-Type", "application/json")
 	c.Writer.WriteHeader(resp.StatusCode)
 	_, _ = c.Writer.Write(jsonResponse)
-
-	// 计算使用量
-	usage := &dto.Usage{}
-	if usageData, ok := doubaoResponse["usage"].(map[string]interface{}); ok {
-		if generatedImages, exists := usageData["generated_images"]; exists {
-			count := int(generatedImages.(float64))
-			// 将图片数量写入总tokens，供计费逻辑使用
-			usage.TotalTokens = count
-			// 透传图片数量给后续计费流程（统一使用按张计费）
-			c.Set("generated_images_count", count)
-		}
-		if outputTokens, exists := usageData["output_tokens"]; exists {
-			usage.CompletionTokens = int(outputTokens.(float64))
-		}
-		if totalTokens, exists := usageData["total_tokens"]; exists && usage.TotalTokens == 0 {
-			// 如果没有 generated_images，则使用 total_tokens
-			usage.TotalTokens = int(totalTokens.(float64))
-		}
-	}
 
 	return usage, nil
 }
