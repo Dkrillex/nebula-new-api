@@ -14,6 +14,7 @@ import (
 	"one-api/logger"
 	"one-api/relay/channel/openrouter"
 	relaycommon "one-api/relay/common"
+	relayconstant "one-api/relay/constant"
 	"one-api/relay/helper"
 	"one-api/service"
 	"os"
@@ -743,8 +744,8 @@ func OpenaiHandlerWithUsage(c *gin.Context, info *relaycommon.RelayInfo, resp *h
 		return nil, types.NewOpenAIError(err, types.ErrorCodeBadResponseBody, http.StatusInternalServerError)
 	}
 
-	// 写入新的 response body
-	service.IOCopyBytesGracefully(c, resp, responseBody)
+	// 暂不写入，等 usage 合并后再决定是否注入 usage 到图片响应
+	writeBody := responseBody
 
 	// Once we've written to the client, we should not return errors anymore
 	// because the upstream has already consumed resources and returned content
@@ -832,6 +833,18 @@ func OpenaiHandlerWithUsage(c *gin.Context, info *relaycommon.RelayInfo, resp *h
 	}
 
 	applyUsagePostProcessing(info, &usageResp.Usage, responseBody)
+
+	// 图片生成/编辑：向响应体注入 usage（与对话接口一致的 tokens 数）
+	if info.RelayMode == relayconstant.RelayModeImagesGenerations || info.RelayMode == relayconstant.RelayModeImagesEdits {
+		var imageResp dto.ImageResponse
+		if err := common.Unmarshal(responseBody, &imageResp); err == nil && imageResp.Data != nil {
+			imageResp.Usage = &usageResp.Usage
+			if injected, err := common.Marshal(&imageResp); err == nil {
+				writeBody = injected
+			}
+		}
+	}
+	service.IOCopyBytesGracefully(c, resp, writeBody)
 	return &usageResp.Usage, nil
 }
 

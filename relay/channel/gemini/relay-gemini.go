@@ -1302,7 +1302,7 @@ func GeminiChatHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http.R
 			c.Set("gemini_text_output_tokens", textOutputTokens)
 		}
 
-		// 使用API返回的真实token使用量
+		// 使用API返回的真实token使用量（与对话接口一致）
 		usage := dto.Usage{
 			PromptTokens:     geminiResponse.UsageMetadata.PromptTokenCount,
 			CompletionTokens: geminiResponse.UsageMetadata.CandidatesTokenCount,
@@ -1313,6 +1313,8 @@ func GeminiChatHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http.R
 		if geminiResponse.UsageMetadata.CachedContentTokenCount > 0 {
 			usage.PromptTokensDetails.CachedTokens = geminiResponse.UsageMetadata.CachedContentTokenCount
 		}
+
+		imageResponse.Usage = &usage
 
 		// 序列化图像响应
 		responseBody, err = json.Marshal(imageResponse)
@@ -1456,6 +1458,17 @@ func GeminiImageHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http.
 		})
 	}
 
+	// https://github.com/google-gemini/cookbook/blob/719a27d752aac33f39de18a8d3cb42a70874917e/quickstarts/Counting_Tokens.ipynb
+	// each image has fixed 258 tokens
+	const imageTokens = 258
+	generatedImages := len(openAIResponse.Data)
+	usage := &dto.Usage{
+		PromptTokens:     imageTokens * generatedImages,
+		CompletionTokens: 0,
+		TotalTokens:      imageTokens * generatedImages,
+	}
+	openAIResponse.Usage = usage
+
 	jsonResponse, jsonErr := json.Marshal(openAIResponse)
 	if jsonErr != nil {
 		return nil, types.NewError(jsonErr, types.ErrorCodeBadResponseBody)
@@ -1464,17 +1477,6 @@ func GeminiImageHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http.
 	c.Writer.Header().Set("Content-Type", "application/json")
 	c.Writer.WriteHeader(resp.StatusCode)
 	_, _ = c.Writer.Write(jsonResponse)
-
-	// https://github.com/google-gemini/cookbook/blob/719a27d752aac33f39de18a8d3cb42a70874917e/quickstarts/Counting_Tokens.ipynb
-	// each image has fixed 258 tokens
-	const imageTokens = 258
-	generatedImages := len(openAIResponse.Data)
-
-	usage := &dto.Usage{
-		PromptTokens:     imageTokens * generatedImages, // each generated image has fixed 258 tokens
-		CompletionTokens: 0,                             // image generation does not calculate completion tokens
-		TotalTokens:      imageTokens * generatedImages,
-	}
 
 	return usage, nil
 }

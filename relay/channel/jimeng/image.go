@@ -73,6 +73,15 @@ func jimengImageHandler(c *gin.Context, resp *http.Response, info *relaycommon.R
 
 	// Convert Jimeng response to OpenAI format
 	fullTextResponse := responseJimeng2OpenAIImage(c, &jimengResponse, info)
+	// 写入 usage（与对话接口一致）：以生成图片数量作为 total_tokens
+	imageCount := len(fullTextResponse.Data)
+	usage := &dto.Usage{}
+	if imageCount > 0 {
+		usage.TotalTokens = imageCount
+		usage.PromptTokens = imageCount
+	}
+	fullTextResponse.Usage = usage
+
 	jsonResponse, err := json.Marshal(fullTextResponse)
 	if err != nil {
 		return nil, types.NewError(err, types.ErrorCodeBadResponseBody)
@@ -85,5 +94,5 @@ func jimengImageHandler(c *gin.Context, resp *http.Response, info *relaycommon.R
 		return nil, types.NewError(err, types.ErrorCodeBadResponseBody)
 	}
 
-	return &dto.Usage{}, nil
+	return usage, nil
 }
