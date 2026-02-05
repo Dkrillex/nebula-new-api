@@ -295,6 +295,7 @@ func PostClaudeConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, 
 	cacheCreationRatio := relayInfo.PriceData.CacheCreationRatio
 	cacheCreationTokens := usage.PromptTokensDetails.CachedCreationTokens
 
+	// 上游返回的 input_tokens / prompt_tokens 已包含 cache_read、cache_creation，需先扣减再按缓存倍率计费，避免重复计费
 	if relayInfo.ChannelType == constant.ChannelTypeOpenRouter {
 		promptTokens -= cacheTokens
 		isUsingCustomSettings := relayInfo.PriceData.UsePrice || hasCustomModelRatio(modelName, relayInfo.PriceData.ModelRatio)
@@ -305,6 +306,13 @@ func PostClaudeConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, 
 			}
 		}
 		promptTokens -= cacheCreationTokens
+	} else if relayInfo.ChannelType == constant.ChannelTypeAnthropic || relayInfo.ChannelType == constant.ChannelTypeAws {
+		if cacheTokens > 0 && promptTokens >= cacheTokens {
+			promptTokens -= cacheTokens
+		}
+		if cacheCreationTokens > 0 && promptTokens >= cacheCreationTokens {
+			promptTokens -= cacheCreationTokens
+		}
 	}
 
 	calculateQuota := 0.0
