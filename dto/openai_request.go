@@ -489,6 +489,16 @@ func (m *Message) IsStringContent() bool {
 	return false
 }
 
+// extractCacheControlFromMap 从 content 项 map 中提取 cache_control，供 ParseContent 使用
+func extractCacheControlFromMap(contentItem map[string]any) json.RawMessage {
+	if cc, ok := contentItem["cache_control"]; ok && cc != nil {
+		if raw, err := json.Marshal(cc); err == nil && len(raw) > 0 {
+			return raw
+		}
+	}
+	return nil
+}
+
 func (m *Message) ParseContent() []MediaContent {
 	if m.Content == nil {
 		return nil
@@ -533,12 +543,15 @@ func (m *Message) ParseContent() []MediaContent {
 			continue
 		}
 
+		cacheControl := extractCacheControlFromMap(contentItem)
+
 		switch contentType {
 		case ContentTypeText:
 			if text, ok := contentItem["text"].(string); ok {
 				contentList = append(contentList, MediaContent{
-					Type: ContentTypeText,
-					Text: text,
+					Type:         ContentTypeText,
+					Text:         text,
+					CacheControl: cacheControl,
 				})
 			}
 
@@ -561,8 +574,9 @@ func (m *Message) ParseContent() []MediaContent {
 				}
 			}
 			contentList = append(contentList, MediaContent{
-				Type:     ContentTypeImageURL,
-				ImageUrl: temp,
+				Type:         ContentTypeImageURL,
+				ImageUrl:     temp,
+				CacheControl: cacheControl,
 			})
 
 		case ContentTypeInputAudio:
@@ -575,8 +589,9 @@ func (m *Message) ParseContent() []MediaContent {
 						Format: format,
 					}
 					contentList = append(contentList, MediaContent{
-						Type:       ContentTypeInputAudio,
-						InputAudio: temp,
+						Type:         ContentTypeInputAudio,
+						InputAudio:   temp,
+						CacheControl: cacheControl,
 					})
 				}
 			}
@@ -585,21 +600,18 @@ func (m *Message) ParseContent() []MediaContent {
 				fileId, ok3 := fileData["file_id"].(string)
 				if ok3 {
 					contentList = append(contentList, MediaContent{
-						Type: ContentTypeFile,
-						File: &MessageFile{
-							FileId: fileId,
-						},
+						Type:         ContentTypeFile,
+						File:         &MessageFile{FileId: fileId},
+						CacheControl: cacheControl,
 					})
 				} else {
 					fileName, ok1 := fileData["filename"].(string)
 					fileDataStr, ok2 := fileData["file_data"].(string)
 					if ok1 && ok2 {
 						contentList = append(contentList, MediaContent{
-							Type: ContentTypeFile,
-							File: &MessageFile{
-								FileName: fileName,
-								FileData: fileDataStr,
-							},
+							Type:         ContentTypeFile,
+							File:         &MessageFile{FileName: fileName, FileData: fileDataStr},
+							CacheControl: cacheControl,
 						})
 					}
 				}
@@ -607,10 +619,9 @@ func (m *Message) ParseContent() []MediaContent {
 		case ContentTypeVideoUrl:
 			if videoUrl, ok := contentItem["video_url"].(string); ok {
 				contentList = append(contentList, MediaContent{
-					Type: ContentTypeVideoUrl,
-					VideoUrl: &MessageVideoUrl{
-						Url: videoUrl,
-					},
+					Type:         ContentTypeVideoUrl,
+					VideoUrl:     &MessageVideoUrl{Url: videoUrl},
+					CacheControl: cacheControl,
 				})
 			}
 		}
