@@ -26,6 +26,46 @@ const (
 	WebSearchMaxUsesHigh   = 10
 )
 
+// defaultEphemeralCacheControl 用于「每一个输入都写入缓存」：客户端未传 cache_control 时默认标记为 ephemeral，让上游对每段输入做缓存
+var defaultEphemeralCacheControl = json.RawMessage(`{"type":"ephemeral"}`)
+
+func cacheControlOrDefault(from json.RawMessage) json.RawMessage {
+	if len(from) > 0 {
+		return from
+	}
+	// 不默认加 ephemeral，避免上游缓存导致重试时返回同一份 tool_calls、Cursor 重复执行（双份 md）
+	// 若需恢复「每段输入都写缓存」行为，可改回 return defaultEphemeralCacheControl
+	return nil
+}
+
+// capCacheControlBlocks 保证整个请求中带 cache_control 的块不超过 max 个，避免上游返回 400（Found 6/5）导致 Cursor 重试和重复 AskQuestion
+func capCacheControlBlocks(req *dto.ClaudeRequest, max int) {
+	if max <= 0 {
+		return
+	}
+	var withCC []*dto.ClaudeMediaMessage
+	if sys, ok := req.System.([]dto.ClaudeMediaMessage); ok {
+		for i := range sys {
+			if len(sys[i].CacheControl) > 0 {
+				withCC = append(withCC, &sys[i])
+			}
+		}
+	}
+	for i := range req.Messages {
+		content := req.Messages[i].Content
+		if contents, ok := content.([]dto.ClaudeMediaMessage); ok {
+			for j := range contents {
+				if len(contents[j].CacheControl) > 0 {
+					withCC = append(withCC, &contents[j])
+				}
+			}
+		}
+	}
+	for i := 0; i < len(withCC)-max; i++ {
+		withCC[i].CacheControl = nil
+	}
+}
+
 func stopReasonClaude2OpenAI(reason string) string {
 	switch reason {
 	case "stop_sequence":
@@ -359,21 +399,29 @@ func RequestOpenAI2ClaudeMessage(c *gin.Context, textRequest dto.GeneralOpenAIRe
 	for _, message := range formatMessages {
 		if message.Role == "system" {
 			// 根据Claude API规范，system字段使用数组格式更有通用性
+			// 仅在最后一个 system 块加 cache_control，使「前缀」到该块时更容易达到官方最低可缓存长度（Opus 4.5 为 4096），避免每个小块都成 breakpoint 导致前缀不足而不写入缓存
 			if message.IsStringContent() {
 				systemMessages = append(systemMessages, dto.ClaudeMediaMessage{
-					Type: "text",
-					Text: common.GetPointer[string](message.StringContent()),
+					Type:         "text",
+					Text:         common.GetPointer[string](message.StringContent()),
+					CacheControl: cacheControlOrDefault(nil), // 与 messages 一致：不默认加 ephemeral，避免重试时上游返回缓存导致重复执行
 				})
 			} else {
-				// 支持复合内容的system消息（虽然不常见，但需要考虑完整性）
-				for _, ctx := range message.ParseContent() {
-					if ctx.Type == "text" {
-						systemMessages = append(systemMessages, dto.ClaudeMediaMessage{
-							Type: "text",
-							Text: common.GetPointer[string](ctx.Text),
-						})
+				contents := message.ParseContent()
+				for i, ctx := range contents {
+					if ctx.Type != "text" {
+						continue
 					}
-					// 未来可以在这里扩展对图片等其他类型的支持
+					isLastSystemBlock := (i == len(contents)-1)
+					cacheControl := json.RawMessage(nil)
+					if isLastSystemBlock {
+						cacheControl = cacheControlOrDefault(ctx.CacheControl)
+					}
+					systemMessages = append(systemMessages, dto.ClaudeMediaMessage{
+						Type:         "text",
+						Text:         common.GetPointer[string](ctx.Text),
+						CacheControl: cacheControl,
+					})
 				}
 			}
 		} else {
@@ -463,10 +511,18 @@ func RequestOpenAI2ClaudeMessage(c *gin.Context, textRequest dto.GeneralOpenAIRe
 			} else if message.IsStringContent() && message.ToolCalls == nil {
 				claudeMessage.Content = message.StringContent()
 			} else {
-				claudeMediaMessages := make([]dto.ClaudeMediaMessage, 0)
-				for _, mediaMessage := range message.ParseContent() {
+				// 仅在每条消息的最后一个 content 块加 cache_control，使前缀到该块时更容易达到官方最低可缓存长度（如 Opus 4.5 为 4096）
+				mediaContents := message.ParseContent()
+				claudeMediaMessages := make([]dto.ClaudeMediaMessage, 0, len(mediaContents))
+				for i, mediaMessage := range mediaContents {
+					isLastContentBlock := (i == len(mediaContents)-1)
+					cacheControl := json.RawMessage(nil)
+					if isLastContentBlock {
+						cacheControl = cacheControlOrDefault(mediaMessage.CacheControl)
+					}
 					claudeMediaMessage := dto.ClaudeMediaMessage{
-						Type: mediaMessage.Type,
+						Type:         mediaMessage.Type,
+						CacheControl: cacheControl,
 					}
 					if mediaMessage.Type == "text" {
 						claudeMediaMessage.Text = common.GetPointer[string](mediaMessage.Text)
@@ -565,6 +621,10 @@ func RequestOpenAI2ClaudeMessage(c *gin.Context, textRequest dto.GeneralOpenAIRe
 
 	claudeRequest.Prompt = ""
 	claudeRequest.Messages = claudeMessages
+
+	// 上游 Claude API 最多允许 4 个带 cache_control 的块，超过会 400，导致 Cursor 重试并出现重复 AskQuestion
+	capCacheControlBlocks(&claudeRequest, 4)
+
 	return &claudeRequest, nil
 }
 
@@ -929,15 +989,35 @@ func FormatClaudeResponseInfo(requestMode int, claudeResponse *dto.ClaudeRespons
 				claudeInfo.ResponseText.WriteString(claudeResponse.Delta.Thinking)
 			}
 		} else if claudeResponse.Type == "message_delta" {
-			// 最终的usage获取
-			if claudeResponse.Usage.InputTokens > 0 {
-				// 不叠加，只取最新的
-				claudeInfo.Usage.PromptTokens = claudeResponse.Usage.InputTokens
+			// 最终的usage获取：以 message_delta 中的 usage 为准（上游可能在 message_start 只给预估值，最终缓存在 message_delta 中）
+			if claudeResponse.Usage != nil {
+				if claudeResponse.Usage.InputTokens > 0 {
+					claudeInfo.Usage.PromptTokens = claudeResponse.Usage.InputTokens
+				}
+				claudeInfo.Usage.CompletionTokens = claudeResponse.Usage.OutputTokens
+				claudeInfo.Usage.TotalTokens = claudeInfo.Usage.PromptTokens + claudeInfo.Usage.CompletionTokens
+				// 从 message_delta 更新缓存 token 数（以流结束时的 usage 为准，避免整轮对话始终用 message_start 的固定值导致计费偏高）
+				claudeInfo.Usage.PromptTokensDetails.CachedTokens = claudeResponse.Usage.CacheReadInputTokens
+				claudeInfo.Usage.PromptTokensDetails.CachedCreationTokens = claudeResponse.Usage.CacheCreationInputTokens
+			} else {
+				// 上游在 message_delta 中未带 usage（如 tool_use 结束时部分代理只给 message_start 的预估值），计费会沿用 message_start 的 cache 值，可能偏高
+				common.SysLog(fmt.Sprintf("[Claude usage] message_delta usage is nil, keeping message_start cache: cached=%d cached_creation=%d", claudeInfo.Usage.PromptTokensDetails.CachedTokens, claudeInfo.Usage.PromptTokensDetails.CachedCreationTokens))
 			}
-			claudeInfo.Usage.CompletionTokens = claudeResponse.Usage.OutputTokens
-			claudeInfo.Usage.TotalTokens = claudeInfo.Usage.PromptTokens + claudeInfo.Usage.CompletionTokens
 
 			// 判断是否完整
+			claudeInfo.Done = true
+		} else if claudeResponse.Type == "message_stop" {
+			// 部分上游在 message_stop 中带最终 usage，若存在则覆盖（避免仅 message_start 有 usage 导致 cache 不更新）
+			if claudeResponse.Usage != nil {
+				if claudeResponse.Usage.InputTokens > 0 {
+					claudeInfo.Usage.PromptTokens = claudeResponse.Usage.InputTokens
+				}
+				claudeInfo.Usage.CompletionTokens = claudeResponse.Usage.OutputTokens
+				claudeInfo.Usage.TotalTokens = claudeInfo.Usage.PromptTokens + claudeInfo.Usage.CompletionTokens
+				claudeInfo.Usage.PromptTokensDetails.CachedTokens = claudeResponse.Usage.CacheReadInputTokens
+				claudeInfo.Usage.PromptTokensDetails.CachedCreationTokens = claudeResponse.Usage.CacheCreationInputTokens
+				common.SysLog(fmt.Sprintf("[Claude usage] message_stop usage updated: cached=%d cached_creation=%d", claudeResponse.Usage.CacheReadInputTokens, claudeResponse.Usage.CacheCreationInputTokens))
+			}
 			claudeInfo.Done = true
 		} else if claudeResponse.Type == "content_block_start" {
 			// 方案D：tool_use 的 index/计数只由 StreamResponseClaude2OpenAI 维护，此处不再更新 ToolCallCount/CurrentToolIndex/LastToolCallIds，避免首工具被错配到 index=1、arguments 错写到 index=0

@@ -295,6 +295,15 @@ func PostClaudeConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, 
 	cacheCreationRatio := relayInfo.PriceData.CacheCreationRatio
 	cacheCreationTokens := usage.PromptTokensDetails.CachedCreationTokens
 
+	// Anthropic/Claude：InputTokens 已包含 cache_read/cache_creation，计费时需先减去再分别按全价/缓存价计算，否则缓存部分会被重复按全价计费
+	if relayInfo.ChannelType == constant.ChannelTypeAnthropic {
+		if cacheTokens > 0 && promptTokens >= cacheTokens {
+			promptTokens -= cacheTokens
+		}
+		if cacheCreationTokens > 0 && promptTokens >= cacheCreationTokens {
+			promptTokens -= cacheCreationTokens
+		}
+	}
 	if relayInfo.ChannelType == constant.ChannelTypeOpenRouter {
 		promptTokens -= cacheTokens
 		isUsingCustomSettings := relayInfo.PriceData.UsePrice || hasCustomModelRatio(modelName, relayInfo.PriceData.ModelRatio)

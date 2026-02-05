@@ -1306,7 +1306,7 @@ func GeminiChatHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http.R
 		usage := dto.Usage{
 			PromptTokens:     geminiResponse.UsageMetadata.PromptTokenCount,
 			CompletionTokens: geminiResponse.UsageMetadata.CandidatesTokenCount,
-			TotalTokens:      geminiResponse.UsageMetadata.TotalTokenCount,
+			TotalTokens:      geminiResponse.UsageMetadata.PromptTokenCount + geminiResponse.UsageMetadata.CandidatesTokenCount,
 		}
 
 		// 处理缓存 tokens（Context Caching）
