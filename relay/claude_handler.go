@@ -18,6 +18,29 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
+// modelsNotSupportingContextManagement 不支持 context_management 的 Claude 模型（传入会触发 API 400: "Extra inputs are not permitted"）
+var modelsNotSupportingContextManagement = map[string]bool{
+	"claude-opus-4-6":    true,
+	"claude-opus-4-6-v1": true,
+}
+
+// stripContextManagementForUnsupportedModels 当模型不支持 context_management 时从请求 JSON 中移除该字段，避免上游返回 400
+func stripContextManagementForUnsupportedModels(jsonData []byte, model string) []byte {
+	if !modelsNotSupportingContextManagement[model] {
+		return jsonData
+	}
+	var data map[string]interface{}
+	if err := common.Unmarshal(jsonData, &data); err != nil {
+		return jsonData
+	}
+	delete(data, "context_management")
+	out, err := common.Marshal(data)
+	if err != nil {
+		return jsonData
+	}
+	return out
+}
+
 func ClaudeHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *types.NewAPIError) {
 
 	info.InitChannelMeta(c)
@@ -121,6 +144,7 @@ func ClaudeHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *typ
 		if err != nil {
 			return types.NewErrorWithStatusCode(err, types.ErrorCodeReadRequestBodyFailed, http.StatusBadRequest, types.ErrOptionWithSkipRetry())
 		}
+		body = stripContextManagementForUnsupportedModels(body, request.Model)
 		requestBody = bytes.NewBuffer(body)
 	} else {
 		convertedRequest, err := adaptor.ConvertClaudeRequest(c, info, request)
@@ -162,6 +186,8 @@ func ClaudeHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *typ
 				}
 			}
 		}
+
+		jsonData = stripContextManagementForUnsupportedModels(jsonData, request.Model)
 
 		if common.DebugEnabled {
 			truncatedBody := common.TruncateJsonValues(string(jsonData))
