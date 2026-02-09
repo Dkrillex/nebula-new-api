@@ -369,10 +369,10 @@ func (a *Adaptor) ConvertImageRequest(c *gin.Context, info *relaycommon.RelayInf
 				{Category: "HARM_CATEGORY_DANGEROUS_CONTENT", Threshold: "OFF"},
 				{Category: "HARM_CATEGORY_SEXUALLY_EXPLICIT", Threshold: "OFF"},
 				{Category: "HARM_CATEGORY_HARASSMENT", Threshold: "OFF"},
-				{Category: "HARM_CATEGORY_IMAGE_HATE", Threshold: "OFF"},
-				{Category: "HARM_CATEGORY_IMAGE_DANGEROUS_CONTENT", Threshold: "OFF"},
-				{Category: "HARM_CATEGORY_IMAGE_HARASSMENT", Threshold: "OFF"},
-				{Category: "HARM_CATEGORY_IMAGE_SEXUALLY_EXPLICIT", Threshold: "OFF"},
+				//{Category: "HARM_CATEGORY_IMAGE_HATE", Threshold: "OFF"},
+				//{Category: "HARM_CATEGORY_IMAGE_DANGEROUS_CONTENT", Threshold: "OFF"},
+				//{Category: "HARM_CATEGORY_IMAGE_HARASSMENT", Threshold: "OFF"},
+				//{Category: "HARM_CATEGORY_IMAGE_SEXUALLY_EXPLICIT", Threshold: "OFF"},
 			},
 		}
 		return geminiRequest, nil
