@@ -191,9 +191,8 @@ func (a *Adaptor) ConvertImageRequest(c *gin.Context, info *relaycommon.RelayInf
 		maxOutputTokens := uint(32768)
 		responseModalities := []string{"IMAGE"} // 默认只返回图片
 		topP := 0.95
-		aspectRatio := "1:1"    // 默认宽高比
-		imageSize := "1K"       // 默认图片尺寸
-		mimeType := "image/png" // 默认MIME类型
+		aspectRatio := "1:1" // 默认宽高比
+		imageSize := "1K"    // 默认图片尺寸
 
 		// 辅助函数：从json.RawMessage中读取值
 		readStringValue := func(data json.RawMessage) (string, bool) {
@@ -260,11 +259,6 @@ func (a *Adaptor) ConvertImageRequest(c *gin.Context, info *relaycommon.RelayInf
 							imageSize = value
 						}
 					}
-					if value, ok := readStringValue(extraMap["image_mime_type"]); ok {
-						if value == "image/png" || value == "image/jpeg" {
-							mimeType = value
-						}
-					}
 				}
 			}
 		}
@@ -302,13 +296,6 @@ func (a *Adaptor) ConvertImageRequest(c *gin.Context, info *relaycommon.RelayInf
 					imageSize = value
 				}
 			}
-
-			// 获取image_mime_type参数
-			if value, ok := readStringValue(request.Extra["image_mime_type"]); ok {
-				if value == "image/png" || value == "image/jpeg" {
-					mimeType = value
-				}
-			}
 		}
 
 		// 如果Extra中没有aspect_ratio，尝试从Size字段转换
@@ -344,13 +331,10 @@ func (a *Adaptor) ConvertImageRequest(c *gin.Context, info *relaycommon.RelayInf
 			}
 		}
 
-		// 构建ImageConfig，包含aspectRatio、imageSize和imageOutputOptions
+		// 构建ImageConfig，包含aspectRatio、imageSize
 		imageConfig := map[string]interface{}{
 			"aspectRatio": aspectRatio,
 			"imageSize":   imageSize,
-			"imageOutputOptions": map[string]interface{}{
-				"mimeType": mimeType,
-			},
 		}
 		imageConfigJSON, _ := json.Marshal(imageConfig)
 
