@@ -310,7 +310,7 @@ export const useLogsData = () => {
     for (let i = 0; i < logs.length; i++) {
       logs[i].timestamp2string = timestamp2string(logs[i].created_at);
       logs[i].key = logs[i].id;
-      let other = getLogOther(logs[i].other);
+      let other = getLogOther(logs[i].other) || {};
       let expandDataLocal = [];
 
       if (isAdminUser && (logs[i].type === 0 || logs[i].type === 2)) {
