@@ -672,7 +672,20 @@ func UpdateUser(c *gin.Context) {
 		return
 	}
 	if originUser.Quota != updatedUser.Quota {
-		model.RecordLog(originUser.Id, model.LogTypeManage, fmt.Sprintf("管理员将用户额度从 %s修改为 %s", logger.LogQuota(originUser.Quota), logger.LogQuota(updatedUser.Quota)))
+		quotaDelta := updatedUser.Quota - originUser.Quota
+		manageLog := &model.Log{
+			UserId:    originUser.Id,
+			Username:  originUser.Username,
+			Type:      model.LogTypeManage,
+			Content:   fmt.Sprintf("管理员将用户额度从 %s修改为 %s", logger.LogQuota(originUser.Quota), logger.LogQuota(updatedUser.Quota)),
+			Quota:     quotaDelta,
+			ModelName: "管理员额度变更",
+			Ip:        c.ClientIP(),
+			CreatedAt: common.GetTimestamp(),
+		}
+		if err := model.LOG_DB.Create(manageLog).Error; err != nil {
+			common.SysLog("记录管理员额度变更日志失败: " + err.Error())
+		}
 	}
 	c.JSON(http.StatusOK, gin.H{
 		"success": true,
