@@ -18,17 +18,20 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-// modelsNotSupportingContextManagement 不支持 context_management 的 Claude 模型（传入会触发 API 400: "Extra inputs are not permitted"）
-var modelsNotSupportingContextManagement = map[string]bool{
-	"claude-opus-4-6":    true,
-	"claude-opus-4-6-v1": true,
+// contextManagementBeta 启用 context_management 所需的 Anthropic beta 头值，未传该头时带 context_management 会触发 API 400: "Extra inputs are not permitted"
+const contextManagementBeta = "context-management-2025-06-27"
+
+// stripContextManagementForUnsupportedModels 当请求未带 anthropic-beta: context-management-2025-06-27 时，
+// 从请求 JSON 中移除 context_management，避免上游返回 400。不依赖固定模型列表，后续新增 Claude 模型也自动生效。
+func stripContextManagementForUnsupportedModels(c *gin.Context, jsonData []byte, model string) []byte {
+	beta := c.Request.Header.Get("anthropic-beta")
+	if !strings.Contains(beta, contextManagementBeta) {
+		return stripContextManagementFromJSON(jsonData)
+	}
+	return jsonData
 }
 
-// stripContextManagementForUnsupportedModels 当模型不支持 context_management 时从请求 JSON 中移除该字段，避免上游返回 400
-func stripContextManagementForUnsupportedModels(jsonData []byte, model string) []byte {
-	if !modelsNotSupportingContextManagement[model] {
-		return jsonData
-	}
+func stripContextManagementFromJSON(jsonData []byte) []byte {
 	var data map[string]interface{}
 	if err := common.Unmarshal(jsonData, &data); err != nil {
 		return jsonData
@@ -144,7 +147,7 @@ func ClaudeHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *typ
 		if err != nil {
 			return types.NewErrorWithStatusCode(err, types.ErrorCodeReadRequestBodyFailed, http.StatusBadRequest, types.ErrOptionWithSkipRetry())
 		}
-		body = stripContextManagementForUnsupportedModels(body, request.Model)
+		body = stripContextManagementForUnsupportedModels(c, body, request.Model)
 		requestBody = bytes.NewBuffer(body)
 	} else {
 		convertedRequest, err := adaptor.ConvertClaudeRequest(c, info, request)
@@ -187,7 +190,7 @@ func ClaudeHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *typ
 			}
 		}
 
-		jsonData = stripContextManagementForUnsupportedModels(jsonData, request.Model)
+		jsonData = stripContextManagementForUnsupportedModels(c, jsonData, request.Model)
 
 		if common.DebugEnabled {
 			truncatedBody := common.TruncateJsonValues(string(jsonData))
