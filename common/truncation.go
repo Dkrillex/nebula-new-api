@@ -326,7 +326,7 @@ func TruncateJsonValues(jsonStr string) string {
 
 	// 性能优化：对于超大JSON，使用简单的总长度截断，避免完整解析
 	if len(jsonStr) > maxJsonSizeForFullParse {
-		const maxLogLength = 5000 // 日志最大长度
+		const maxLogLength = 2000 // 日志最大长度
 		if len(jsonStr) > maxLogLength {
 			return jsonStr[:maxLogLength] + fmt.Sprintf("...[JSON已截断，总长度: %d]", len(jsonStr))
 		}
