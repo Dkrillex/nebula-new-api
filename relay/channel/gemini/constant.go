@@ -24,6 +24,7 @@ var ModelList = []string{
 	"gemini-2.5-flash-image",
 	// embedding models
 	"gemini-embedding-exp-03-07",
+	"gemini-embedding-001",
 	"text-embedding-004",
 	"embedding-001",
 	// live api models

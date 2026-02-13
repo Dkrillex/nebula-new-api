@@ -406,6 +406,7 @@ func (r *GeminiEmbeddingRequest) GetTokenCountMeta() *types.TokenCountMeta {
 	inputText := strings.Join(inputTexts, "\n")
 	return &types.TokenCountMeta{
 		CombineText: inputText,
+		TokenType:   types.TokenTypeTextNumber, // Gemini embedding bills by character count
 	}
 }
 
@@ -435,6 +436,7 @@ func (r *GeminiBatchEmbeddingRequest) GetTokenCountMeta() *types.TokenCountMeta 
 	inputText := strings.Join(inputTexts, "\n")
 	return &types.TokenCountMeta{
 		CombineText: inputText,
+		TokenType:   types.TokenTypeTextNumber, // Gemini embedding bills by character count
 	}
 }
 
@@ -447,11 +449,13 @@ func (r *GeminiBatchEmbeddingRequest) SetModelName(modelName string) {
 }
 
 type GeminiEmbeddingResponse struct {
-	Embedding ContentEmbedding `json:"embedding"`
+	Embedding ContentEmbedding       `json:"embedding"`
+	Metadata  map[string]interface{} `json:"metadata,omitempty"`
 }
 
 type GeminiBatchEmbeddingResponse struct {
-	Embeddings []*ContentEmbedding `json:"embeddings"`
+	Embeddings []*ContentEmbedding    `json:"embeddings"`
+	Metadata   map[string]interface{} `json:"metadata,omitempty"`
 }
 
 type ContentEmbedding struct {

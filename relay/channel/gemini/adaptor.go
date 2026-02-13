@@ -491,6 +491,12 @@ func (a *Adaptor) GetRequestURL(info *relaycommon.RelayInfo) (string, error) {
 	if strings.HasPrefix(info.UpstreamModelName, "text-embedding") ||
 		strings.HasPrefix(info.UpstreamModelName, "embedding") ||
 		strings.HasPrefix(info.UpstreamModelName, "gemini-embedding") {
+		// Vertex AI uses :predict endpoint; Gemini API uses :embedContent/:batchEmbedContents
+		if strings.Contains(info.ChannelBaseUrl, "aiplatform.googleapis.com") {
+			// Vertex endpoint: always use :predict for both single and batch
+			return fmt.Sprintf("%s/%s/models/%s:predict", info.ChannelBaseUrl, version, info.UpstreamModelName), nil
+		}
+		// Gemini API endpoint: use :embedContent or :batchEmbedContents
 		action := "embedContent"
 		if info.IsGeminiBatchEmbedding {
 			action = "batchEmbedContents"
@@ -661,7 +667,13 @@ func (a *Adaptor) DoResponse(c *gin.Context, resp *http.Response, info *relaycom
 
 	if info.RelayMode == constant.RelayModeGemini {
 		if strings.Contains(info.RequestURLPath, ":embedContent") ||
-			strings.Contains(info.RequestURLPath, ":batchEmbedContents") {
+			strings.Contains(info.RequestURLPath, ":batchEmbedContents") ||
+			strings.Contains(info.RequestURLPath, ":predict") {
+			// Check if this is Vertex endpoint (needs response conversion)
+			if strings.Contains(info.ChannelBaseUrl, "aiplatform.googleapis.com") {
+				// This is Vertex endpoint returning predictions format, need to convert to Gemini format
+				return vertexEmbeddingResponseToGeminiFormat(c, resp, info)
+			}
 			return NativeGeminiEmbeddingHandler(c, resp, info)
 		}
 		if info.IsStream {

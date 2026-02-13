@@ -1,6 +1,7 @@
 package gemini
 
 import (
+	"fmt"
 	"io"
 	"net/http"
 	"one-api/common"
@@ -130,6 +131,105 @@ func NativeGeminiEmbeddingHandler(c *gin.Context, resp *http.Response, info *rel
 	}
 
 	service.IOCopyBytesGracefully(c, resp, responseBody)
+
+	return usage, nil
+}
+
+// vertexEmbeddingResponseToGeminiFormat converts Vertex AI :predict response to Gemini embedding format
+func vertexEmbeddingResponseToGeminiFormat(c *gin.Context, resp *http.Response, info *relaycommon.RelayInfo) (*dto.Usage, *types.NewAPIError) {
+	defer service.CloseResponseBodyGracefully(resp)
+
+	responseBody, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, types.NewOpenAIError(err, types.ErrorCodeBadResponseBody, http.StatusInternalServerError)
+	}
+
+	if common.DebugEnabled {
+		common.SysLog(fmt.Sprintf("[Vertex->Gemini] Raw Vertex response: %s", string(responseBody)))
+	}
+
+	// Parse Vertex predictions format（含 statistics 用于用量）
+	type VertexEmbeddingStats struct {
+		Truncated  bool `json:"truncated"`
+		TokenCount int  `json:"token_count"`
+	}
+	type VertexEmbeddingValues struct {
+		Values     []float64            `json:"values"`
+		Statistics VertexEmbeddingStats `json:"statistics"`
+	}
+	type VertexPrediction struct {
+		Embeddings VertexEmbeddingValues `json:"embeddings"`
+	}
+	type VertexPredictResponse struct {
+		Predictions []VertexPrediction `json:"predictions"`
+	}
+
+	var vertexResp VertexPredictResponse
+	err = common.Unmarshal(responseBody, &vertexResp)
+	if err != nil {
+		return nil, types.NewOpenAIError(err, types.ErrorCodeBadResponseBody, http.StatusInternalServerError)
+	}
+
+	usage := &dto.Usage{
+		PromptTokens: info.PromptTokens,
+		TotalTokens:  info.PromptTokens,
+	}
+	if info.PromptTokens == 0 {
+		var totalCount int
+		for i := range vertexResp.Predictions {
+			totalCount += vertexResp.Predictions[i].Embeddings.Statistics.TokenCount
+		}
+		if totalCount > 0 {
+			usage.PromptTokens = totalCount
+			usage.TotalTokens = totalCount
+		}
+	}
+	usageMeta := map[string]interface{}{
+		"prompt_tokens": usage.PromptTokens,
+		"total_tokens":  usage.TotalTokens,
+	}
+
+	// Convert to Gemini format，并返回 metadata.usage 给用户
+	if info.IsGeminiBatchEmbedding {
+		// Batch: convert predictions array to embeddings array
+		embeddings := make([]*dto.ContentEmbedding, 0, len(vertexResp.Predictions))
+		for i := range vertexResp.Predictions {
+			embeddings = append(embeddings, &dto.ContentEmbedding{
+				Values: vertexResp.Predictions[i].Embeddings.Values,
+			})
+		}
+		geminiResp := dto.GeminiBatchEmbeddingResponse{
+			Embeddings: embeddings,
+			Metadata:   map[string]interface{}{"usage": usageMeta},
+		}
+		geminiJson, jsonErr := common.Marshal(geminiResp)
+		if jsonErr != nil {
+			return nil, types.NewOpenAIError(jsonErr, types.ErrorCodeBadResponseBody, http.StatusInternalServerError)
+		}
+		if common.DebugEnabled {
+			common.SysLog(fmt.Sprintf("[Vertex->Gemini] Converted batch response: %s", string(geminiJson)))
+		}
+		service.IOCopyBytesGracefully(c, resp, geminiJson)
+	} else {
+		// Single: use first prediction
+		if len(vertexResp.Predictions) == 0 {
+			return nil, types.NewOpenAIError(fmt.Errorf("no predictions in Vertex response"), types.ErrorCodeBadResponseBody, http.StatusInternalServerError)
+		}
+		geminiResp := dto.GeminiEmbeddingResponse{
+			Embedding: dto.ContentEmbedding{
+				Values: vertexResp.Predictions[0].Embeddings.Values,
+			},
+			Metadata: map[string]interface{}{"usage": usageMeta},
+		}
+		geminiJson, jsonErr := common.Marshal(geminiResp)
+		if jsonErr != nil {
+			return nil, types.NewOpenAIError(jsonErr, types.ErrorCodeBadResponseBody, http.StatusInternalServerError)
+		}
+		if common.DebugEnabled {
+			common.SysLog(fmt.Sprintf("[Vertex->Gemini] Converted single response: %s", string(geminiJson)))
+		}
+		service.IOCopyBytesGracefully(c, resp, geminiJson)
+	}
 
 	return usage, nil
 }

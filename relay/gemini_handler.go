@@ -9,12 +9,15 @@ import (
 	"one-api/constant"
 	"one-api/dto"
 	"one-api/logger"
+	"one-api/relay/channel"
+	"one-api/relay/channel/vertex"
 	relaycommon "one-api/relay/common"
 	"one-api/relay/helper"
 	"one-api/service"
 	"one-api/setting/model_setting"
 	"one-api/types"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/gin-gonic/gin"
 )
@@ -202,13 +205,29 @@ func GeminiEmbeddingHandler(c *gin.Context, info *relaycommon.RelayInfo) (newAPI
 	isBatch := strings.HasSuffix(c.Request.URL.Path, "batchEmbedContents")
 	info.IsGeminiBatchEmbedding = isBatch
 
+	// First, peek at the request body to check if it's Vertex instances format
+	bodyBytes, err := common.GetRequestBody(c)
+	if err != nil {
+		return types.NewError(err, types.ErrorCodeInvalidRequest, types.ErrOptionWithSkipRetry())
+	}
+
+	// Check if request body contains "instances" (Vertex format)
+	var bodyMap map[string]interface{}
+	if err := common.Unmarshal(bodyBytes, &bodyMap); err == nil {
+		if _, hasInstances := bodyMap["instances"]; hasInstances {
+			// This is Vertex native format, handle it directly
+			common.SysLog("[GeminiEmbedding] Detected Vertex native instances format, using as-is")
+			return handleVertexNativeEmbedding(c, info, bodyBytes)
+		}
+	}
+
+	// Otherwise, parse as Gemini format
 	var req dto.Request
-	var err error
 	var inputTexts []string
 
 	if isBatch {
 		batchRequest := &dto.GeminiBatchEmbeddingRequest{}
-		err = common.UnmarshalBodyReusable(c, batchRequest)
+		err = common.Unmarshal(bodyBytes, batchRequest)
 		if err != nil {
 			return types.NewError(err, types.ErrorCodeInvalidRequest, types.ErrOptionWithSkipRetry())
 		}
@@ -222,7 +241,7 @@ func GeminiEmbeddingHandler(c *gin.Context, info *relaycommon.RelayInfo) (newAPI
 		}
 	} else {
 		singleRequest := &dto.GeminiEmbeddingRequest{}
-		err = common.UnmarshalBodyReusable(c, singleRequest)
+		err = common.Unmarshal(bodyBytes, singleRequest)
 		if err != nil {
 			return types.NewError(err, types.ErrorCodeInvalidRequest, types.ErrOptionWithSkipRetry())
 		}
@@ -246,9 +265,37 @@ func GeminiEmbeddingHandler(c *gin.Context, info *relaycommon.RelayInfo) (newAPI
 	adaptor.Init(info)
 
 	var requestBody io.Reader
-	jsonData, err := common.Marshal(req)
-	if err != nil {
-		return types.NewError(err, types.ErrorCodeConvertRequestFailed, types.ErrOptionWithSkipRetry())
+	var jsonData []byte
+
+	// Check if we need to use Vertex predict format:
+	// 1. API type is VertexAI (19), OR
+	// 2. API type is Gemini (9) but base URL points to aiplatform.googleapis.com (Vertex endpoint)
+	useVertexFormat := info.ApiType == constant.APITypeVertexAi ||
+		(info.ApiType == constant.APITypeGemini && strings.Contains(info.ChannelBaseUrl, "aiplatform.googleapis.com"))
+
+	// Log for debugging
+	common.SysLog(fmt.Sprintf("[GeminiEmbedding] ApiType=%d, APITypeVertexAi=%d, APITypeGemini=%d, ChannelBaseUrl=%s, isBatch=%v, useVertexFormat=%v",
+		info.ApiType, constant.APITypeVertexAi, constant.APITypeGemini, info.ChannelBaseUrl, isBatch, useVertexFormat))
+
+	// Vertex AI uses :predict with "instances" body; Gemini uses embedContent/batchEmbedContents with model/content body
+	if useVertexFormat {
+		common.SysLog(fmt.Sprintf("[Vertex][Embedding] Converting Gemini format to Vertex predict format, isBatch=%v", isBatch))
+		vertexReq, _ := vertex.GeminiEmbeddingToVertexPredictRequest(req, isBatch)
+		if vertexReq == nil {
+			return types.NewError(fmt.Errorf("convert to Vertex embedding request failed"), types.ErrorCodeConvertRequestFailed, types.ErrOptionWithSkipRetry())
+		}
+		jsonData, err = common.Marshal(vertexReq)
+		if err != nil {
+			return types.NewError(err, types.ErrorCodeConvertRequestFailed, types.ErrOptionWithSkipRetry())
+		}
+		common.SysLog(fmt.Sprintf("[Vertex][Embedding] Converted request body: %s", string(jsonData)))
+	} else {
+		common.SysLog(fmt.Sprintf("[GeminiEmbedding] Using Gemini native format (not Vertex)"))
+		jsonData, err = common.Marshal(req)
+		if err != nil {
+			return types.NewError(err, types.ErrorCodeConvertRequestFailed, types.ErrOptionWithSkipRetry())
+		}
+		common.SysLog(fmt.Sprintf("[GeminiEmbedding] Request body: %s", string(jsonData)))
 	}
 
 	// apply param override
@@ -286,6 +333,58 @@ func GeminiEmbeddingHandler(c *gin.Context, info *relaycommon.RelayInfo) (newAPI
 	if openaiErr != nil {
 		service.ResetStatusCode(openaiErr, statusCodeMappingStr)
 		return openaiErr
+	}
+
+	postConsumeQuota(c, info, usage.(*dto.Usage), "")
+	return nil
+}
+
+// handleVertexNativeEmbedding handles Vertex AI native instances format
+func handleVertexNativeEmbedding(c *gin.Context, info *relaycommon.RelayInfo, bodyBytes []byte) *types.NewAPIError {
+	// Parse Vertex instances request to count tokens
+	var vertexReq vertex.VertexPredictEmbeddingRequest
+	if err := common.Unmarshal(bodyBytes, &vertexReq); err != nil {
+		return types.NewError(err, types.ErrorCodeInvalidRequest, types.ErrOptionWithSkipRetry())
+	}
+
+	// Count characters from all instances
+	var totalChars int
+	for _, instance := range vertexReq.Instances {
+		totalChars += utf8.RuneCountInString(instance.Content)
+		totalChars += utf8.RuneCountInString(instance.Title)
+	}
+
+	// Set prompt tokens (characters)
+	common.SetContextKey(c, constant.ContextKeyPromptTokens, totalChars)
+	info.PromptTokens = totalChars
+
+	// Check if batch
+	info.IsGeminiBatchEmbedding = len(vertexReq.Instances) > 1
+
+	err := helper.ModelMappedHelper(c, info, nil)
+	if err != nil {
+		return types.NewError(err, types.ErrorCodeChannelModelMappedError, types.ErrOptionWithSkipRetry())
+	}
+
+	adaptor := GetAdaptor(info.ApiType)
+	if adaptor == nil {
+		return types.NewError(fmt.Errorf("invalid api type: %d", info.ApiType), types.ErrorCodeInvalidApiType, types.ErrOptionWithSkipRetry())
+	}
+	adaptor.Init(info)
+
+	// For Vertex native format, use body as-is (no conversion needed)
+	requestBody := bytes.NewReader(bodyBytes)
+
+	common.SysLog(fmt.Sprintf("[VertexNative][Embedding] Using Vertex instances format as-is, instances count: %d", len(vertexReq.Instances)))
+
+	resp, err := channel.DoApiRequest(adaptor, c, info, requestBody)
+	if err != nil {
+		return types.NewError(err, types.ErrorCodeDoRequestFailed)
+	}
+
+	usage, newAPIError := adaptor.DoResponse(c, resp, info)
+	if newAPIError != nil {
+		return newAPIError
 	}
 
 	postConsumeQuota(c, info, usage.(*dto.Usage), "")

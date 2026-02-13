@@ -15,6 +15,7 @@ import (
 	relaycommon "one-api/relay/common"
 	"one-api/relay/constant"
 	"one-api/relay/helper"
+	"one-api/service"
 	"one-api/setting/model_setting"
 	"one-api/types"
 	"strings"
@@ -276,6 +277,15 @@ func (a *Adaptor) GetRequestURL(info *relaycommon.RelayInfo) (string, error) {
 		if strings.HasPrefix(info.UpstreamModelName, "imagen") {
 			suffix = "predict"
 		}
+
+		// Check if this is an embedding model
+		// Vertex AI uses :predict endpoint for embeddings (not embedContent/batchEmbedContents)
+		if strings.HasPrefix(info.UpstreamModelName, "text-embedding") ||
+			strings.HasPrefix(info.UpstreamModelName, "embedding") ||
+			strings.HasPrefix(info.UpstreamModelName, "gemini-embedding") {
+			suffix = "predict"
+		}
+
 		return a.getRequestUrl(info, info.UpstreamModelName, suffix)
 	} else if a.RequestMode == RequestModeClaude {
 		if info.IsStream {
@@ -292,6 +302,99 @@ func (a *Adaptor) GetRequestURL(info *relaycommon.RelayInfo) (string, error) {
 		return a.getRequestUrl(info, "", "")
 	}
 	return "", errors.New("unsupported request mode")
+}
+
+// vertexEmbeddingResponseHandler reads Vertex :predict embedding response and writes Gemini-format response to client.
+func vertexEmbeddingResponseHandler(c *gin.Context, resp *http.Response, info *relaycommon.RelayInfo) (*dto.Usage, *types.NewAPIError) {
+	defer service.CloseResponseBodyGracefully(resp)
+	responseBody, readErr := io.ReadAll(resp.Body)
+	if readErr != nil {
+		return nil, types.NewOpenAIError(readErr, types.ErrorCodeBadResponseBody, http.StatusInternalServerError)
+	}
+	var vertexResp VertexPredictEmbeddingResponse
+	if jsonErr := json.Unmarshal(responseBody, &vertexResp); jsonErr != nil {
+		return nil, types.NewOpenAIError(jsonErr, types.ErrorCodeBadResponseBody, http.StatusInternalServerError)
+	}
+	if len(vertexResp.Predictions) == 0 {
+		return nil, types.NewOpenAIError(errors.New("no predictions in Vertex embedding response"), types.ErrorCodeBadResponseBody, http.StatusInternalServerError)
+	}
+
+	usage := &dto.Usage{
+		PromptTokens:     info.PromptTokens,
+		CompletionTokens: 0,
+		TotalTokens:      info.PromptTokens,
+	}
+	// 内部计费 + 返回用户：从 Vertex statistics 汇总 token
+	if info.PromptTokens == 0 {
+		var totalCount int
+		for i := range vertexResp.Predictions {
+			totalCount += vertexResp.Predictions[i].Embeddings.Statistics.TokenCount
+		}
+		if totalCount > 0 {
+			usage.PromptTokens = totalCount
+			usage.TotalTokens = totalCount
+		}
+	}
+
+	usageMeta := map[string]interface{}{
+		"prompt_tokens": usage.PromptTokens,
+		"total_tokens":  usage.TotalTokens,
+	}
+
+	// /v1/embeddings 走 OpenAI 格式并带 usage
+	if info.RelayMode == constant.RelayModeEmbeddings {
+		openAIResp := dto.OpenAIEmbeddingResponse{
+			Object: "list",
+			Data:   make([]dto.OpenAIEmbeddingResponseItem, 0, len(vertexResp.Predictions)),
+			Model:  info.UpstreamModelName,
+			Usage: dto.Usage{
+				PromptTokens:     usage.PromptTokens,
+				CompletionTokens: 0,
+				TotalTokens:      usage.TotalTokens,
+			},
+		}
+		for i := range vertexResp.Predictions {
+			openAIResp.Data = append(openAIResp.Data, dto.OpenAIEmbeddingResponseItem{
+				Object:    "embedding",
+				Index:     i,
+				Embedding: vertexResp.Predictions[i].Embeddings.Values,
+			})
+		}
+		jsonResponse, jsonErr := common.Marshal(openAIResp)
+		if jsonErr != nil {
+			return nil, types.NewOpenAIError(jsonErr, types.ErrorCodeBadResponseBody, http.StatusInternalServerError)
+		}
+		service.IOCopyBytesGracefully(c, resp, jsonResponse)
+		return usage, nil
+	}
+
+	// Gemini 原生：返回 embedding/embeddings，用量放在 metadata.usage
+	if !info.IsGeminiBatchEmbedding {
+		geminiResp := dto.GeminiEmbeddingResponse{
+			Embedding: dto.ContentEmbedding{Values: vertexResp.Predictions[0].Embeddings.Values},
+			Metadata:  map[string]interface{}{"usage": usageMeta},
+		}
+		jsonResponse, jsonErr := common.Marshal(geminiResp)
+		if jsonErr != nil {
+			return nil, types.NewOpenAIError(jsonErr, types.ErrorCodeBadResponseBody, http.StatusInternalServerError)
+		}
+		service.IOCopyBytesGracefully(c, resp, jsonResponse)
+		return usage, nil
+	}
+	embeddings := make([]*dto.ContentEmbedding, 0, len(vertexResp.Predictions))
+	for i := range vertexResp.Predictions {
+		embeddings = append(embeddings, &dto.ContentEmbedding{Values: vertexResp.Predictions[i].Embeddings.Values})
+	}
+	geminiBatchResp := dto.GeminiBatchEmbeddingResponse{
+		Embeddings: embeddings,
+		Metadata:   map[string]interface{}{"usage": usageMeta},
+	}
+	jsonResponse, jsonErr := common.Marshal(geminiBatchResp)
+	if jsonErr != nil {
+		return nil, types.NewOpenAIError(jsonErr, types.ErrorCodeBadResponseBody, http.StatusInternalServerError)
+	}
+	service.IOCopyBytesGracefully(c, resp, jsonResponse)
+	return usage, nil
 }
 
 func (a *Adaptor) SetupRequestHeader(c *gin.Context, req *http.Header, info *relaycommon.RelayInfo) error {
@@ -436,8 +539,20 @@ func (a *Adaptor) ConvertRerankRequest(c *gin.Context, relayMode int, request dt
 }
 
 func (a *Adaptor) ConvertEmbeddingRequest(c *gin.Context, info *relaycommon.RelayInfo, request dto.EmbeddingRequest) (any, error) {
-	//TODO implement me
-	return nil, errors.New("not implemented")
+	// Vertex :predict 需要 instances，不能使用 Gemini 的 requests 格式
+	if request.Input == nil {
+		return nil, errors.New("input is required")
+	}
+	inputs := request.ParseInput()
+	if len(inputs) == 0 {
+		return nil, errors.New("input is empty")
+	}
+	info.IsGeminiBatchEmbedding = len(inputs) > 1
+	instances := make([]VertexPredictEmbeddingInstance, 0, len(inputs))
+	for _, text := range inputs {
+		instances = append(instances, VertexPredictEmbeddingInstance{Content: text})
+	}
+	return &VertexPredictEmbeddingRequest{Instances: instances}, nil
 }
 
 func (a *Adaptor) ConvertOpenAIResponsesRequest(c *gin.Context, info *relaycommon.RelayInfo, request dto.OpenAIResponsesRequest) (any, error) {
@@ -485,7 +600,20 @@ func (a *Adaptor) DoResponse(c *gin.Context, resp *http.Response, info *relaycom
 				return openai.OpenaiHandler(c, info, resp)
 			}
 			if info.RelayMode == constant.RelayModeGemini {
+				// Check if it's an embedding request in Gemini native format
+				if strings.Contains(info.RequestURLPath, ":embedContent") ||
+					strings.Contains(info.RequestURLPath, ":batchEmbedContents") ||
+					strings.Contains(info.RequestURLPath, ":predict") &&
+						(strings.HasPrefix(info.UpstreamModelName, "text-embedding") ||
+							strings.HasPrefix(info.UpstreamModelName, "embedding") ||
+							strings.HasPrefix(info.UpstreamModelName, "gemini-embedding")) {
+					// Vertex returns :predict format (predictions); convert to Gemini format for client
+					return vertexEmbeddingResponseHandler(c, resp, info)
+				}
 				return gemini.GeminiTextGenerationHandler(c, info, resp)
+			} else if info.RelayMode == constant.RelayModeEmbeddings {
+				// Vertex returns :predict format (predictions); convert to Gemini format for client
+				return vertexEmbeddingResponseHandler(c, resp, info)
 			} else {
 				if strings.HasPrefix(info.UpstreamModelName, "imagen") {
 					return gemini.GeminiImageHandler(c, info, resp)
