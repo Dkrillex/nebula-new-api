@@ -61,12 +61,24 @@ export default function ModelSettingsVisualEditor(props) {
       const modelPrice = JSON.parse(props.options.ModelPrice || '{}');
       const modelRatio = JSON.parse(props.options.ModelRatio || '{}');
       const completionRatio = JSON.parse(props.options.CompletionRatio || '{}');
-      const originModelPrice = JSON.parse(props.options.OriginModelPrice || '{}');
-      const originModelRatio = JSON.parse(props.options.OriginModelRatio || '{}');
-      const originCompletionRatio = JSON.parse(props.options.OriginCompletionRatio || '{}');
-      const videoModelPricePerSecond = JSON.parse(props.options.VideoModelPricePerSecond || '{}');
-      const imageTokenPricing = JSON.parse(props.options.ImageTokenPricing || '{}');
-      const originImageTokenPricing = JSON.parse(props.options.OriginImageTokenPricing || '{}');
+      const originModelPrice = JSON.parse(
+        props.options.OriginModelPrice || '{}',
+      );
+      const originModelRatio = JSON.parse(
+        props.options.OriginModelRatio || '{}',
+      );
+      const originCompletionRatio = JSON.parse(
+        props.options.OriginCompletionRatio || '{}',
+      );
+      const videoModelPricePerSecond = JSON.parse(
+        props.options.VideoModelPricePerSecond || '{}',
+      );
+      const imageTokenPricing = JSON.parse(
+        props.options.ImageTokenPricing || '{}',
+      );
+      const originImageTokenPricing = JSON.parse(
+        props.options.OriginImageTokenPricing || '{}',
+      );
 
       // 合并所有模型名称
       const modelNames = new Set([
@@ -84,28 +96,40 @@ export default function ModelSettingsVisualEditor(props) {
       const modelData = Array.from(modelNames).map((name) => {
         const price = modelPrice[name] === undefined ? '' : modelPrice[name];
         const ratio = modelRatio[name] === undefined ? '' : modelRatio[name];
-        const comp = completionRatio[name] === undefined ? '' : completionRatio[name];
-        const originPrice = originModelPrice[name] === undefined ? '' : originModelPrice[name];
-        const originRatio = originModelRatio[name] === undefined ? '' : originModelRatio[name];
-        const originComp = originCompletionRatio[name] === undefined ? '' : originCompletionRatio[name];
-        const videoPrice = videoModelPricePerSecond[name] === undefined ? '' : videoModelPricePerSecond[name];
+        const comp =
+          completionRatio[name] === undefined ? '' : completionRatio[name];
+        const originPrice =
+          originModelPrice[name] === undefined ? '' : originModelPrice[name];
+        const originRatio =
+          originModelRatio[name] === undefined ? '' : originModelRatio[name];
+        const originComp =
+          originCompletionRatio[name] === undefined
+            ? ''
+            : originCompletionRatio[name];
+        const videoPrice =
+          videoModelPricePerSecond[name] === undefined
+            ? ''
+            : videoModelPricePerSecond[name];
         const imageTokenPricingData = imageTokenPricing[name] || null;
-        const originImageTokenPricingData = originImageTokenPricing[name] || null;
+        const originImageTokenPricingData =
+          originImageTokenPricing[name] || null;
 
         // 计算原始输入价格（从原始模型倍率转换）
-        const originTokenPrice = originRatio !== '' ? (parseFloat(originRatio) * 2).toString() : '';
+        const originTokenPrice =
+          originRatio !== '' ? (parseFloat(originRatio) * 2).toString() : '';
 
         // 计算原始输出价格（从原始模型补全倍率转换）
-        const originCompletionTokenPrice = originComp !== '' && originTokenPrice !== ''
-          ? (parseFloat(originComp) * parseFloat(originTokenPrice)).toString()
-          : '';
+        const originCompletionTokenPrice =
+          originComp !== '' && originTokenPrice !== ''
+            ? (parseFloat(originComp) * parseFloat(originTokenPrice)).toString()
+            : '';
 
         // 检测冲突：四种定价方式互斥（price、videoPrice、ratio、imageTokenPricing）
         const pricingMethodsCount = [
           price !== '',
           videoPrice !== '',
           ratio !== '' || comp !== '',
-          imageTokenPricingData !== null
+          imageTokenPricingData !== null,
         ].filter(Boolean).length;
 
         return {
@@ -172,11 +196,14 @@ export default function ModelSettingsVisualEditor(props) {
           // 图像Token表定价
           output.ImageTokenPricing[model.name] = model.imageTokenPricingData;
           if (model.originImageTokenPricingData) {
-            output.OriginImageTokenPricing[model.name] = model.originImageTokenPricingData;
+            output.OriginImageTokenPricing[model.name] =
+              model.originImageTokenPricingData;
           }
         } else if (model.videoPrice !== '') {
           // 如果视频价格不为空，则转换为浮点数，忽略其他价格和倍率参数
-          output.VideoModelPricePerSecond[model.name] = parseFloat(model.videoPrice);
+          output.VideoModelPricePerSecond[model.name] = parseFloat(
+            model.videoPrice,
+          );
         } else if (model.price !== '') {
           // 如果固定价格不为空，则转换为浮点数，忽略倍率参数
           output.ModelPrice[model.name] = parseFloat(model.price);
@@ -196,7 +223,9 @@ export default function ModelSettingsVisualEditor(props) {
           if (model.originRatio !== '')
             output.OriginModelRatio[model.name] = parseFloat(model.originRatio);
           if (model.originCompletionRatio !== '')
-            output.OriginCompletionRatio[model.name] = parseFloat(model.originCompletionRatio);
+            output.OriginCompletionRatio[model.name] = parseFloat(
+              model.originCompletionRatio,
+            );
 
           // 如果有原始输入价格，转换为原始模型倍率存储
           if (model.originTokenPrice !== '') {
@@ -214,10 +243,22 @@ export default function ModelSettingsVisualEditor(props) {
         CompletionRatio: JSON.stringify(output.CompletionRatio, null, 2),
         OriginModelPrice: JSON.stringify(output.OriginModelPrice, null, 2),
         OriginModelRatio: JSON.stringify(output.OriginModelRatio, null, 2),
-        OriginCompletionRatio: JSON.stringify(output.OriginCompletionRatio, null, 2),
-        VideoModelPricePerSecond: JSON.stringify(output.VideoModelPricePerSecond, null, 2),
+        OriginCompletionRatio: JSON.stringify(
+          output.OriginCompletionRatio,
+          null,
+          2,
+        ),
+        VideoModelPricePerSecond: JSON.stringify(
+          output.VideoModelPricePerSecond,
+          null,
+          2,
+        ),
         ImageTokenPricing: JSON.stringify(output.ImageTokenPricing, null, 2),
-        OriginImageTokenPricing: JSON.stringify(output.OriginImageTokenPricing, null, 2),
+        OriginImageTokenPricing: JSON.stringify(
+          output.OriginImageTokenPricing,
+          null,
+          2,
+        ),
       };
 
       const requestQueue = Object.entries(finalOutput).map(([key, value]) => {
@@ -305,7 +346,11 @@ export default function ModelSettingsVisualEditor(props) {
       render: (text, record) => (
         <Input
           value={text}
-          placeholder={record.price !== '' || record.videoPrice !== '' ? t('模型倍率') : t('默认补全倍率')}
+          placeholder={
+            record.price !== '' || record.videoPrice !== ''
+              ? t('模型倍率')
+              : t('默认补全倍率')
+          }
           disabled={record.price !== '' || record.videoPrice !== ''}
           onChange={(value) => updateModel(record.name, 'ratio', value)}
         />
@@ -318,7 +363,11 @@ export default function ModelSettingsVisualEditor(props) {
       render: (text, record) => (
         <Input
           value={text}
-          placeholder={record.price !== '' || record.videoPrice !== '' ? t('补全倍率') : t('默认补全倍率')}
+          placeholder={
+            record.price !== '' || record.videoPrice !== ''
+              ? t('补全倍率')
+              : t('默认补全倍率')
+          }
           disabled={record.price !== '' || record.videoPrice !== ''}
           onChange={(value) =>
             updateModel(record.name, 'completionRatio', value)
@@ -326,42 +375,42 @@ export default function ModelSettingsVisualEditor(props) {
         />
       ),
     },
-    {
-      title: t('原始模型固定价格'),
-      dataIndex: 'originPrice',
-      key: 'originPrice',
-      render: (text, record) => (
-        <Input
-          value={text}
-          placeholder={t('原始模型固定价格')}
-          onChange={(value) => updateModel(record.name, 'originPrice', value)}
-        />
-      ),
-    },
-    {
-      title: t('原始模型倍率'),
-      dataIndex: 'originRatio',
-      key: 'originRatio',
-      render: (text, record) => (
-        <Input
-          value={text}
-          placeholder={t('原始模型倍率')}
-          onChange={(value) => updateModel(record.name, 'originRatio', value)}
-        />
-      ),
-    },
-    {
-      title: t('原始模型补全倍率'),
-      dataIndex: 'originCompletionRatio',
-      key: 'originCompletionRatio',
-      render: (text, record) => (
-        <Input
-          value={text}
-          placeholder={t('原始模型补全倍率')}
-          onChange={(value) => updateModel(record.name, 'originCompletionRatio', value)}
-        />
-      ),
-    },
+    // {
+    //   title: t('原始模型固定价格'),
+    //   dataIndex: 'originPrice',
+    //   key: 'originPrice',
+    //   render: (text, record) => (
+    //     <Input
+    //       value={text}
+    //       placeholder={t('原始模型固定价格')}
+    //       onChange={(value) => updateModel(record.name, 'originPrice', value)}
+    //     />
+    //   ),
+    // },
+    // {
+    //   title: t('原始模型倍率'),
+    //   dataIndex: 'originRatio',
+    //   key: 'originRatio',
+    //   render: (text, record) => (
+    //     <Input
+    //       value={text}
+    //       placeholder={t('原始模型倍率')}
+    //       onChange={(value) => updateModel(record.name, 'originRatio', value)}
+    //     />
+    //   ),
+    // },
+    // {
+    //   title: t('原始模型补全倍率'),
+    //   dataIndex: 'originCompletionRatio',
+    //   key: 'originCompletionRatio',
+    //   render: (text, record) => (
+    //     <Input
+    //       value={text}
+    //       placeholder={t('原始模型补全倍率')}
+    //       onChange={(value) => updateModel(record.name, 'originCompletionRatio', value)}
+    //     />
+    //   ),
+    // },
     {
       title: t('操作'),
       key: 'action',
@@ -492,7 +541,8 @@ export default function ModelSettingsVisualEditor(props) {
       const originTokenPrice = parseFloat(currentModel.originTokenPrice);
 
       if (originTokenPrice > 0) {
-        const originCompletionRatio = originCompletionTokenPrice / originTokenPrice;
+        const originCompletionRatio =
+          originCompletionTokenPrice / originTokenPrice;
         newState.originCompletionRatio = originCompletionRatio;
       }
     }
@@ -628,14 +678,20 @@ export default function ModelSettingsVisualEditor(props) {
         if (initialPricingMode === 'per-image-token') {
           // 图像Token表定价模式
           if (modelCopy.imageTokenPricingData) {
-            formValues.inputTextPrice = modelCopy.imageTokenPricingData.input_text_price || '';
-            formValues.inputImagePrice = modelCopy.imageTokenPricingData.input_image_price || '';
-            formValues.outputImagePrice = modelCopy.imageTokenPricingData.output_image_price || '';
+            formValues.inputTextPrice =
+              modelCopy.imageTokenPricingData.input_text_price || '';
+            formValues.inputImagePrice =
+              modelCopy.imageTokenPricingData.input_image_price || '';
+            formValues.outputImagePrice =
+              modelCopy.imageTokenPricingData.output_image_price || '';
           }
           if (modelCopy.originImageTokenPricingData) {
-            formValues.originInputTextPrice = modelCopy.originImageTokenPricingData.input_text_price || '';
-            formValues.originInputImagePrice = modelCopy.originImageTokenPricingData.input_image_price || '';
-            formValues.originOutputImagePrice = modelCopy.originImageTokenPricingData.output_image_price || '';
+            formValues.originInputTextPrice =
+              modelCopy.originImageTokenPricingData.input_text_price || '';
+            formValues.originInputImagePrice =
+              modelCopy.originImageTokenPricingData.input_image_price || '';
+            formValues.originOutputImagePrice =
+              modelCopy.originImageTokenPricingData.output_image_price || '';
           }
         } else if (initialPricingMode === 'per-second') {
           formValues.videoPriceInput = modelCopy.videoPrice;
@@ -652,9 +708,11 @@ export default function ModelSettingsVisualEditor(props) {
         if (initialPricingMode !== 'per-image-token') {
           formValues.originPrice = modelCopy.originPrice || '';
           formValues.originRatio = modelCopy.originRatio || '';
-          formValues.originCompletionRatio = modelCopy.originCompletionRatio || '';
+          formValues.originCompletionRatio =
+            modelCopy.originCompletionRatio || '';
           formValues.originTokenPrice = modelCopy.originTokenPrice || '';
-          formValues.originCompletionTokenPrice = modelCopy.originCompletionTokenPrice || '';
+          formValues.originCompletionTokenPrice =
+            modelCopy.originCompletionTokenPrice || '';
         }
 
         formRef.current.setValues(formValues);
@@ -758,7 +816,9 @@ export default function ModelSettingsVisualEditor(props) {
               currentModel.originTokenPrice
             ) {
               // Calculate and set origin ratio from origin token price
-              const originTokenPrice = parseFloat(currentModel.originTokenPrice);
+              const originTokenPrice = parseFloat(
+                currentModel.originTokenPrice,
+              );
               valuesToSave.originRatio = (originTokenPrice / 2).toString();
             }
 
@@ -770,64 +830,84 @@ export default function ModelSettingsVisualEditor(props) {
               currentModel.originTokenPrice
             ) {
               // Calculate and set origin completion ratio from origin completion token price
-              const originCompletionTokenPrice = parseFloat(currentModel.originCompletionTokenPrice);
-              const originTokenPrice = parseFloat(currentModel.originTokenPrice);
+              const originCompletionTokenPrice = parseFloat(
+                currentModel.originCompletionTokenPrice,
+              );
+              const originTokenPrice = parseFloat(
+                currentModel.originTokenPrice,
+              );
               if (originTokenPrice > 0) {
-                valuesToSave.originCompletionRatio = (originCompletionTokenPrice / originTokenPrice).toString();
+                valuesToSave.originCompletionRatio = (
+                  originCompletionTokenPrice / originTokenPrice
+                ).toString();
               }
             }
 
             // 处理图像Token表定价模式
             if (pricingMode === 'per-image-token') {
               // 构建ImageTokenPricing数据结构（包含固定Token表）
-              if (currentModel.inputTextPrice && currentModel.inputImagePrice && currentModel.outputImagePrice) {
+              if (
+                currentModel.inputTextPrice &&
+                currentModel.inputImagePrice &&
+                currentModel.outputImagePrice
+              ) {
                 valuesToSave.imageTokenPricingData = {
                   input_text_price: parseFloat(currentModel.inputTextPrice),
                   input_image_price: parseFloat(currentModel.inputImagePrice),
                   output_image_price: parseFloat(currentModel.outputImagePrice),
                   token_table: {
                     low: {
-                      "1024x1024": 272,
-                      "1024x1536": 408,
-                      "1536x1024": 400
+                      '1024x1024': 272,
+                      '1024x1536': 408,
+                      '1536x1024': 400,
                     },
                     medium: {
-                      "1024x1024": 1056,
-                      "1024x1536": 1584,
-                      "1536x1024": 1568
+                      '1024x1024': 1056,
+                      '1024x1536': 1584,
+                      '1536x1024': 1568,
                     },
                     high: {
-                      "1024x1024": 4160,
-                      "1024x1536": 6240,
-                      "1536x1024": 6208
-                    }
-                  }
+                      '1024x1024': 4160,
+                      '1024x1536': 6240,
+                      '1536x1024': 6208,
+                    },
+                  },
                 };
               }
-              
+
               // 构建原始ImageTokenPricing数据结构
-              if (currentModel.originInputTextPrice && currentModel.originInputImagePrice && currentModel.originOutputImagePrice) {
+              if (
+                currentModel.originInputTextPrice &&
+                currentModel.originInputImagePrice &&
+                currentModel.originOutputImagePrice
+              ) {
                 valuesToSave.originImageTokenPricingData = {
-                  input_text_price: parseFloat(currentModel.originInputTextPrice),
-                  input_image_price: parseFloat(currentModel.originInputImagePrice),
-                  output_image_price: parseFloat(currentModel.originOutputImagePrice),
+                  input_text_price: parseFloat(
+                    currentModel.originInputTextPrice,
+                  ),
+                  input_image_price: parseFloat(
+                    currentModel.originInputImagePrice,
+                  ),
+                  output_image_price: parseFloat(
+                    currentModel.originOutputImagePrice,
+                  ),
                   token_table: {
                     low: {
-                      "1024x1024": 272,
-                      "1024x1536": 408,
-                      "1536x1024": 400
+                      '1024x1024': 272,
+                      '1024x1536': 408,
+                      '1536x1024': 400,
                     },
                     medium: {
-                      "1024x1024": 1056,
-                      "1024x1536": 1584,
-                      "1536x1024": 1568
+                      '1024x1024': 1056,
+                      '1024x1536': 1584,
+                      '1536x1024': 1568,
                     },
                     high: {
-                      "1024x1024": 4160,
-                      "1024x1536": 6240,
-                      "1536x1024": 6208
-                    }
-                  }
+                      '1024x1024': 4160,
+                      '1024x1536': 6240,
+                      '1536x1024': 6208,
+                    },
+                  },
                 };
               }
             }
@@ -891,7 +971,8 @@ export default function ModelSettingsVisualEditor(props) {
                       };
 
                       if (newMode === 'per-second') {
-                        formValues.videoPriceInput = updatedModel.videoPrice || '';
+                        formValues.videoPriceInput =
+                          updatedModel.videoPrice || '';
                       } else if (newMode === 'per-request') {
                         formValues.priceInput = updatedModel.price || '';
                       } else if (newMode === 'per-token') {
@@ -967,7 +1048,8 @@ export default function ModelSettingsVisualEditor(props) {
                           // Handle original completion configuration - always sync
                           if (updatedModel.originCompletionRatio) {
                             updatedModel.originCompletionTokenPrice = (
-                              parseFloat(updatedModel.originCompletionRatio) * parseFloat(updatedModel.originTokenPrice || 0)
+                              parseFloat(updatedModel.originCompletionRatio) *
+                              parseFloat(updatedModel.originTokenPrice || 0)
                             ).toString();
                           }
                         } else if (
@@ -982,9 +1064,13 @@ export default function ModelSettingsVisualEditor(props) {
                           }
 
                           // Always calculate completionRatio from completionTokenPrice
-                          if (updatedModel.completionTokenPrice && updatedModel.tokenPrice) {
+                          if (
+                            updatedModel.completionTokenPrice &&
+                            updatedModel.tokenPrice
+                          ) {
                             updatedModel.completionRatio = (
-                              parseFloat(updatedModel.completionTokenPrice) / parseFloat(updatedModel.tokenPrice)
+                              parseFloat(updatedModel.completionTokenPrice) /
+                              parseFloat(updatedModel.tokenPrice)
                             ).toString();
                           }
 
@@ -996,9 +1082,14 @@ export default function ModelSettingsVisualEditor(props) {
                           }
 
                           // Handle original completion configuration - always sync
-                          if (updatedModel.originCompletionTokenPrice && updatedModel.originTokenPrice) {
+                          if (
+                            updatedModel.originCompletionTokenPrice &&
+                            updatedModel.originTokenPrice
+                          ) {
                             updatedModel.originCompletionRatio = (
-                              parseFloat(updatedModel.originCompletionTokenPrice) / parseFloat(updatedModel.originTokenPrice)
+                              parseFloat(
+                                updatedModel.originCompletionTokenPrice,
+                              ) / parseFloat(updatedModel.originTokenPrice)
                             ).toString();
                           }
                         }
@@ -1011,15 +1102,19 @@ export default function ModelSettingsVisualEditor(props) {
                             formValues.ratioInput = updatedModel.ratio || '';
                             formValues.completionRatioInput =
                               updatedModel.completionRatio || '';
-                            formValues.originRatio = updatedModel.originRatio || '';
-                            formValues.originCompletionRatio = updatedModel.originCompletionRatio || '';
+                            formValues.originRatio =
+                              updatedModel.originRatio || '';
+                            formValues.originCompletionRatio =
+                              updatedModel.originCompletionRatio || '';
                           } else if (newSubMode === 'token-price') {
                             formValues.modelTokenPrice =
                               updatedModel.tokenPrice || '';
                             formValues.completionTokenPrice =
                               updatedModel.completionTokenPrice || '';
-                            formValues.originTokenPrice = updatedModel.originTokenPrice || '';
-                            formValues.originCompletionTokenPrice = updatedModel.originCompletionTokenPrice || '';
+                            formValues.originTokenPrice =
+                              updatedModel.originTokenPrice || '';
+                            formValues.originCompletionTokenPrice =
+                              updatedModel.originCompletionTokenPrice || '';
                           }
 
                           formRef.current.setValues(formValues);
@@ -1209,7 +1304,6 @@ export default function ModelSettingsVisualEditor(props) {
           )}
 
           <Form.Section text={t('原始模型配置')}>
-
             {/* 按次计费模式：显示原始固定价格(每次) */}
             {pricingMode === 'per-request' && (
               <Form.Input
@@ -1277,18 +1371,19 @@ export default function ModelSettingsVisualEditor(props) {
               />
             )}
 
-            {pricingMode === 'per-token' && pricingSubMode === 'token-price' && (
-              <Form.Input
-                field='originCompletionTokenPrice'
-                label={t('原始输出价格')}
-                placeholder={t('输入原始输出价格')}
-                suffix={t('$/1M tokens')}
-                onChange={(value) => {
-                  handleOriginCompletionTokenPriceChange(value);
-                }}
-                initValue={currentModel?.originCompletionTokenPrice || ''}
-              />
-            )}
+            {pricingMode === 'per-token' &&
+              pricingSubMode === 'token-price' && (
+                <Form.Input
+                  field='originCompletionTokenPrice'
+                  label={t('原始输出价格')}
+                  placeholder={t('输入原始输出价格')}
+                  suffix={t('$/1M tokens')}
+                  onChange={(value) => {
+                    handleOriginCompletionTokenPriceChange(value);
+                  }}
+                  initValue={currentModel?.originCompletionTokenPrice || ''}
+                />
+              )}
 
             {pricingMode === 'per-request' && (
               <Form.Input

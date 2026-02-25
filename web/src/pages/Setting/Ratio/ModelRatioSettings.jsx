@@ -235,6 +235,7 @@ export default function ModelRatioSettings(props) {
               onChange={(value) => setInputs({ ...inputs, ModelPrice: value })}
             />
           </Col>
+          {/*
           <Col xs={24} sm={12} style={{ display: 'flex', flexDirection: 'column' }}>
             <Form.TextArea
               label={t('原始模型固定价格')}
@@ -258,6 +259,7 @@ export default function ModelRatioSettings(props) {
               }
             />
           </Col>
+          */}
         </Row>
         <Row gutter={16} style={{ display: 'flex', alignItems: 'stretch' }}>
           <Col xs={24} sm={12} style={{ display: 'flex', flexDirection: 'column' }}>
@@ -278,6 +280,7 @@ export default function ModelRatioSettings(props) {
               onChange={(value) => setInputs({ ...inputs, ModelRatio: value })}
             />
           </Col>
+          {/*
           <Col xs={24} sm={12} style={{ display: 'flex', flexDirection: 'column' }}>
             <Form.TextArea
               label={t('原始模型倍率')}
@@ -298,6 +301,7 @@ export default function ModelRatioSettings(props) {
               }
             />
           </Col>
+          */}
         </Row>
         <Row gutter={16} style={{ display: 'flex', alignItems: 'stretch' }}>
           <Col xs={24} sm={12} style={{ display: 'flex', flexDirection: 'column' }}>
@@ -321,6 +325,7 @@ export default function ModelRatioSettings(props) {
               }
             />
           </Col>
+          {/*
           <Col xs={24} sm={12} style={{ display: 'flex', flexDirection: 'column' }}>
             <Form.TextArea
               label={t('原始模型补全倍率')}
@@ -341,6 +346,7 @@ export default function ModelRatioSettings(props) {
               }
             />
           </Col>
+          */}
         </Row>
         <Row gutter={16}>
           <Col xs={24} sm={16}>
@@ -385,6 +391,7 @@ export default function ModelRatioSettings(props) {
               }
             />
           </Col>
+          {/*
           <Col xs={24} sm={12} style={{ display: 'flex', flexDirection: 'column' }}>
             <Form.TextArea
               label={t('原始视频模型每秒价格')}
@@ -408,6 +415,7 @@ export default function ModelRatioSettings(props) {
               }
             />
           </Col>
+          */}
         </Row>
         <Row gutter={16}>
           <Col xs={24} sm={16}>
@@ -507,6 +515,7 @@ export default function ModelRatioSettings(props) {
               }
             />
           </Col>
+          {/*
           <Col xs={24} sm={12} style={{ display: 'flex', flexDirection: 'column' }}>
             <Form.TextArea
               label={t('原始图片补全倍率')}
@@ -530,6 +539,7 @@ export default function ModelRatioSettings(props) {
               }
             />
           </Col>
+          */}
         </Row>
         <Row gutter={16} style={{ display: 'flex', alignItems: 'stretch' }}>
           <Col xs={24} sm={12} style={{ display: 'flex', flexDirection: 'column' }}>
@@ -557,6 +567,7 @@ export default function ModelRatioSettings(props) {
               }
             />
           </Col>
+          {/*
           <Col xs={24} sm={12} style={{ display: 'flex', flexDirection: 'column' }}>
             <Form.TextArea
               label={t('原始图像Token表定价')}
@@ -582,6 +593,7 @@ export default function ModelRatioSettings(props) {
               }
             />
           </Col>
+          */}
         </Row>
         <Row gutter={16} style={{ display: 'flex', alignItems: 'stretch' }}>
           <Col xs={24} sm={12} style={{ display: 'flex', flexDirection: 'column' }}>
@@ -609,6 +621,7 @@ export default function ModelRatioSettings(props) {
               }
             />
           </Col>
+          {/*
           <Col xs={24} sm={12} style={{ display: 'flex', flexDirection: 'column' }}>
             <Form.TextArea
               label={t('图片模型按张计费原始价格')}
@@ -634,6 +647,7 @@ export default function ModelRatioSettings(props) {
               }
             />
           </Col>
+          */}
         </Row>
         <Row gutter={16}>
           <Col span={16}>
