@@ -18,17 +18,10 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-// contextManagementBeta 启用 context_management 所需的 Anthropic beta 头值，未传该头时带 context_management 会触发 API 400: "Extra inputs are not permitted"
-const contextManagementBeta = "context-management-2025-06-27"
-
-// stripContextManagementForUnsupportedModels 当请求未带 anthropic-beta: context-management-2025-06-27 时，
-// 从请求 JSON 中移除 context_management，避免上游返回 400。不依赖固定模型列表，后续新增 Claude 模型也自动生效。
+// stripContextManagementForUnsupportedModels 从请求 JSON 中移除 context_management，避免上游返回 400。
+// 客户端可能带 anthropic-beta 头，但部分上游（如 Cloudwise）仍会报 "Extra inputs are not permitted"，故统一 strip。
 func stripContextManagementForUnsupportedModels(c *gin.Context, jsonData []byte, model string) []byte {
-	beta := c.Request.Header.Get("anthropic-beta")
-	if !strings.Contains(beta, contextManagementBeta) {
-		return stripContextManagementFromJSON(jsonData)
-	}
-	return jsonData
+	return stripContextManagementFromJSON(jsonData)
 }
 
 func stripContextManagementFromJSON(jsonData []byte) []byte {
@@ -193,6 +186,8 @@ func ClaudeHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *typ
 		jsonData = stripContextManagementForUnsupportedModels(c, jsonData, request.Model)
 
 		if common.DebugEnabled {
+			anthropicBeta := c.Request.Header.Get("anthropic-beta")
+			common.SysLog(fmt.Sprintf("[Claude] request anthropic-beta header: %q", anthropicBeta))
 			truncatedBody := common.TruncateJsonValues(string(jsonData))
 			common.SysLog(fmt.Sprintf("requestBody: %s", truncatedBody))
 		}

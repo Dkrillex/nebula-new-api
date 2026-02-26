@@ -241,6 +241,10 @@ func postConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, usage 
 			promptTokens -= cachedCreationTokens
 		}
 	}
+	// gpt-image-1 的图片输入单独计费，baseTokens 只保留文本，避免图片 token 被重复计费（不依赖 ChannelType，有 image 明细即扣减）
+	if strings.HasPrefix(modelName, "gpt-image-1") && imageTokens > 0 && promptTokens >= imageTokens {
+		promptTokens -= imageTokens
+	}
 
 	completionRatio := relayInfo.PriceData.CompletionRatio
 	cacheRatio := relayInfo.PriceData.CacheRatio
@@ -360,6 +364,14 @@ func postConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, usage 
 			imageTokensWithRatio = dImageTokens.Mul(dImageRatio)
 		}
 
+		// gpt-image-1 使用「图片与基础倍率2一致、输出=图片输入价格×补全倍率」的单独计费，不乘 modelRatio
+		isGptImage1 := strings.HasPrefix(modelName, "gpt-image-1")
+		var imageQuotaGptImage1 decimal.Decimal
+		var imageCompletionQuotaGptImage1 decimal.Decimal
+		if isGptImage1 {
+			imageQuotaGptImage1 = dImageTokens.Mul(dImageRatio).Mul(dGroupRatio)
+		}
+
 		// Gemini audio tokens 特殊价格计算
 		if !dAudioTokens.IsZero() {
 			audioInputPrice = operation_setting.GetGeminiInputAudioPricePerMillionTokens(modelName)
@@ -368,22 +380,30 @@ func postConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, usage 
 				extraContent += fmt.Sprintf("Audio Input 花费 %s", audioInputQuota.String())
 			}
 		}
-		// 计算输入配额（详细日志）
-		promptQuota := baseTokens.Add(cachedTokensWithRatio).
-			Add(imageTokensWithRatio).
-			Add(dCachedCreationTokensWithRatio)
+		// 计算输入配额（详细日志）；gpt-image-1 的图片输入单独计费，不并入 promptQuota
+		var promptQuota decimal.Decimal
+		if isGptImage1 {
+			promptQuota = baseTokens.Add(cachedTokensWithRatio).Add(dCachedCreationTokensWithRatio)
+		} else {
+			promptQuota = baseTokens.Add(cachedTokensWithRatio).
+				Add(imageTokensWithRatio).
+				Add(dCachedCreationTokensWithRatio)
+		}
 
 		// 检查是否有图片输出（包括 gpt-image-1 和 Gemini）
 		var completionQuota decimal.Decimal
 		gptImageOutputTokens := ctx.GetInt("gpt_image_output_tokens")
 
 		if gptImageOutputTokens > 0 && imageCompletionRatio > 0 {
-
 			imageTokens := decimal.NewFromInt(int64(gptImageOutputTokens))
 			dImageCompletionRatio := decimal.NewFromFloat(imageCompletionRatio)
 			imageCompletionQuota := imageTokens.Mul(dImageCompletionRatio)
 			completionQuota = imageCompletionQuota
-
+			if isGptImage1 {
+				// gpt-image-1：输出 = 图片输入单价×补全倍率×groupRatio，不再乘 modelRatio
+				imageCompletionQuotaGptImage1 = imageTokens.Mul(dImageRatio).Mul(dImageCompletionRatio).Mul(dGroupRatio)
+				completionQuota = decimal.Zero
+			}
 			extraContent += fmt.Sprintf("，图片输出 %d tokens × %.2f",
 				gptImageOutputTokens, imageCompletionRatio)
 
@@ -420,7 +440,11 @@ func postConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, usage 
 			completionQuota = dCompletionTokens.Mul(dCompletionRatio)
 		}
 
-		quotaCalculateDecimal = promptQuota.Add(completionQuota).Mul(ratio)
+		if isGptImage1 {
+			quotaCalculateDecimal = promptQuota.Mul(ratio).Add(imageQuotaGptImage1).Add(imageCompletionQuotaGptImage1)
+		} else {
+			quotaCalculateDecimal = promptQuota.Add(completionQuota).Mul(ratio)
+		}
 		// 注意：oemUserDiscount 已经在 price.go 的 ModelPriceHelper 中应用到 modelRatio 了
 		// 所以这里不需要再乘以 oemUserDiscount，否则会重复应用折扣
 
@@ -561,6 +585,9 @@ func postConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, usage 
 		other["image"] = true
 		other["image_ratio"] = imageRatio
 		other["image_output"] = imageTokens
+		// 供前端计费过程展示：图片输入 token 数与单价（美元/1M），与 controller 展示一致 imageRatio×$2/M
+		other["input_image_tokens"] = imageTokens
+		other["input_image_price"] = imageRatio * 2.0
 	}
 	if cachedCreationTokens != 0 {
 		other["cache_creation_tokens"] = cachedCreationTokens
