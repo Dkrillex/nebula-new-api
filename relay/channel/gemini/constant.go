@@ -18,10 +18,11 @@ var ModelList = []string{
 	"gemini-2.0-flash-thinking-exp",
 	"gemini-2.5-pro-exp-03-25",
 	"gemini-2.5-pro-preview-03-25",
-	// imagen models
+	// imagen / image models
 	"imagen-3.0-generate-002",
 	"gemini-2.5-flash-image-preview",
 	"gemini-2.5-flash-image",
+	"gemini-3.1-flash-image-preview",
 	// embedding models
 	"gemini-embedding-exp-03-07",
 	"gemini-embedding-001",
