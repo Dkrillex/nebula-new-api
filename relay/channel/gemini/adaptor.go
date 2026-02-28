@@ -255,7 +255,7 @@ func (a *Adaptor) ConvertImageRequest(c *gin.Context, info *relaycommon.RelayInf
 						aspectRatio = value
 					}
 					if value, ok := readStringValue(extraMap["image_size"]); ok {
-						if value == "1K" || value == "2K" || value == "4K" {
+						if value == "512" || value == "0.5K" || value == "1K" || value == "2K" || value == "4K" {
 							imageSize = value
 						}
 					}
@@ -292,7 +292,7 @@ func (a *Adaptor) ConvertImageRequest(c *gin.Context, info *relaycommon.RelayInf
 
 			// 获取image_size参数
 			if value, ok := readStringValue(request.Extra["image_size"]); ok {
-				if value == "1K" || value == "2K" || value == "4K" {
+				if value == "512" || value == "0.5K" || value == "1K" || value == "2K" || value == "4K" {
 					imageSize = value
 				}
 			}
@@ -332,11 +332,20 @@ func (a *Adaptor) ConvertImageRequest(c *gin.Context, info *relaycommon.RelayInf
 		}
 
 		// 构建ImageConfig，包含aspectRatio、imageSize
+		// 当 aspectRatio 为 "auto" 时，省略该字段，让模型自动决定
 		imageConfig := map[string]interface{}{
-			"aspectRatio": aspectRatio,
-			"imageSize":   imageSize,
+			"imageSize": imageSize,
+		}
+		if aspectRatio != "auto" {
+			imageConfig["aspectRatio"] = aspectRatio
 		}
 		imageConfigJSON, _ := json.Marshal(imageConfig)
+
+		// 确定生成图片数量，默认为 1
+		candidateCount := int(request.N)
+		if candidateCount <= 0 {
+			candidateCount = 1
+		}
 
 		// 使用标准Gemini格式，支持多模态响应
 		geminiRequest := dto.GeminiChatRequest{
@@ -347,6 +356,7 @@ func (a *Adaptor) ConvertImageRequest(c *gin.Context, info *relaycommon.RelayInf
 				ResponseModalities: responseModalities, // 关键：请求图像生成
 				TopP:               topP,
 				ImageConfig:        imageConfigJSON, // 设置图像配置，包含宽高比
+				CandidateCount:     candidateCount,  // 明确指定候选数量，避免官方默认多张
 			},
 			SafetySettings: []dto.GeminiChatSafetySettings{
 				{Category: "HARM_CATEGORY_HATE_SPEECH", Threshold: "OFF"},

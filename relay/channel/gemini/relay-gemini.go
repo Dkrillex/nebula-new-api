@@ -1282,6 +1282,11 @@ func GeminiChatHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http.R
 
 	// 检查是否为图像生成响应
 	if isImageGenerationResponse(&geminiResponse) {
+		// 打印原始 Gemini 响应结构（截断 base64 等长字段）
+		if rawBytes, marshalErr := json.Marshal(&geminiResponse); marshalErr == nil {
+			logger.LogInfo(c, "Gemini image generation raw response: "+common.TruncateJsonValues(string(rawBytes)))
+		}
+
 		// 转换为图像响应格式
 		imageResponse := responseGeminiImageGeneration2OpenAI(&geminiResponse)
 

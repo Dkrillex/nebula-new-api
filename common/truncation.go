@@ -310,43 +310,41 @@ func isBase64String(s string) bool {
 // 递归处理嵌套对象和数组
 // 性能优化：
 // 1. 小JSON且无长字符串：直接返回（最快）
-// 2. 超大JSON（>100KB）：简单总长度截断（避免完整解析）
-// 3. 中等JSON：完整解析和截断
+// 2. 任意大小JSON：完整解析后逐字段截断，保证所有字段都能打印出来
+// 3. 解析失败时兜底：按总长度截断
 func TruncateJsonValues(jsonStr string) string {
 	const maxValueLength = 100
-	const maxJsonSizeForFastPath = 5000    // 小于5KB的JSON，如果不需要截断则直接返回
-	const maxJsonSizeForFullParse = 100000 // 超过100KB的JSON，使用简单截断
+	const maxJsonSizeForFastPath = 5000 // 小于5KB的JSON，如果不需要截断则直接返回
 
-	// 快速路径1：如果JSON很小，先检查是否有需要截断的长字符串
+	// 快速路径：如果JSON很小，先检查是否有需要截断的长字符串
 	if len(jsonStr) < maxJsonSizeForFastPath {
 		if !hasLongStringValueFast(jsonStr, maxValueLength) {
 			return jsonStr
 		}
 	}
 
-	// 性能优化：对于超大JSON，使用简单的总长度截断，避免完整解析
-	if len(jsonStr) > maxJsonSizeForFullParse {
-		const maxLogLength = 2000 // 日志最大长度
+	// 尝试解析JSON，逐字段截断，确保所有字段（包括 base64 后面的字段）都能完整打印
+	var jsonData interface{}
+	if err := json.Unmarshal([]byte(jsonStr), &jsonData); err != nil {
+		// 解析失败时兜底：按总长度截断
+		const maxLogLength = 2000
 		if len(jsonStr) > maxLogLength {
-			return jsonStr[:maxLogLength] + fmt.Sprintf("...[JSON已截断，总长度: %d]", len(jsonStr))
+			return jsonStr[:maxLogLength] + fmt.Sprintf("...[JSON解析失败，总长度: %d]", len(jsonStr))
 		}
 		return jsonStr
 	}
 
-	// 尝试解析JSON
-	var jsonData interface{}
-	if err := json.Unmarshal([]byte(jsonStr), &jsonData); err != nil {
-		// 如果不是有效的JSON，直接返回原字符串
-		return jsonStr
-	}
-
-	// 递归处理JSON数据
+	// 递归处理JSON数据，逐字段截断
 	truncatedData := truncateJsonValue(jsonData, maxValueLength)
 
 	// 重新序列化为JSON字符串
 	jsonBytes, err := json.Marshal(truncatedData)
 	if err != nil {
-		// 如果序列化失败，返回原字符串
+		// 序列化失败时兜底
+		const maxLogLength = 2000
+		if len(jsonStr) > maxLogLength {
+			return jsonStr[:maxLogLength] + fmt.Sprintf("...[JSON序列化失败，总长度: %d]", len(jsonStr))
+		}
 		return jsonStr
 	}
 
