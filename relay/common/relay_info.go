@@ -592,6 +592,22 @@ func RemoveDisabledFields(jsonData []byte, channelOtherSettings dto.ChannelOther
 	return jsonDataAfter, nil
 }
 
+// StripInternalFieldsFromRequestBody 从透传请求体中移除上游不认的内部字段（如 group、user_id），
+// 避免 Azure/OpenAI 等返回 Unknown parameter 的 400 错误。
+func StripInternalFieldsFromRequestBody(body []byte, keys []string) ([]byte, error) {
+	if len(body) == 0 || len(keys) == 0 {
+		return body, nil
+	}
+	var data map[string]interface{}
+	if err := common.Unmarshal(body, &data); err != nil {
+		return body, nil
+	}
+	for _, k := range keys {
+		delete(data, k)
+	}
+	return common.Marshal(data)
+}
+
 type OpenAIVideo struct {
 	ID                 string            `json:"id"`
 	TaskID             string            `json:"task_id,omitempty"` //兼容旧接口 待废弃

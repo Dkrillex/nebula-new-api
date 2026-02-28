@@ -319,9 +319,13 @@ func (a *Adaptor) ConvertOpenAIRequest(c *gin.Context, info *relaycommon.RelayIn
 	}
 
 	if strings.HasPrefix(modelName, "o") || strings.HasPrefix(modelName, "gpt-5") {
+		// 部分上游（如 gpt-5.2）只支持 max_completion_tokens，不支持 max_tokens，需统一用 max_completion_tokens
 		if request.MaxCompletionTokens == 0 && request.MaxTokens != 0 {
 			request.MaxCompletionTokens = request.MaxTokens
 			request.MaxTokens = 0
+		}
+		if request.MaxCompletionTokens == 0 {
+			request.MaxCompletionTokens = 4096 // 两者都未传时给默认值，避免上游 400
 		}
 
 		// 转换模型推理力度后缀

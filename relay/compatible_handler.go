@@ -80,6 +80,11 @@ func TextHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *types
 		if err != nil {
 			return types.NewErrorWithStatusCode(err, types.ErrorCodeReadRequestBodyFailed, http.StatusBadRequest, types.ErrOptionWithSkipRetry())
 		}
+		// 透传时移除上游不认的内部字段，避免 Azure/OpenAI 报 Unknown parameter（如 group、user_id）
+		body, err = relaycommon.StripInternalFieldsFromRequestBody(body, []string{"group", "user_id"})
+		if err != nil {
+			return types.NewError(err, types.ErrorCodeConvertRequestFailed, types.ErrOptionWithSkipRetry())
+		}
 		if common.DebugEnabled {
 			truncatedBody := common.TruncateJsonValues(string(body))
 			common.SysLog(fmt.Sprintf("requestBody: %s", truncatedBody))
