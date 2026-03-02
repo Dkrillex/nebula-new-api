@@ -36,6 +36,8 @@ type Model struct {
 	VendorID      int            `json:"vendor_id,omitempty" gorm:"index"`
 	Endpoints     string         `json:"endpoints,omitempty" gorm:"type:text"`
 	Status        int            `json:"status" gorm:"default:1"`
+	Flag          int            `json:"flag" gorm:"default:1"`           // 模型广场展示标识：0-无 1-新发布 2-最先进 3-火爆
+	SortOrder     int            `json:"sort_order" gorm:"default:1"`     // 排序值，越小优先级越高
 	SyncOfficial  int            `json:"sync_official" gorm:"default:1"`
 	CreatedTime   int64          `json:"created_time" gorm:"bigint"`
 	UpdatedTime   int64          `json:"updated_time" gorm:"bigint"`
@@ -68,12 +70,29 @@ func IsModelNameDuplicated(id int, name string) (bool, error) {
 
 func (mi *Model) Update() error {
 	mi.UpdatedTime = common.GetTimestamp()
-	return DB.Session(&gorm.Session{AllowGlobalUpdate: false, FullSaveAssociations: false}).
-		Model(&Model{}).
-		Where("id = ?", mi.Id).
-		Omit("created_time").
-		Select("*").
-		Updates(mi).Error
+	updates := map[string]interface{}{
+		"model_name":      mi.ModelName,
+		"model_nick_name": mi.ModelNickName,
+		"description":     mi.Description,
+		"description_en":  mi.DescriptionEn,
+		"description_id":  mi.DescriptionId,
+		"icon":            mi.Icon,
+		"icon_url":        mi.IconURL,
+		"tags":            mi.Tags,
+		"tags_en":         mi.TagsEn,
+		"tags_id":         mi.TagsId,
+		"show_tab":        mi.ShowTab,
+		"model_limit":     mi.ModelLimit,
+		"vendor_id":       mi.VendorID,
+		"endpoints":       mi.Endpoints,
+		"status":          mi.Status,
+		"sync_official":   mi.SyncOfficial,
+		"updated_time":    mi.UpdatedTime,
+		"name_rule":       mi.NameRule,
+		"flag":            mi.Flag,
+		"sort_order":      mi.SortOrder,
+	}
+	return DB.Model(&Model{}).Where("id = ?", mi.Id).Updates(updates).Error
 }
 
 func (mi *Model) Delete() error {

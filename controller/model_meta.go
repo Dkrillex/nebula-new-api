@@ -120,6 +120,14 @@ func CreateModelMeta(c *gin.Context) {
 		return
 	}
 
+	// 新增时确保 flag 和 sort_order 有默认值（与前端 getInitValues 一致，请求未传时为零值）
+	if m.Flag == 0 {
+		m.Flag = 1
+	}
+	if m.SortOrder == 0 {
+		m.SortOrder = 1
+	}
+
 	if err := m.Insert(); err != nil {
 		common.ApiError(c, err)
 		return
