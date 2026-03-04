@@ -36,7 +36,7 @@ export default function SettingsPaymentGateway(props) {
     PayAddress: '',
     EpayId: '',
     EpayKey: '',
-    Price: 7.3,
+    Price: 7.0,
     MinTopUp: 1,
     TopupGroupRatio: '',
     CustomCallbackAddress: '',
@@ -56,7 +56,7 @@ export default function SettingsPaymentGateway(props) {
         Price:
           props.options.Price !== undefined
             ? parseFloat(props.options.Price)
-            : 7.3,
+            : 7.0,
         MinTopUp:
           props.options.MinTopUp !== undefined
             ? parseFloat(props.options.MinTopUp)

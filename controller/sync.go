@@ -359,8 +359,8 @@ func SyncGetUserInfo(c *gin.Context) {
 	quotaDollar := float64(user.Quota) / float64(tokensPerDollar)
 	usedQuotaDollar := float64(user.UsedQuota) / float64(tokensPerDollar)
 
-	// 计算人民币额度 (1 美金 = 7.3 人民币)
-	const dollarToRmbRate = 7.3
+	// 计算人民币额度 (1 美金 = 7.0 人民币)
+	const dollarToRmbRate = 7.0
 	quotaRmb := quotaDollar * dollarToRmbRate
 	usedQuotaRmb := usedQuotaDollar * dollarToRmbRate
 
@@ -441,8 +441,8 @@ func SyncGetLogs(c *gin.Context) {
 		extraLog.CreateTime = time.Unix(log.CreatedAt, 0).Format("2006-01-02 15:04:05")
 		// 计算quota_dollar (500000 quota = 1美元)
 		extraLog.QuotaDollar = float64(log.Quota) / 500000
-		// 计算quota_rmb (美元汇率7.3)
-		extraLog.QuotaRmb = math.Round(extraLog.QuotaDollar*7.3*100) / 100
+		// 计算quota_rmb (美元汇率7.0)
+		extraLog.QuotaRmb = math.Round(extraLog.QuotaDollar*7.0*100) / 100
 		extraLogs[i] = extraLog
 	}
 
@@ -554,9 +554,9 @@ func SyncUpdateUserQuota(c *gin.Context) {
 
 	// 计算充值的tokens数量
 	// 1美元 = 500000 tokens
-	// 1美元 = 7.3人民币
+	// 1美元 = 7.0人民币
 	const tokensPerDollar = 500000
-	const dollarToRmbRate = 7.3
+	const dollarToRmbRate = 7.0
 	dollars := req.QuotaRmb / dollarToRmbRate
 	addedTokens := int(dollars * float64(tokensPerDollar))
 

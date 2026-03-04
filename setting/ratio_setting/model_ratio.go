@@ -20,7 +20,7 @@ type ImageTokenPricing struct {
 
 // from songquanpeng/one-api
 const (
-	USD2RMB = 7.3 // 暂定 1 USD = 7.3 RMB
+	USD2RMB = 7.0 // 暂定 1 USD = 7.0 RMB
 	USD     = 500 // $0.002 = 1 -> $1 = 500
 	RMB     = USD / USD2RMB
 )

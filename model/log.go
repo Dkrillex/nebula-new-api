@@ -294,8 +294,8 @@ func ProcessOemSubsidy(c *gin.Context, oemCode string, oemSubsidy int64, logId i
 
 		// 记录OEM账户变动日志
 		balanceAfter := balanceBefore + oemSubsidy
-		// 将quota转换为人民币（1美金=500000quota=7.3人民币）
-		subsidyRmb := float64(-oemSubsidy) / common.QuotaPerUnit * 7.3
+		// 将quota转换为人民币（1美金=500000quota=7.0人民币）
+		subsidyRmb := float64(-oemSubsidy) / common.QuotaPerUnit * 7.0
 		accountLog := &OemAccountLog{
 			OemId:          oemConfig.Id,
 			OemAdminUserId: systemAccountUserId,
@@ -326,8 +326,8 @@ func ProcessOemSubsidy(c *gin.Context, oemCode string, oemSubsidy int64, logId i
 
 		// 记录OEM账户变动日志
 		balanceAfter := balanceBefore + oemSubsidy
-		// 将quota转换为人民币（1美金=500000quota=7.3人民币）
-		profitRmb := float64(oemSubsidy) / common.QuotaPerUnit * 7.3
+		// 将quota转换为人民币（1美金=500000quota=7.0人民币）
+		profitRmb := float64(oemSubsidy) / common.QuotaPerUnit * 7.0
 		accountLog := &OemAccountLog{
 			OemId:          oemConfig.Id,
 			OemAdminUserId: systemAccountUserId,

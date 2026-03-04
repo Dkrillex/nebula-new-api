@@ -498,7 +498,7 @@ func postConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, usage 
 					Mul(dGroupRatio)
 
 				// 计算人民币价格用于日志显示
-				priceInCNY := discountedImagePrice * 7.3 // USD to CNY
+				priceInCNY := discountedImagePrice * 7.0 // USD to CNY
 				totalPriceInCNY := priceInCNY * float64(multiplier)
 				_ = vendorName // 用于价格链条计算
 				extraContent += fmt.Sprintf("图片生成：%d张 × ¥%.2f = ¥%.2f (OEM用户折扣: %.2f%%, 分组倍率: %.2f)",
