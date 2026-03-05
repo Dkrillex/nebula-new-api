@@ -143,6 +143,7 @@ func GeminiHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *typ
 		if err != nil {
 			return types.NewErrorWithStatusCode(err, types.ErrorCodeReadRequestBodyFailed, http.StatusBadRequest, types.ErrOptionWithSkipRetry())
 		}
+		c.Set("gemini_request_body", string(body))
 		requestBody = bytes.NewReader(body)
 	} else {
 		// 使用 ConvertGeminiRequest 转换请求格式
@@ -166,6 +167,7 @@ func GeminiHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *typ
 		truncatedBody := common.TruncateJsonValues(string(jsonData))
 		logger.LogDebug(c, "Gemini request body: "+truncatedBody)
 
+		c.Set("gemini_request_body", string(jsonData))
 		requestBody = bytes.NewReader(jsonData)
 	}
 
@@ -195,7 +197,13 @@ func GeminiHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *typ
 		return openaiErr
 	}
 
-	postConsumeQuota(c, info, usage.(*dto.Usage), "")
+	extraContent := ""
+	if v, ok := c.Get("gemini_empty_response_extra"); ok {
+		if s, ok := v.(string); ok {
+			extraContent = s
+		}
+	}
+	postConsumeQuota(c, info, usage.(*dto.Usage), extraContent)
 	return nil
 }
 
@@ -290,7 +298,7 @@ func GeminiEmbeddingHandler(c *gin.Context, info *relaycommon.RelayInfo) (newAPI
 		}
 		common.SysLog(fmt.Sprintf("[Vertex][Embedding] Converted request body: %s", string(jsonData)))
 	} else {
-		common.SysLog(fmt.Sprintf("[GeminiEmbedding] Using Gemini native format (not Vertex)"))
+		common.SysLog("[GeminiEmbedding] Using Gemini native format (not Vertex)")
 		jsonData, err = common.Marshal(req)
 		if err != nil {
 			return types.NewError(err, types.ErrorCodeConvertRequestFailed, types.ErrOptionWithSkipRetry())

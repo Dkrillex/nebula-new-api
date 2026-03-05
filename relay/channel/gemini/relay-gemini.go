@@ -885,8 +885,7 @@ func responseGeminiImageGeneration2OpenAI(response *dto.GeminiChatResponse) *dto
 		// 收集文本描述，用作 revised_prompt
 		var textParts []string
 		for _, part := range candidate.Content.Parts {
-			if part.InlineData != nil && strings.HasPrefix(part.InlineData.MimeType, "image") {
-				// 处理图像数据
+			if part.InlineData != nil && strings.HasPrefix(part.InlineData.MimeType, "image") { // 处理图像数据
 				imageData := dto.ImageData{
 					B64Json: part.InlineData.Data,
 				}
@@ -1097,12 +1096,18 @@ func GeminiChatStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *
 	id := helper.GetResponseID(c)
 	createAt := common.GetTimestamp()
 	responseText := strings.Builder{}
+	rawRespBuilder := strings.Builder{}
 	var usage = &dto.Usage{}
 	var imageCount int
 	finishReason := constant.FinishReasonStop
 	var sentToolCallContent bool // 整次流是否发送过带 tool_calls 内容的 chunk
 
 	helper.StreamScannerHandler(c, resp, info, func(data string) bool {
+		if rawRespBuilder.Len() < 2000 {
+			rawRespBuilder.WriteString(data)
+			rawRespBuilder.WriteByte('\n')
+		}
+
 		var geminiResponse dto.GeminiChatResponse
 		err := common.UnmarshalJsonStr(data, &geminiResponse)
 		if err != nil {
@@ -1210,18 +1215,30 @@ func GeminiChatStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *
 		return true
 	})
 
-	if info.SendResponseCount == 0 {
-		// 空补全，报错不计费
-		// empty response, throw an error
-		return nil, types.NewOpenAIError(errors.New("no response received from Gemini API"), types.ErrorCodeEmptyResponse, http.StatusInternalServerError)
-	}
-	// 整次流只发了起始 chunk、无任何正文或 tool 内容时，按空响应报错且不计费（不依赖 usage 是否>0，因单 chunk 可能未带 usage）
-	if responseText.Len() == 0 && info.SendResponseCount <= 1 {
-		return nil, types.NewOpenAIError(errors.New("no response received from Gemini API"), types.ErrorCodeEmptyResponse, http.StatusInternalServerError)
-	}
-	// 无正文且整次流从未发送过 tool call 内容（如上一轮 assistant 纯文本、本轮要求必须用 tool 时 Vertex 只回 usage/空 content），按空响应报错且不计费
-	if responseText.Len() == 0 && !sentToolCallContent {
-		return nil, types.NewOpenAIError(errors.New("no response received from Gemini API"), types.ErrorCodeEmptyResponse, http.StatusInternalServerError)
+	isEmptyResponse := (info.SendResponseCount == 0) ||
+		(responseText.Len() == 0 && info.SendResponseCount <= 1) ||
+		(responseText.Len() == 0 && !sentToolCallContent)
+	if isEmptyResponse {
+		reqBody, _ := c.Get("gemini_request_body")
+		truncatedReq := common.TruncateJsonValues(fmt.Sprintf("%v", reqBody))
+		rawResp := rawRespBuilder.String()
+		logger.LogWarn(c, fmt.Sprintf(
+			"[GeminiEmptyResponse] upstream 200 but no content. model=%s",
+			info.UpstreamModelName,
+		))
+		extraContent := fmt.Sprintf(
+			"Gemini空响应(流式) requestBody=%s rawResponse=%s",
+			truncatedReq, rawResp,
+		)
+		c.Set("gemini_empty_response_extra", extraContent)
+
+		emptyUsage := &dto.Usage{}
+		// 发送一个最终 usage 响应，保证客户端正常结束流
+		response := helper.GenerateFinalUsageResponse(id, createAt, info.UpstreamModelName, *emptyUsage)
+		if err := handleFinalStream(c, info, response); err != nil {
+			common.SysLog("send final empty response failed: " + err.Error())
+		}
+		return emptyUsage, nil
 	}
 
 	if imageCount != 0 {
@@ -1276,7 +1293,40 @@ func GeminiChatHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http.R
 		if geminiResponse.PromptFeedback != nil && geminiResponse.PromptFeedback.BlockReason != nil {
 			return nil, types.NewOpenAIError(errors.New("request blocked by Gemini API: "+*geminiResponse.PromptFeedback.BlockReason), types.ErrorCodePromptBlocked, http.StatusBadRequest)
 		} else {
-			return nil, types.NewOpenAIError(errors.New("empty response from Gemini API"), types.ErrorCodeEmptyResponse, http.StatusInternalServerError)
+			// 空响应：不报错，记录日志并返回空 usage
+			reqBody, _ := c.Get("gemini_request_body")
+			truncatedReq := common.TruncateJsonValues(fmt.Sprintf("%v", reqBody))
+			rawRespStr := common.TruncateBase64Content(string(responseBody))
+			logger.LogWarn(c, fmt.Sprintf(
+				"[GeminiEmptyResponse] upstream 200 but no candidates. model=%s",
+				info.UpstreamModelName,
+			))
+			extraContent := fmt.Sprintf(
+				"Gemini空响应(非流式) requestBody=%s rawResponse=%s",
+				truncatedReq, rawRespStr,
+			)
+			c.Set("gemini_empty_response_extra", extraContent)
+
+			emptyUsage := &dto.Usage{}
+
+			// 构造一个合法的空 OpenAI 响应（空 choices）
+			emptyResp := dto.OpenAITextResponse{
+				Id:      helper.GetResponseID(c),
+				Model:   info.UpstreamModelName,
+				Object:  "chat.completion",
+				Created: common.GetTimestamp(),
+				Choices: []dto.OpenAITextResponseChoice{},
+				Usage:   *emptyUsage,
+			}
+			emptyRespBytes, marshalErr := common.Marshal(emptyResp)
+			if marshalErr != nil {
+				logger.LogError(c, fmt.Sprintf("marshal empty OpenAI response failed: %s", marshalErr.Error()))
+				// 即使 marshal 失败，也返回空 usage，避免再次抛错
+				return emptyUsage, nil
+			}
+
+			service.IOCopyBytesGracefully(c, resp, emptyRespBytes)
+			return emptyUsage, nil
 		}
 	}
 
