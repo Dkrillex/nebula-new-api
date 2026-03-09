@@ -18,7 +18,7 @@ import (
 // Otherwise, the sensitive information will be saved on local storage in plain text!
 type User struct {
 	Id               int            `json:"id"`
-	Username         string         `json:"username" gorm:"uniqueIndex" validate:"max=20"`
+	Username         string         `json:"username" gorm:"size:191;uniqueIndex" validate:"max=20"`
 	Password         string         `json:"password" gorm:"not null;" validate:"min=8,max=20"`
 	OriginalPassword string         `json:"original_password" gorm:"-:all"` // this field is only for Password change verification, don't save it to database!
 	DisplayName      string         `json:"display_name" gorm:"index" validate:"max=20"`
@@ -844,9 +844,13 @@ func DeltaUpdateUserQuota(id int, delta int) (err error) {
 //	return email
 //}
 
-func GetRootUser() (user *User) {
-	DB.Where("role = ?", common.RoleRootUser).First(&user)
-	return user
+// GetRootUser 返回第一个 root 用户，用于 SYNC_ACCESS_TOKEN 等系统级调用
+func GetRootUser() *User {
+	var u User
+	if err := DB.Where("role = ?", common.RoleRootUser).First(&u).Error; err != nil {
+		return nil
+	}
+	return &u
 }
 
 func UpdateUserUsedQuotaAndRequestCount(id int, quota int) {

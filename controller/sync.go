@@ -22,6 +22,43 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
+// getSyncUserCacheFromRequest 解析同步请求中的用户：requestUserId 在上游（如 Java）中；若在 one_api 中不存在则回退为当前认证用户（便于本地联调）
+func getSyncUserCacheFromRequest(c *gin.Context, requestUserId int) (userId int, userCache *model.UserBase, newAPIError *types.NewAPIError) {
+	if requestUserId <= 0 {
+		if authId, ok := c.Get("id"); ok {
+			if id, _ := authId.(int); id > 0 {
+				requestUserId = id
+			}
+		}
+	}
+	if requestUserId <= 0 {
+		return 0, nil, types.NewError(errors.New("无效的用户ID"), types.ErrorCodeInvalidRequest)
+	}
+	userCache, err := model.GetUserCache(requestUserId)
+	if err == nil {
+		return requestUserId, userCache, nil
+	}
+	user, dbErr := model.GetUserById(requestUserId, true)
+	if dbErr == nil && user != nil {
+		return requestUserId, user.ToBaseUser(), nil
+	}
+	// 上游 user_id 在 one_api 中不存在时，回退为当前认证用户（SYNC_ACCESS_TOKEN 对应 root），便于本地联调
+	if authId, ok := c.Get("id"); ok {
+		if authUserId, _ := authId.(int); authUserId > 0 && authUserId != requestUserId {
+			userCache, err = model.GetUserCache(authUserId)
+			if err != nil {
+				user, dbErr = model.GetUserById(authUserId, true)
+				if dbErr == nil && user != nil {
+					return authUserId, user.ToBaseUser(), nil
+				}
+			} else {
+				return authUserId, userCache, nil
+			}
+		}
+	}
+	return 0, nil, types.NewError(errors.New("用户不存在"), types.ErrorCodeInvalidRequest)
+}
+
 // SyncUserRequest 定义外部系统同步用户的请求结构
 type SyncUserRequest struct {
 	Id       int    `json:"id" binding:"required"`
@@ -866,24 +903,9 @@ func SyncImageGeneration(c *gin.Context) {
 		return
 	}
 
-	// 获取用户ID
-	userId := imageRequest.UserId
-	if userId <= 0 {
-		newAPIError = types.NewError(errors.New("无效的用户ID"), types.ErrorCodeInvalidRequest)
+	userId, userCache, newAPIError := getSyncUserCacheFromRequest(c, imageRequest.UserId)
+	if newAPIError != nil {
 		return
-	}
-
-	// 先尝试从缓存获取用户信息
-	userCache, err := model.GetUserCache(userId)
-	if err != nil {
-		// 缓存中没有，从数据库查询
-		user, dbErr := model.GetUserById(userId, true)
-		if dbErr != nil {
-			newAPIError = types.NewError(errors.New("用户不存在"), types.ErrorCodeInvalidRequest)
-			return
-		}
-		// 将查询结果转换为缓存对象
-		userCache = user.ToBaseUser()
 	}
 
 	// 检查用户状态

@@ -152,11 +152,16 @@ func (a *Adaptor) ConvertImageRequest(c *gin.Context, info *relaycommon.RelayInf
 				json.Unmarshal(reqBytes, &reqMap)
 
 				for key, value := range request.Extra {
-					reqMap[key] = value
+					var decoded interface{}
+					if err := json.Unmarshal(value, &decoded); err == nil {
+						reqMap[key] = decoded
+					} else {
+						reqMap[key] = value
+					}
 				}
 
-				// 如果是 doubao-seedream-4-0-250828 模型，确保 optimize_prompt_options 有默认值
-				if info.UpstreamModelName == "doubao-seedream-4-0-250828" || info.UpstreamModelName == "doubao-seedream-4-5-251128" {
+				// 豆包 Seedream 4.0/4.5/5.0：确保 optimize_prompt_options 有默认值
+				if info.UpstreamModelName == "doubao-seedream-4-0-250828" || info.UpstreamModelName == "doubao-seedream-4-5-251128" || info.UpstreamModelName == "doubao-seedream-5-0-260128" {
 					if _, exists := reqMap["optimize_prompt_options"]; !exists {
 						reqMap["optimize_prompt_options"] = map[string]interface{}{
 							"mode": "standard",

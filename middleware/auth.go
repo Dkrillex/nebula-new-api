@@ -8,6 +8,7 @@ import (
 	"one-api/model"
 	"one-api/setting"
 	"one-api/setting/ratio_setting"
+	"os"
 	"strconv"
 	"strings"
 
@@ -337,8 +338,22 @@ func SystemAccessTokenAuth() func(c *gin.Context) {
 			return
 		}
 
-		// 验证访问令牌
+		// 验证访问令牌：先查 DB，再兼容环境变量 SYNC_ACCESS_TOKEN（与 Java nebula.llm.access_token 一致，便于本地联调）
 		user := model.ValidateAccessToken(accessToken)
+		if user == nil || user.Username == "" {
+			rawToken := strings.TrimSpace(strings.TrimPrefix(accessToken, "Bearer "))
+			syncToken := strings.TrimSpace(os.Getenv("SYNC_ACCESS_TOKEN")) // TrimSpace 避免 .env 换行导致比较失败
+			if syncToken != "" && rawToken == syncToken {
+				user = model.GetRootUser()
+				if user == nil {
+					_ = model.CreateRootAccountIfNeed() // 确保 root 用户存在（如首次联调时 DB 尚无用户）
+					user = model.GetRootUser()
+				}
+				if user != nil {
+					common.SysLog(fmt.Sprintf("[SystemAccessTokenAuth] 使用 SYNC_ACCESS_TOKEN 通过校验, path: %s", c.Request.URL.Path))
+				}
+			}
+		}
 		if user == nil || user.Username == "" {
 			tokenPreview := accessToken
 			if len(tokenPreview) > 20 {

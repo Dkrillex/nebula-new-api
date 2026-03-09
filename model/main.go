@@ -64,6 +64,48 @@ var DB *gorm.DB
 
 var LOG_DB *gorm.DB
 
+// ensureMySQLDatabase 在连接前确保 MySQL 库存在，若不存在则创建（仅对 MySQL DSN 有效）
+func ensureMySQLDatabase(dsn string) error {
+	// DSN 格式: user:password@tcp(host:port)/dbname?params 或 /dbname
+	idx := strings.Index(dsn, "/")
+	if idx < 0 {
+		return nil
+	}
+	rest := dsn[idx+1:]
+	end := strings.Index(rest, "?")
+	var dbName string
+	if end < 0 {
+		dbName = rest
+	} else {
+		dbName = rest[:end]
+	}
+	dbName = strings.TrimSpace(dbName)
+	if dbName == "" {
+		return nil
+	}
+	// 用不指定库的 DSN 连接（部分驱动支持 / 后无库名）
+	dsnWithoutDB := dsn[:idx+1]
+	if end >= 0 {
+		dsnWithoutDB += "?" + rest[end+1:]
+	} else {
+		dsnWithoutDB += "?parseTime=true&charset=utf8mb4"
+	}
+	db, err := gorm.Open(mysql.Open(dsnWithoutDB), &gorm.Config{})
+	if err != nil {
+		return err
+	}
+	sqlDB, _ := db.DB()
+	defer sqlDB.Close()
+	// 创建库（IF NOT EXISTS 避免已存在时报错）
+	escaped := "`" + strings.ReplaceAll(dbName, "`", "``") + "`"
+	sql := fmt.Sprintf("CREATE DATABASE IF NOT EXISTS %s CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci", escaped)
+	if err := db.Exec(sql).Error; err != nil {
+		return err
+	}
+	common.SysLog("ensured MySQL database exists: " + dbName)
+	return nil
+}
+
 func createRootAccountIfNeed() error {
 	var user User
 	//if user.Status != common.UserStatusEnabled {
@@ -85,6 +127,11 @@ func createRootAccountIfNeed() error {
 		DB.Create(&rootUser)
 	}
 	return nil
+}
+
+// CreateRootAccountIfNeed 供外部（如 middleware）在 SYNC_ACCESS_TOKEN 校验时确保 root 用户存在
+func CreateRootAccountIfNeed() error {
+	return createRootAccountIfNeed()
 }
 
 func CheckSetup() {
@@ -154,6 +201,12 @@ func chooseDB(envName string, isLog bool) (*gorm.DB, error) {
 				dsn += "&parseTime=true"
 			} else {
 				dsn += "?parseTime=true"
+			}
+		}
+		// 若库不存在则自动创建（仅主库，避免重复建库）
+		if !isLog {
+			if err := ensureMySQLDatabase(dsn); err != nil {
+				return nil, fmt.Errorf("ensure mysql database: %w", err)
 			}
 		}
 		if !isLog {
@@ -269,6 +322,7 @@ func migrateDB() error {
 		&PlatformCost{},
 		&OemConfig{},
 		&OemDiscount{},
+		&OemUserDiscount{},
 	}
 	if err := DB.AutoMigrate(tablesWithoutUser...); err != nil {
 		return err
