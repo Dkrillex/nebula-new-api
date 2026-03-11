@@ -421,7 +421,8 @@ func processChannelError(c *gin.Context, channelError types.ChannelError, err *t
 		})
 	}
 
-	if constant.ErrorLogEnabled && types.IsRecordErrorLog(err) {
+	// 429（Too Many Requests）不记录错误日志，避免大规模限流刷爆错误日志表
+	if constant.ErrorLogEnabled && types.IsRecordErrorLog(err) && err.StatusCode != http.StatusTooManyRequests {
 		// 保存错误日志到mysql中
 		userId := c.GetInt("id")
 		tokenName := c.GetString("token_name")

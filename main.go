@@ -4,7 +4,7 @@ import (
 	"bytes"
 	"embed"
 	"fmt"
-	"log"
+	"net"
 	"net/http"
 	"one-api/common"
 	"one-api/constant"
@@ -140,9 +140,18 @@ func main() {
 	//}
 
 	if os.Getenv("ENABLE_PPROF") == "true" {
-		gopool.Go(func() {
-			log.Println(http.ListenAndServe("0.0.0.0:8005", nil))
-		})
+		// 在主 goroutine 中先 Listen，避免在调试器下子 goroutine 未及时调度导致端口未监听
+		pprofLn, pprofErr := net.Listen("tcp", "0.0.0.0:8005")
+		if pprofErr != nil {
+			common.SysLog("pprof listen failed: " + pprofErr.Error())
+		} else {
+			common.SysLog("pprof server listening on http://0.0.0.0:8005/debug/pprof/")
+			go func() {
+				if err := http.Serve(pprofLn, nil); err != nil {
+					common.SysLog("pprof server error: " + err.Error())
+				}
+			}()
+		}
 		go common.Monitor()
 		common.SysLog("pprof enabled")
 	}

@@ -11,15 +11,15 @@ import (
 // OEM贴牌客户给自己用户配置的模型折扣
 type OemUserDiscount struct {
 	Id           int64      `json:"id" gorm:"primaryKey;autoIncrement"`
-	OemId        int64      `json:"oem_id" gorm:"index;not null"`                                    // OEM ID
-	VendorId     *int64     `json:"vendor_id" gorm:"index"`                                          // 厂商ID（NULL表示通配符）
-	ModelName    *string    `json:"model_name"`                                                      // 模型名称（NULL表示厂商级别）
-	UserDiscount float64    `json:"user_discount" gorm:"type:decimal(10,4);not null;default:1.0000"` // 用户折扣（如0.9表示9折）
-	Priority     int        `json:"priority" gorm:"default:0"`                                       // 优先级（数字越大优先级越高）
-	Enabled      int        `json:"enabled" gorm:"default:1"`                                        // 是否启用（1启用，0禁用）
-	Remark       string     `json:"remark"`                                                          // 备注
-	CreateTime   *time.Time `json:"create_time" gorm:"column:create_time;autoCreateTime"`            // 创建时间
-	UpdateTime   *time.Time `json:"update_time" gorm:"column:update_time;autoUpdateTime"`            // 更新时间
+	OemId        int64      `json:"oem_id" gorm:"not null;index:uk_oem_vendor_model,priority:1"`              // OEM ID
+	VendorId     *int64     `json:"vendor_id" gorm:"index:uk_oem_vendor_model,priority:2"`                    // 厂商ID（NULL表示通配符）
+	ModelName    *string    `json:"model_name" gorm:"type:varchar(128);index:uk_oem_vendor_model,priority:3"` // 模型名称（NULL表示厂商级别）
+	UserDiscount float64    `json:"user_discount" gorm:"type:decimal(10,4);not null;default:1.0000"`          // 用户折扣（如0.9表示9折）
+	Priority     int        `json:"priority" gorm:"default:0"`                                                // 优先级（数字越大优先级越高）
+	Enabled      int        `json:"enabled" gorm:"default:1"`                                                 // 是否启用（1启用，0禁用）
+	Remark       string     `json:"remark"`                                                                   // 备注
+	CreateTime   *time.Time `json:"create_time" gorm:"column:create_time;autoCreateTime"`                     // 创建时间
+	UpdateTime   *time.Time `json:"update_time" gorm:"column:update_time;autoUpdateTime"`                     // 更新时间
 }
 
 func (OemUserDiscount) TableName() string {
