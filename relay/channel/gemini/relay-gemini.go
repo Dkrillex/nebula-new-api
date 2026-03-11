@@ -1115,6 +1115,27 @@ func GeminiChatStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *
 			return false
 		}
 
+		// 调试日志：检查思考内容相关的字段（仅在 Debug 模式下）
+		if common.DebugEnabled && len(geminiResponse.Candidates) > 0 {
+			for _, candidate := range geminiResponse.Candidates {
+				for i, part := range candidate.Content.Parts {
+					if part.Text != "" || part.Thought {
+						logger.LogDebug(c, fmt.Sprintf(
+							"[GeminiStreamDebug] model=%s, part[%d]: text_len=%d, thought=%v, hasFunctionCall=%v",
+							info.UpstreamModelName, i, len(part.Text), part.Thought, part.FunctionCall != nil,
+						))
+					}
+				}
+			}
+			// 检查 usage metadata 中的思考 token 计数
+			if geminiResponse.UsageMetadata.ThoughtsTokenCount > 0 {
+				logger.LogDebug(c, fmt.Sprintf(
+					"[GeminiStreamDebug] model=%s has thoughtsTokenCount=%d but no thought parts detected",
+					info.UpstreamModelName, geminiResponse.UsageMetadata.ThoughtsTokenCount,
+				))
+			}
+		}
+
 		for _, candidate := range geminiResponse.Candidates {
 			for _, part := range candidate.Content.Parts {
 				if part.InlineData != nil && part.InlineData.MimeType != "" {

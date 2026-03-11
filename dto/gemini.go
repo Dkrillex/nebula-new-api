@@ -244,7 +244,7 @@ type GeminiPart struct {
 	ThoughtSignature string `json:"thoughtSignature,omitempty"`
 }
 
-// UnmarshalJSON custom unmarshaler for GeminiPart to support snake_case and camelCase for InlineData / ThoughtSignature
+// UnmarshalJSON custom unmarshaler for GeminiPart to support snake_case and camelCase for InlineData / ThoughtSignature / Thought
 func (p *GeminiPart) UnmarshalJSON(data []byte) error {
 	// Alias to avoid recursion during unmarshalling
 	type Alias GeminiPart
@@ -252,6 +252,8 @@ func (p *GeminiPart) UnmarshalJSON(data []byte) error {
 		Alias
 		InlineDataSnake       *GeminiInlineData `json:"inline_data,omitempty"`
 		ThoughtSignatureSnake string            `json:"thought_signature,omitempty"`
+		// 支持 thought 字段的多种可能格式（虽然标准是 camelCase，但为了兼容性也支持 snake_case）
+		ThoughtSnake *bool `json:"thought,omitempty"`
 	}
 
 	if err := common.Unmarshal(data, &aux); err != nil {
@@ -268,6 +270,12 @@ func (p *GeminiPart) UnmarshalJSON(data []byte) error {
 	}
 	if aux.ThoughtSignatureSnake != "" {
 		p.ThoughtSignature = aux.ThoughtSignatureSnake
+	}
+	// 如果通过 snake_case 解析到了 thought 字段，确保设置它
+	// 注意：由于 Thought 字段在 Alias 中，camelCase 格式应该已经自动解析
+	// 这里主要是为了确保兼容性，如果上游使用了不同的格式
+	if aux.ThoughtSnake != nil && *aux.ThoughtSnake {
+		p.Thought = true
 	}
 	return nil
 }
