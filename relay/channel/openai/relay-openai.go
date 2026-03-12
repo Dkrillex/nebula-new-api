@@ -53,6 +53,30 @@ func sendStreamData(c *gin.Context, info *relaycommon.RelayInfo, data string, fo
 		return err
 	}
 
+	// 调试日志：检查 Google 兼容端点的响应（仅在 Debug 模式下）
+	if common.DebugEnabled && info.UseGeminiOpenAICompatibleEndpoint {
+		// 打印原始响应数据（用于调试）
+		logger.LogDebug(c, fmt.Sprintf("[GeminiOpenAICompatible] 原始响应数据: %s", common.TruncateBase64Content(data)))
+		// 检查是否有 reasoning_content 字段
+		for i, choice := range lastStreamResponse.Choices {
+			hasReasoningContent := choice.Delta.ReasoningContent != nil && *choice.Delta.ReasoningContent != ""
+			hasReasoning := choice.Delta.Reasoning != nil && *choice.Delta.Reasoning != ""
+			hasContent := choice.Delta.Content != nil && *choice.Delta.Content != ""
+			if hasReasoningContent || hasReasoning || hasContent {
+				logger.LogDebug(c, fmt.Sprintf(
+					"[GeminiOpenAICompatible] choice[%d]: hasReasoningContent=%v, hasReasoning=%v, hasContent=%v, content_len=%d",
+					i, hasReasoningContent, hasReasoning, hasContent,
+					func() int {
+						if choice.Delta.Content != nil {
+							return len(*choice.Delta.Content)
+						}
+						return 0
+					}(),
+				))
+			}
+		}
+	}
+
 	// 检查是否包含工具调用的增量参数（有 tool_calls 但没有 finish_reason: "tool_calls"）
 	hasIncrementalToolCalls := false
 	for _, choice := range lastStreamResponse.Choices {

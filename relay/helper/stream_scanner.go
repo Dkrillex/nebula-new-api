@@ -280,6 +280,7 @@ func StreamScannerHandler(c *gin.Context, resp *http.Response, info *relaycommon
 			}
 			// 直接收到 [DONE]（有些上游会不加 data: 前缀）
 			if strings.HasPrefix(line, "[DONE]") {
+				common.SysLog(fmt.Sprintf("[StreamScanner] Received [DONE] signal, total events received: %d", eventCount))
 				if common.DebugEnabled {
 					// 打印最后几个事件
 					if len(lastEvents) > 0 {

@@ -170,11 +170,59 @@ func (a *Adaptor) getRequestUrl(info *relaycommon.RelayInfo, modelName, suffix s
 func (a *Adaptor) GetRequestURL(info *relaycommon.RelayInfo) (string, error) {
 	suffix := ""
 	if a.RequestMode == RequestModeGemini {
+		// 检查是否需要使用 Google AI Studio 端点以支持思考内容返回
+		// Vertex AI 端点可能不支持返回思考内容，所以当需要思考内容时，切换到 Google AI Studio 端点
+		// 检查方式：
+		// 1. 如果 ChannelBaseUrl 已经指向 Google AI Studio，直接使用
+		// 2. 如果 ChannelBaseUrl 为空或指向 Vertex AI，且模型是 Gemini 3.1 系列，切换到 Google AI Studio 端点
+		baseURL := strings.TrimSpace(info.ChannelBaseUrl)
+		useGoogleAIStudio := false
+
+		// 如果已经指向 Google AI Studio，直接使用（但需要检查是否支持）
+		if strings.Contains(baseURL, "generativelanguage.googleapis.com") {
+			// Google AI Studio 端点只支持 API Key，不支持 Service Account
+			if info.ChannelOtherSettings.VertexKeyType == dto.VertexKeyTypeAPIKey {
+				useGoogleAIStudio = true
+				common.SysLog(fmt.Sprintf("[Vertex][Gemini] 模型 %s ChannelBaseUrl 已指向 Google AI Studio 端点，继续使用", info.UpstreamModelName))
+			} else {
+				common.SysLog(fmt.Sprintf("[Vertex][Gemini] 模型 %s ChannelBaseUrl 指向 Google AI Studio 端点，但使用 Service Account，不支持。将回退到 Vertex AI 端点", info.UpstreamModelName))
+			}
+		} else if baseURL == "" || baseURL == "/" || strings.Contains(baseURL, "aiplatform.googleapis.com") {
+			// 检查模型是否为 Gemini 3.1 系列（支持 thinking_level）
+			// 如果模型是 Gemini 3.1 系列，且 ChannelBaseUrl 为空或指向 Vertex AI，且使用 API Key，使用 Google AI Studio 端点
+			// 这样可以确保思考内容能够正确返回
+			// 注意：Google AI Studio 端点只支持 API Key，不支持 Service Account
+			if strings.HasPrefix(info.UpstreamModelName, "gemini-3.1-") && info.ChannelOtherSettings.VertexKeyType == dto.VertexKeyTypeAPIKey {
+				useGoogleAIStudio = true
+				common.SysLog(fmt.Sprintf("[Vertex][Gemini] 模型 %s 是 Gemini 3.1 系列，且 ChannelBaseUrl 为空或指向 Vertex AI，且使用 API Key，切换到 Google AI Studio 端点以支持思考内容返回", info.UpstreamModelName))
+			} else if strings.HasPrefix(info.UpstreamModelName, "gemini-3.1-") && info.ChannelOtherSettings.VertexKeyType != dto.VertexKeyTypeAPIKey {
+				common.SysLog(fmt.Sprintf("[Vertex][Gemini] 模型 %s 是 Gemini 3.1 系列，但使用 Service Account，无法使用 Google AI Studio 端点。将使用 Vertex AI 端点（可能不支持返回思考内容）", info.UpstreamModelName))
+			}
+		}
+
+		if useGoogleAIStudio {
+			// Google AI Studio 端点只支持 API Key，不支持 Service Account
+			if info.ChannelOtherSettings.VertexKeyType != dto.VertexKeyTypeAPIKey {
+				return "", fmt.Errorf("Google AI Studio 端点不支持 Service Account，只支持 API Key。请将 Channel 的 Key Type 设置为 API Key，或使用 Vertex AI 端点（但可能不支持返回思考内容）")
+			}
+			// 使用 Google AI Studio 端点格式
+			version := model_setting.GetGeminiVersionSetting(info.UpstreamModelName)
+			if info.IsStream {
+				suffix = "streamGenerateContent?alt=sse"
+			} else {
+				suffix = "generateContent"
+			}
+			url := fmt.Sprintf("https://generativelanguage.googleapis.com/%s/models/%s:%s", version, info.UpstreamModelName, suffix)
+			// 设置 ChannelBaseUrl 为 Google AI Studio 端点，以便 SetupRequestHeader 使用正确的认证方式
+			info.ChannelBaseUrl = "https://generativelanguage.googleapis.com"
+			common.SysLog(fmt.Sprintf("[Vertex][Gemini] 模型 %s 使用 Google AI Studio 端点 URL: %s", info.UpstreamModelName, url))
+			return url, nil
+		}
 		// 使用 Google 官方 OpenAI 兼容端点（仅 Service Account 有 project，可构建 URL）
 		// 图片生成（imagen、*-image、*-image-preview）走原生端点，请求体为 contents/generationConfig，与 chat/completions 的 messages 格式不兼容
 		useCompat := model_setting.GetGeminiSettings().UseOpenAICompatibleEndpoint
 		isImageModel := strings.HasPrefix(info.UpstreamModelName, "imagen") || strings.Contains(info.UpstreamModelName, "-image")
-		common.SysLog(fmt.Sprintf("[Vertex][Gemini] GetRequestURL: UseOpenAICompatibleEndpoint=%v, isImageModel=%v", useCompat, isImageModel))
+		common.SysLog(fmt.Sprintf("[Vertex][Gemini] GetRequestURL: model=%s, UseOpenAICompatibleEndpoint=%v, isImageModel=%v", info.UpstreamModelName, useCompat, isImageModel))
 		if useCompat && info.RelayMode == constant.RelayModeChatCompletions && !gemini.IsGeminiLiveModel(info.UpstreamModelName) && !isImageModel &&
 			info.ChannelOtherSettings.VertexKeyType != dto.VertexKeyTypeAPIKey {
 			adc := &Credentials{}
@@ -187,11 +235,11 @@ func (a *Adaptor) GetRequestURL(info *relaycommon.RelayInfo) (string, error) {
 					baseURL = fmt.Sprintf("https://%s-aiplatform.googleapis.com/v1/projects/%s/locations/%s/endpoints/openapi/chat/completions", region, adc.ProjectID, region)
 				}
 				info.UseGeminiOpenAICompatibleEndpoint = true
-				common.SysLog(fmt.Sprintf("[Vertex][Gemini] 使用 OpenAI 兼容端点 URL: %s", baseURL))
+				common.SysLog(fmt.Sprintf("[Vertex][Gemini] 模型 %s 使用 OpenAI 兼容端点 URL: %s", info.UpstreamModelName, baseURL))
 				return baseURL, nil
 			}
 			if useCompat && info.ChannelOtherSettings.VertexKeyType == dto.VertexKeyTypeAPIKey {
-				common.SysLog("[Vertex][Gemini] API Key 模式无 project，无法使用 OpenAI 兼容端点，回退到原生端点")
+				common.SysLog(fmt.Sprintf("[Vertex][Gemini] 模型 %s: API Key 模式无 project，无法使用 OpenAI 兼容端点，回退到原生端点", info.UpstreamModelName))
 			}
 		}
 
@@ -286,7 +334,11 @@ func (a *Adaptor) GetRequestURL(info *relaycommon.RelayInfo) (string, error) {
 			suffix = "predict"
 		}
 
-		return a.getRequestUrl(info, info.UpstreamModelName, suffix)
+		url, err := a.getRequestUrl(info, info.UpstreamModelName, suffix)
+		if err == nil {
+			common.SysLog(fmt.Sprintf("[Vertex][Gemini] 模型 %s 使用原生端点 URL: %s", info.UpstreamModelName, url))
+		}
+		return url, err
 	} else if a.RequestMode == RequestModeClaude {
 		if info.IsStream {
 			suffix = "streamRawPredict?alt=sse"
@@ -401,11 +453,27 @@ func (a *Adaptor) SetupRequestHeader(c *gin.Context, req *http.Header, info *rel
 	channel.SetupApiRequestHeader(info, c, req)
 
 	// #region agent log
-	common.SysLog(fmt.Sprintf("[Vertex][DEBUG] SetupRequestHeader - VertexKeyType: %s, IsGeminiLiveModel: %v, UpstreamModelName: %s", info.ChannelOtherSettings.VertexKeyType, gemini.IsGeminiLiveModel(info.UpstreamModelName), info.UpstreamModelName))
+	common.SysLog(fmt.Sprintf("[Vertex][DEBUG] SetupRequestHeader - VertexKeyType: %s, IsGeminiLiveModel: %v, UpstreamModelName: %s, ChannelBaseUrl: %s", info.ChannelOtherSettings.VertexKeyType, gemini.IsGeminiLiveModel(info.UpstreamModelName), info.UpstreamModelName, info.ChannelBaseUrl))
 	// #endregion
 
+	// 检查是否使用了 Google AI Studio 端点
+	// 对于 Gemini 3.1 系列模型，如果 ChannelBaseUrl 包含 generativelanguage.googleapis.com，使用 Google AI Studio 认证
+	// 注意：Google AI Studio 端点只支持 API Key，不支持 Service Account
+	useGoogleAIStudio := false
+	if a.RequestMode == RequestModeGemini && strings.HasPrefix(info.UpstreamModelName, "gemini-3.1-") {
+		if strings.Contains(info.ChannelBaseUrl, "generativelanguage.googleapis.com") {
+			useGoogleAIStudio = true
+			common.SysLog(fmt.Sprintf("[Vertex][Gemini] 检测到 Gemini 3.1 系列模型且使用 Google AI Studio 端点，将使用 x-goog-api-key 认证"))
+		}
+	}
+
+	// 如果使用 Service Account 但需要 Google AI Studio 端点，这是不支持的
+	if useGoogleAIStudio && info.ChannelOtherSettings.VertexKeyType != dto.VertexKeyTypeAPIKey {
+		return fmt.Errorf("Google AI Studio 端点不支持 Service Account，只支持 API Key。请使用 API Key 类型的 Channel")
+	}
+
 	// Initialize AccountCredentials if using Service Account mode
-	if info.ChannelOtherSettings.VertexKeyType != dto.VertexKeyTypeAPIKey && a.AccountCredentials.ClientEmail == "" {
+	if !useGoogleAIStudio && info.ChannelOtherSettings.VertexKeyType != dto.VertexKeyTypeAPIKey && a.AccountCredentials.ClientEmail == "" {
 		adc := &Credentials{}
 		if err := common.Unmarshal([]byte(info.ApiKey), adc); err != nil {
 			return fmt.Errorf("failed to decode credentials file: %w", err)
@@ -429,9 +497,15 @@ func (a *Adaptor) SetupRequestHeader(c *gin.Context, req *http.Header, info *rel
 			}
 			req.Set("Authorization", "Bearer "+accessToken)
 		}
+	} else if useGoogleAIStudio {
+		// Google AI Studio 端点使用 x-goog-api-key header（仅支持 API Key）
+		// 注意：Google AI Studio 不支持 Service Account，只支持 API Key
+		req.Set("x-goog-api-key", info.ApiKey)
+		common.SysLog(fmt.Sprintf("[Vertex][Gemini] 使用 Google AI Studio 端点，设置 x-goog-api-key header"))
 	} else {
-		// For non-Live API requests, use existing logic
+		// Vertex AI 端点使用 OAuth2 token（Service Account）或 API Key
 		if info.ChannelOtherSettings.VertexKeyType != dto.VertexKeyTypeAPIKey {
+			// Vertex AI 端点使用 OAuth2 token
 			accessToken, err := getAccessToken(a, info)
 			if err != nil {
 				return err
@@ -440,7 +514,8 @@ func (a *Adaptor) SetupRequestHeader(c *gin.Context, req *http.Header, info *rel
 		}
 	}
 
-	if a.AccountCredentials.ProjectID != "" {
+	// x-goog-user-project 仅用于 Vertex AI 端点，不用于 Google AI Studio
+	if !useGoogleAIStudio && a.AccountCredentials.ProjectID != "" {
 		req.Set("x-goog-user-project", a.AccountCredentials.ProjectID)
 	}
 	return nil

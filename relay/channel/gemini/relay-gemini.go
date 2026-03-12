@@ -218,12 +218,58 @@ func ThinkingAdaptor(geminiRequest *dto.GeminiChatRequest, info *relaycommon.Rel
 // Setting safety to the lowest possible values since Gemini is already powerless enough
 func CovertGemini2OpenAI(c *gin.Context, textRequest dto.GeneralOpenAIRequest, info *relaycommon.RelayInfo) (*dto.GeminiChatRequest, error) {
 
+	// 获取原始 max_tokens 值
+	maxTokens := textRequest.GetMaxTokens()
+
+	// 自动调整过小的 max_tokens 值
+	// 如果 max_tokens 太小（< 500），自动增加到合理值
+	// 对于启用思考功能的请求，需要更大的值（思考内容会占用很多 tokens）
+	if maxTokens > 0 && maxTokens < 500 {
+		// 检查是否启用了思考功能
+		hasThinking := false
+
+		// 检查 enable_thinking 参数
+		if textRequest.EnableThinking != nil {
+			switch v := textRequest.EnableThinking.(type) {
+			case bool:
+				hasThinking = v
+			case string:
+				hasThinking = strings.ToLower(v) == "true" || v == "1"
+			}
+		}
+
+		// 检查 extra_body 中的 thinking_config
+		if !hasThinking && len(textRequest.ExtraBody) > 0 {
+			var extraBody map[string]interface{}
+			if err := common.Unmarshal(textRequest.ExtraBody, &extraBody); err == nil {
+				if google, ok := extraBody["google"].(map[string]interface{}); ok {
+					if thinkingConfig, ok := google["thinking_config"].(map[string]interface{}); ok {
+						if includeThoughts, ok := thinkingConfig["include_thoughts"].(bool); ok && includeThoughts {
+							hasThinking = true
+						}
+					}
+				}
+			}
+		}
+
+		// 根据是否启用思考功能设置不同的最小值
+		minTokens := uint(1000) // 默认最小值
+		if hasThinking {
+			minTokens = uint(2000) // 启用思考功能时，需要更大的值
+			common.SysLog(fmt.Sprintf("[Gemini] 检测到启用思考功能且 max_tokens=%d 过小，自动调整为 %d", maxTokens, minTokens))
+		} else {
+			common.SysLog(fmt.Sprintf("[Gemini] 检测到 max_tokens=%d 过小，自动调整为 %d", maxTokens, minTokens))
+		}
+
+		maxTokens = minTokens
+	}
+
 	geminiRequest := dto.GeminiChatRequest{
 		Contents: make([]dto.GeminiChatContent, 0, len(textRequest.Messages)),
 		GenerationConfig: dto.GeminiChatGenerationConfig{
 			Temperature:     textRequest.Temperature,
 			TopP:            textRequest.TopP,
-			MaxOutputTokens: textRequest.GetMaxTokens(),
+			MaxOutputTokens: maxTokens,
 			Seed:            int64(textRequest.Seed),
 		},
 	}
@@ -590,6 +636,28 @@ func CovertGemini2OpenAI(c *gin.Context, textRequest dto.GeneralOpenAIRequest, i
 				},
 			},
 		}
+	}
+
+	// 打印完整的原始 Gemini 请求（核心调试日志）
+	geminiRequestJson, err := common.Marshal(geminiRequest)
+	if err == nil {
+		requestPreview := string(geminiRequestJson)
+		if len(requestPreview) > 1000 {
+			requestPreview = requestPreview[:1000] + "..."
+		}
+		common.SysLog(fmt.Sprintf("[GeminiRawRequest] model=%s 发送到上游 API 的原始 Gemini 请求: %s",
+			info.UpstreamModelName, requestPreview))
+		// 特别检查 thinkingConfig 是否正确设置
+		if geminiRequest.GenerationConfig.ThinkingConfig != nil {
+			thinkingConfigJson, _ := common.Marshal(geminiRequest.GenerationConfig.ThinkingConfig)
+			common.SysLog(fmt.Sprintf("[GeminiRawRequest] model=%s thinkingConfig: %s",
+				info.UpstreamModelName, string(thinkingConfigJson)))
+		}
+		common.SysLog(fmt.Sprintf("[GeminiRawRequest] model=%s 端点信息: ChannelBaseUrl=%s",
+			info.UpstreamModelName, info.ChannelBaseUrl))
+	} else {
+		common.SysLog(fmt.Sprintf("[GeminiRawRequest] model=%s 序列化请求失败: %v",
+			info.UpstreamModelName, err))
 	}
 
 	return &geminiRequest, nil
@@ -1007,89 +1075,19 @@ func responseGeminiChat2OpenAI(c *gin.Context, response *dto.GeminiChatResponse)
 	return &fullTextResponse
 }
 
+// streamResponseGeminiChat2OpenAI 将 Gemini 流式响应转换为 OpenAI 格式
+// 使用新的转换中间件确保完整性和正确性
 func streamResponseGeminiChat2OpenAI(geminiResponse *dto.GeminiChatResponse) (*dto.ChatCompletionsStreamResponse, bool) {
-	choices := make([]dto.ChatCompletionsStreamResponseChoice, 0, len(geminiResponse.Candidates))
-	isStop := false
-	for _, candidate := range geminiResponse.Candidates {
-		// 任何 finish reason 都表示流式响应结束
-		if candidate.FinishReason != nil {
-			isStop = true
-			if *candidate.FinishReason == "STOP" {
-				candidate.FinishReason = nil
-			}
-		}
-		choice := dto.ChatCompletionsStreamResponseChoice{
-			Index: int(candidate.Index),
-			Delta: dto.ChatCompletionsStreamResponseChoiceDelta{
-				//Role: "assistant",
-			},
-		}
-		var texts []string
-		var thoughtTexts []string
-		isTools := false
-		hasThought := false
-		hasContent := false
-		if candidate.FinishReason != nil {
-			// p := GeminiConvertFinishReason(*candidate.FinishReason)
-			switch *candidate.FinishReason {
-			case "STOP":
-				choice.FinishReason = &constant.FinishReasonStop
-			case "MAX_TOKENS":
-				choice.FinishReason = &constant.FinishReasonLength
-			default:
-				choice.FinishReason = &constant.FinishReasonContentFilter
-			}
-		}
-		for _, part := range candidate.Content.Parts {
-			if part.InlineData != nil {
-				if strings.HasPrefix(part.InlineData.MimeType, "image") {
-					imgText := "![image](data:" + part.InlineData.MimeType + ";base64," + part.InlineData.Data + ")"
-					texts = append(texts, imgText)
-					hasContent = true
-				}
-			} else if part.FunctionCall != nil {
-				isTools = true
-				if call := getResponseToolCall(&part); call != nil {
-					call.SetIndex(len(choice.Delta.ToolCalls))
-					choice.Delta.ToolCalls = append(choice.Delta.ToolCalls, *call)
-				}
-
-			} else if part.Thought {
-				hasThought = true
-				thoughtTexts = append(thoughtTexts, part.Text)
-			} else {
-				hasContent = true
-				if part.ExecutableCode != nil {
-					texts = append(texts, "```"+part.ExecutableCode.Language+"\n"+part.ExecutableCode.Code+"\n```\n")
-				} else if part.CodeExecutionResult != nil {
-					texts = append(texts, "```output\n"+part.CodeExecutionResult.Output+"\n```\n")
-				} else {
-					if part.Text != "\n" {
-						texts = append(texts, part.Text)
-					}
-				}
-			}
-		}
-		// 思考内容和普通内容可以同时存在
-		if hasThought && len(thoughtTexts) > 0 {
-			choice.Delta.SetReasoningContent(strings.Join(thoughtTexts, "\n"))
-		}
-		if hasContent && len(texts) > 0 {
-			choice.Delta.SetContentString(strings.Join(texts, "\n"))
-		} else if !hasThought && len(texts) > 0 {
-			// 如果没有思考内容，但有待发送的文本，也设置 content（向后兼容）
-			choice.Delta.SetContentString(strings.Join(texts, "\n"))
-		}
-		if isTools {
-			choice.FinishReason = &constant.FinishReasonToolCalls
-		}
-		choices = append(choices, choice)
+	response, isStop, err := ConvertGeminiStreamToOpenAI(geminiResponse)
+	if err != nil {
+		// 如果转换失败，返回空响应但继续流（不中断）
+		common.SysLog(fmt.Sprintf("[GeminiStreamConverter] 转换失败: %v, 返回空响应", err))
+		return &dto.ChatCompletionsStreamResponse{
+			Object:  "chat.completion.chunk",
+			Choices: []dto.ChatCompletionsStreamResponseChoice{},
+		}, false
 	}
-
-	var response dto.ChatCompletionsStreamResponse
-	response.Object = "chat.completion.chunk"
-	response.Choices = choices
-	return &response, isStop
+	return response, isStop
 }
 
 func handleStream(c *gin.Context, info *relaycommon.RelayInfo, resp *dto.ChatCompletionsStreamResponse) error {
@@ -1138,157 +1136,97 @@ func GeminiChatStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *
 			rawRespBuilder.WriteByte('\n')
 		}
 
-		// 打印 Gemini 原始返回（完整 JSON）
-		common.SysLog(fmt.Sprintf("[GeminiRawResponse] model=%s, chunk[%d], raw_data=%s",
-			info.UpstreamModelName, chunkIndex, data))
+		// 打印 Gemini 原始响应数据（核心调试日志）
+		dataLen := len(data)
+		dataPreview := data
+		if len(dataPreview) > 1000 {
+			dataPreview = dataPreview[:1000] + "..."
+		}
+		common.SysLog(fmt.Sprintf("[GeminiRawResponse] model=%s, chunk[%d], data_len=%d, raw_data=%s",
+			info.UpstreamModelName, chunkIndex, dataLen, dataPreview))
+
+		// 如果数据为空或只包含空白字符，记录警告日志
+		if strings.TrimSpace(data) == "" {
+			logger.LogWarn(c, fmt.Sprintf("[Gemini] model=%s, chunk[%d]: 收到空 chunk 或只包含空白字符",
+				info.UpstreamModelName, chunkIndex))
+		}
 
 		var geminiResponse dto.GeminiChatResponse
 		err := common.UnmarshalJsonStr(data, &geminiResponse)
 		if err != nil {
-			logger.LogError(c, "error unmarshalling stream response: "+err.Error())
-			return false
+			// JSON 解析错误不应该中断流，记录日志并继续处理下一个 chunk
+			// 某些 chunk 可能包含不完整的 JSON 或特殊格式，这是正常的
+			logger.LogWarn(c, fmt.Sprintf("error unmarshalling stream response chunk[%d]: %s, raw_data: %s", chunkIndex, err.Error(), common.TruncateBase64Content(data)))
+			return true // 继续处理，不中断流
 		}
 
-		// 打印解析后的结构化数据（用于对比分析）
+		// 打印解析后的 Gemini 响应（核心调试日志）
 		geminiResponseJson, _ := common.Marshal(geminiResponse)
-		common.SysLog(fmt.Sprintf("[GeminiParsedResponse] model=%s, chunk[%d], parsed_json=%s",
-			info.UpstreamModelName, chunkIndex, string(geminiResponseJson)))
-
-		// 记录每个 chunk 的完整原始数据（前500字符）用于调试
-		dataPreview := data
-		if len(dataPreview) > 500 {
-			dataPreview = dataPreview[:500] + "..."
+		geminiResponsePreview := string(geminiResponseJson)
+		if len(geminiResponsePreview) > 1000 {
+			geminiResponsePreview = geminiResponsePreview[:1000] + "..."
 		}
-		common.SysLog(fmt.Sprintf("[GeminiStreamDebug] model=%s, chunk[%d] RAW (first 500 chars): %s",
-			info.UpstreamModelName, chunkIndex, dataPreview))
+		common.SysLog(fmt.Sprintf("[GeminiParsedResponse] model=%s, chunk[%d], parsed_json=%s",
+			info.UpstreamModelName, chunkIndex, geminiResponsePreview))
 
-		// 记录每个 chunk 的基本信息
-		common.SysLog(fmt.Sprintf("[GeminiStreamDebug] model=%s, chunk[%d]: hasCandidates=%v, candidatesCount=%d, hasUsageMetadata=%v, thoughtsTokenCount=%d",
-			info.UpstreamModelName, chunkIndex, len(geminiResponse.Candidates) > 0, len(geminiResponse.Candidates),
-			geminiResponse.UsageMetadata.TotalTokenCount > 0, geminiResponse.UsageMetadata.ThoughtsTokenCount))
-
-		// 调试日志：检查思考内容相关的字段
+		// 检查 usage metadata 中的思考 token 计数
+		// 注意：需要累积所有 chunk 的 thoughtsTokenCount，因为有些 chunk 可能只有 metadata 没有 parts
 		if len(geminiResponse.Candidates) > 0 {
-			for _, candidate := range geminiResponse.Candidates {
-				// 记录每个 candidate 的 parts 数量
-				partsCount := len(candidate.Content.Parts)
-				common.SysLog(fmt.Sprintf(
-					"[GeminiStreamDebug] model=%s, candidate has %d parts",
-					info.UpstreamModelName, partsCount,
-				))
-
-				for i, part := range candidate.Content.Parts {
-					if part.Text != "" || part.Thought {
-						textPreview := part.Text
-						if len(textPreview) > 50 {
-							textPreview = textPreview[:50] + "..."
-						}
-						common.SysLog(fmt.Sprintf(
-							"[GeminiStreamDebug] model=%s, part[%d]: text_len=%d, thought=%v, hasFunctionCall=%v, text_preview=%s",
-							info.UpstreamModelName, i, len(part.Text), part.Thought, part.FunctionCall != nil, textPreview,
-						))
-					}
-				}
-			}
-			// 检查 usage metadata 中的思考 token 计数
-			// 注意：需要累积所有 chunk 的 thoughtsTokenCount，因为有些 chunk 可能只有 metadata 没有 parts
 			if geminiResponse.UsageMetadata.ThoughtsTokenCount > 0 {
 				hasThoughtsTokenCount = true
 				// 累积所有 chunk 的 thoughtsTokenCount，取最大值（因为最后一个 chunk 通常包含完整的计数）
 				if geminiResponse.UsageMetadata.ThoughtsTokenCount > totalThoughtsTokenCount {
 					totalThoughtsTokenCount = geminiResponse.UsageMetadata.ThoughtsTokenCount
 				}
-				common.SysLog(fmt.Sprintf(
-					"[GeminiStreamDebug] model=%s chunk[%d] has thoughtsTokenCount=%d, totalThoughtsTokenCount=%d, checking for thought parts...",
-					info.UpstreamModelName, chunkIndex, geminiResponse.UsageMetadata.ThoughtsTokenCount, totalThoughtsTokenCount,
-				))
 				// 检查是否有 Thought 为 true 的 part
-				hasThoughtPart := false
 				for _, candidate := range geminiResponse.Candidates {
-					// 检查 parts 是否为 nil
 					if candidate.Content.Parts == nil {
-						common.SysLog(fmt.Sprintf(
-							"[GeminiStreamDebug] model=%s chunk[%d] candidate.Content.Parts is nil, but thoughtsTokenCount=%d",
-							info.UpstreamModelName, chunkIndex, geminiResponse.UsageMetadata.ThoughtsTokenCount,
-						))
 						continue
 					}
 					for _, part := range candidate.Content.Parts {
 						if part.Thought {
-							hasThoughtPart = true
 							// 累积思考内容
 							if part.Text != "" {
 								accumulatedThoughts = append(accumulatedThoughts, part.Text)
 							}
-							textPreview := part.Text
-							if len(textPreview) > 100 {
-								textPreview = textPreview[:100] + "..."
-							}
-							common.SysLog(fmt.Sprintf(
-								"[GeminiStreamDebug] Found thought part in chunk[%d]: text_len=%d, text_preview=%s",
-								chunkIndex, len(part.Text), textPreview,
-							))
 						}
 					}
-				}
-				if !hasThoughtPart {
-					// 记录完整的原始响应数据（用于调试）
-					rawDataPreview := data
-					if len(rawDataPreview) > 1000 {
-						rawDataPreview = rawDataPreview[:1000] + "..."
-					}
-					common.SysLog(fmt.Sprintf(
-						"[GeminiStreamDebug] WARNING: model=%s chunk[%d] has thoughtsTokenCount=%d but no part.Thought=true detected! Raw response: %s",
-						info.UpstreamModelName, chunkIndex, geminiResponse.UsageMetadata.ThoughtsTokenCount, rawDataPreview,
-					))
-
-					// 检查 candidate.Content 是否有其他字段
-					if len(geminiResponse.Candidates) > 0 {
-						candidate := geminiResponse.Candidates[0]
-						contentJson, _ := common.Marshal(candidate.Content)
-						contentPreview := string(contentJson)
-						if len(contentPreview) > 500 {
-							contentPreview = contentPreview[:500] + "..."
-						}
-						common.SysLog(fmt.Sprintf(
-							"[GeminiStreamDebug] chunk[%d] candidate.Content structure: %s",
-							chunkIndex, contentPreview,
-						))
-					}
-				}
-			}
-		} else {
-			// 如果没有 candidates，记录完整的响应
-			rawDataPreview := data
-			if len(rawDataPreview) > 500 {
-				rawDataPreview = rawDataPreview[:500] + "..."
-			}
-			common.SysLog(fmt.Sprintf(
-				"[GeminiStreamDebug] model=%s, chunk has no candidates. Raw response: %s",
-				info.UpstreamModelName, rawDataPreview,
-			))
-		}
-
-		for _, candidate := range geminiResponse.Candidates {
-			for _, part := range candidate.Content.Parts {
-				if part.InlineData != nil && part.InlineData.MimeType != "" {
-					imageCount++
-				}
-				if part.Text != "" {
-					responseText.WriteString(part.Text)
 				}
 			}
 		}
 
-		// 分离思考内容和普通内容
+		// 处理 candidates 和 parts（如果存在）
+		if len(geminiResponse.Candidates) > 0 {
+			for _, candidate := range geminiResponse.Candidates {
+				// 检查 Content 和 Parts 是否存在
+				if candidate.Content.Parts == nil {
+					continue
+				}
+				for _, part := range candidate.Content.Parts {
+					if part.InlineData != nil && part.InlineData.MimeType != "" {
+						imageCount++
+					}
+					if part.Text != "" {
+						responseText.WriteString(part.Text)
+					}
+				}
+			}
+		}
+
+		// 分离思考内容和普通内容（仅在 candidates 存在时）
 		var thoughtParts []dto.GeminiPart
 		var contentParts []dto.GeminiPart
-		for _, candidate := range geminiResponse.Candidates {
-			for _, part := range candidate.Content.Parts {
-				if part.Thought {
-					thoughtParts = append(thoughtParts, part)
-				} else {
-					contentParts = append(contentParts, part)
+		if len(geminiResponse.Candidates) > 0 {
+			for _, candidate := range geminiResponse.Candidates {
+				if candidate.Content.Parts == nil {
+					continue
+				}
+				for _, part := range candidate.Content.Parts {
+					if part.Thought {
+						thoughtParts = append(thoughtParts, part)
+					} else {
+						contentParts = append(contentParts, part)
+					}
 				}
 			}
 		}
@@ -1315,8 +1253,6 @@ func GeminiChatStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *
 					},
 				}
 				thoughtResponse.Choices[0].Delta.SetReasoningContent(strings.Join(thoughtTexts, "\n"))
-				common.SysLog(fmt.Sprintf("[Gemini] 先发送思考内容，共 %d 条，总长度 %d 字符",
-					len(thoughtTexts), len(strings.Join(thoughtTexts, "\n"))))
 				// 在第一个响应之前发送思考内容
 				if info.SendResponseCount == 0 {
 					emptyResponse := helper.GenerateStartEmptyResponse(id, createAt, info.UpstreamModelName, nil)
@@ -1327,25 +1263,67 @@ func GeminiChatStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *
 			}
 		}
 
+		// 打印转换前的 Gemini 响应（核心调试日志）
+		geminiResponseBeforeConversion, _ := common.Marshal(geminiResponse)
+		beforeConversionPreview := string(geminiResponseBeforeConversion)
+		if len(beforeConversionPreview) > 1000 {
+			beforeConversionPreview = beforeConversionPreview[:1000] + "..."
+		}
+		common.SysLog(fmt.Sprintf("[GeminiBeforeConversion] model=%s chunk[%d] 转换前的 Gemini 响应: %s",
+			info.UpstreamModelName, chunkIndex, beforeConversionPreview))
+
 		// 创建只包含普通内容的响应（临时修改 geminiResponse）
-		originalParts := make([][]dto.GeminiPart, len(geminiResponse.Candidates))
-		for i := range geminiResponse.Candidates {
-			originalParts[i] = make([]dto.GeminiPart, len(geminiResponse.Candidates[i].Content.Parts))
-			copy(originalParts[i], geminiResponse.Candidates[i].Content.Parts)
-			// 只保留非思考内容
-			geminiResponse.Candidates[i].Content.Parts = contentParts
+		// 注意：如果 candidates 为空，streamResponseGeminiChat2OpenAI 会返回空的 choices
+		// 重要：如果 Parts 是 null，不要修改它，保持原样以便 finishReason 能正确转换
+		// 如果只有思考内容（contentParts 为空），也不应该将 Parts 设置为空数组，应该保持原样或设置为 nil
+		var originalParts [][]dto.GeminiPart
+		if len(geminiResponse.Candidates) > 0 {
+			originalParts = make([][]dto.GeminiPart, len(geminiResponse.Candidates))
+			for i := range geminiResponse.Candidates {
+				if geminiResponse.Candidates[i].Content.Parts != nil {
+					originalParts[i] = make([]dto.GeminiPart, len(geminiResponse.Candidates[i].Content.Parts))
+					copy(originalParts[i], geminiResponse.Candidates[i].Content.Parts)
+					// 只保留非思考内容
+					// 如果 contentParts 为空（只有思考内容），设置为 nil 而不是空数组
+					if len(contentParts) > 0 {
+						geminiResponse.Candidates[i].Content.Parts = contentParts
+					} else {
+						// 如果只有思考内容，设置为 nil，这样转换时不会产生空的 choice
+						geminiResponse.Candidates[i].Content.Parts = nil
+					}
+				} else {
+					// 如果 Parts 是 null，保持为 null（不要设置为空的 contentParts）
+					// 这样 finishReason 能在 streamResponseGeminiChat2OpenAI 中正确处理
+					originalParts[i] = nil
+				}
+			}
 		}
 
 		response, isStop := streamResponseGeminiChat2OpenAI(&geminiResponse)
 
-		// 恢复原始 parts（用于后续处理）
-		for i := range geminiResponse.Candidates {
-			geminiResponse.Candidates[i].Content.Parts = originalParts[i]
-		}
-
+		// 先设置 id、created、model，然后再打印日志，确保日志显示正确的值
 		response.Id = id
 		response.Created = createAt
 		response.Model = info.UpstreamModelName
+
+		// 打印转换后的 OpenAI 格式响应（核心调试日志）
+		openaiResponseAfterConversion, _ := common.Marshal(response)
+		afterConversionPreview := string(openaiResponseAfterConversion)
+		if len(afterConversionPreview) > 1000 {
+			afterConversionPreview = afterConversionPreview[:1000] + "..."
+		}
+		common.SysLog(fmt.Sprintf("[OpenAIAfterConversion] model=%s chunk[%d] 转换后的 OpenAI 格式响应: %s, isStop=%v, choicesCount=%d",
+			info.UpstreamModelName, chunkIndex, afterConversionPreview, isStop, len(response.Choices)))
+
+		// 恢复原始 parts（用于后续处理）
+		if len(originalParts) > 0 {
+			for i := range geminiResponse.Candidates {
+				if i < len(originalParts) && originalParts[i] != nil {
+					geminiResponse.Candidates[i].Content.Parts = originalParts[i]
+				}
+			}
+		}
+
 		if geminiResponse.UsageMetadata.TotalTokenCount != 0 {
 			usage.PromptTokens = geminiResponse.UsageMetadata.PromptTokenCount
 			usage.CompletionTokens = geminiResponse.UsageMetadata.CandidatesTokenCount
@@ -1366,8 +1344,30 @@ func GeminiChatStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *
 			}
 		}
 		logger.LogDebug(c, fmt.Sprintf("info.SendResponseCount = %d", info.SendResponseCount))
+
+		// 仅在有内容时向客户端发送内容块和 stop 块，避免「仅有 usage、无 candidates」时仍 200+ 计费
+		// 注意：即使 candidates 为空，如果只有 usage metadata，也应该继续处理（不发送空响应）
+		// 但如果之前发送过思考内容，即使当前 chunk 没有普通内容，也应该继续流
+		hasContentToSend := len(response.Choices) > 0
+		// 检查 choice 是否有实际内容（Delta 不为空）
+		hasActualContent := false
+		if hasContentToSend {
+			for _, choice := range response.Choices {
+				// 检查是否有 content、reasoning_content 或 tool_calls
+				// 注意：finishReason 不算实际内容，它应该在 stop 响应中发送
+				if choice.Delta.GetContentString() != "" ||
+					choice.Delta.GetReasoningContent() != "" ||
+					len(choice.Delta.ToolCalls) > 0 {
+					hasActualContent = true
+					break
+				}
+			}
+		}
+
+		// OpenAI 流式响应规范要求：第一个响应必须是空的起始响应（只有 role，没有 content）
+		// 即使第一个 chunk 已经有实际内容，也需要先发送空的起始响应
 		if info.SendResponseCount == 0 {
-			// send first response
+			// send first empty response (required by OpenAI streaming format)
 			emptyResponse := helper.GenerateStartEmptyResponse(id, createAt, info.UpstreamModelName, nil)
 			if response.IsToolCall() {
 				if len(emptyResponse.Choices) > 0 && len(response.Choices) > 0 {
@@ -1396,9 +1396,33 @@ func GeminiChatStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *
 				}
 			}
 		}
+		// 如果当前 chunk 没有 candidates 但之前发送过思考内容，继续流（不中断）
+		shouldContinueStream := len(geminiResponse.Candidates) == 0 && thoughtsSent
+		// 如果 parts 是 null 但有 finishReason，也应该处理（这是最后一个 chunk）
+		hasFinishReasonOnly := false
+		if len(geminiResponse.Candidates) > 0 {
+			for _, candidate := range geminiResponse.Candidates {
+				if candidate.FinishReason != nil && (candidate.Content.Parts == nil || len(candidate.Content.Parts) == 0) {
+					hasFinishReasonOnly = true
+					break
+				}
+			}
+		}
 
-		// 仅在有内容时向客户端发送内容块和 stop 块，避免「仅有 usage、无 candidates」时仍 200+ 计费
-		if len(response.Choices) > 0 {
+		// 详细日志：记录发送决策
+
+		if hasContentToSend && hasActualContent {
+			// 如果内容响应中包含 finishReason，需要先移除它（finishReason 应该在 stop 响应中发送）
+			// 临时保存 finishReason，稍后在 stop 响应中发送
+			if len(response.Choices) > 0 && response.Choices[0].FinishReason != nil {
+				// 保存 finishReason，稍后在 isStop 逻辑中使用
+				if finishReason == "" {
+					finishReason = *response.Choices[0].FinishReason
+				}
+				// 从内容响应中移除 finishReason，避免在内容响应中发送
+				response.Choices[0].FinishReason = nil
+			}
+
 			if response.IsToolCall() && len(response.Choices[0].Delta.ToolCalls) > 0 {
 				sentToolCallContent = true
 			}
@@ -1406,8 +1430,33 @@ func GeminiChatStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *
 			if err != nil {
 				logger.LogError(c, err.Error())
 			}
+		} else if shouldContinueStream {
+			// 如果之前发送过思考内容，但当前 chunk 没有普通内容，记录日志并继续
+		} else if hasFinishReasonOnly {
+			// 如果只有 finishReason 但没有 parts，这是最后一个 chunk
+			// 即使 delta 是空的，只要有 finishReason，也应该发送响应（用于流结束标记）
+			// 但根据标准格式，finishReason 应该在 stop 响应中，而不是在内容响应中
+			// 所以这里不发送，让 isStop 逻辑处理
+		} else if !hasContentToSend {
+			// 如果没有任何内容要发送，记录详细日志
 		}
 		if isStop {
+			// 更新 finishReason：从 response.Choices 或 geminiResponse.Candidates 获取正确的 finishReason
+			if len(response.Choices) > 0 && response.Choices[0].FinishReason != nil {
+				finishReason = *response.Choices[0].FinishReason
+			} else if len(geminiResponse.Candidates) > 0 && geminiResponse.Candidates[0].FinishReason != nil {
+				// 如果 response.Choices 中没有 finishReason，从原始 Gemini 响应中获取
+				geminiFinishReason := *geminiResponse.Candidates[0].FinishReason
+				switch geminiFinishReason {
+				case "STOP":
+					finishReason = constant.FinishReasonStop
+				case "MAX_TOKENS":
+					finishReason = constant.FinishReasonLength
+				default:
+					finishReason = constant.FinishReasonContentFilter
+				}
+			}
+
 			// 在最后一个响应块中提取图片和文本输出 tokens
 			var imageOutputTokens int
 			var textOutputTokens int
@@ -1440,32 +1489,38 @@ func GeminiChatStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *
 					},
 				}
 				thoughtResponse.Choices[0].Delta.SetReasoningContent(strings.Join(accumulatedThoughts, "\n"))
-				common.SysLog(fmt.Sprintf("[Gemini] 发送累积的思考内容，共 %d 条，总长度 %d 字符",
-					len(accumulatedThoughts), len(strings.Join(accumulatedThoughts, "\n"))))
 				_ = handleStream(c, info, thoughtResponse)
 				thoughtsSent = true
-			} else if hasThoughtsTokenCount && totalThoughtsTokenCount > 0 && len(accumulatedThoughts) == 0 && !thoughtsSent {
-				// 如果有 thoughtsTokenCount 但没有累积到思考内容，记录详细日志用于分析
-				common.SysLog(fmt.Sprintf(
-					"[GeminiStreamDebug] model=%s 最终统计: hasThoughtsTokenCount=%v, totalThoughtsTokenCount=%d, accumulatedThoughts=%d, thoughtsSent=%v",
-					info.UpstreamModelName, hasThoughtsTokenCount, totalThoughtsTokenCount, len(accumulatedThoughts), thoughtsSent,
-				))
-				common.SysLog(fmt.Sprintf(
-					"[GeminiStreamDebug] model=%s Google API 进行了思考（thoughtsTokenCount=%d），但没有返回思考内容（parts:null）。这是 Google API 的已知问题。",
-					info.UpstreamModelName, totalThoughtsTokenCount,
-				))
 			}
 
-			if len(response.Choices) > 0 {
-				_ = handleStream(c, info, helper.GenerateStopResponse(id, createAt, info.UpstreamModelName, finishReason))
+			// 发送 stop 响应：按照标准 OpenAI 格式，应该在最后一个内容 chunk 之后发送
+			// 标准格式：最后一个内容 chunk -> 空的 content chunk -> stop chunk (delta={}, finish_reason) -> usage chunk (choices=[], usage)
+			// 特别处理：如果 Parts 是 null 但有 finishReason，也应该发送 stop
+			hasPartsNullButFinishReason := false
+			if len(geminiResponse.Candidates) > 0 {
+				for _, candidate := range geminiResponse.Candidates {
+					if candidate.FinishReason != nil && candidate.Content.Parts == nil {
+						hasPartsNullButFinishReason = true
+						break
+					}
+				}
+			}
+
+			// 如果之前发送过内容，按照标准格式发送 stop 响应
+			if len(response.Choices) > 0 || info.SendResponseCount > 0 || hasPartsNullButFinishReason {
+				stopResponse := helper.GenerateStopResponse(id, createAt, info.UpstreamModelName, finishReason)
+				_ = handleStream(c, info, stopResponse)
 			}
 		}
 		return true
 	})
 
+	// 空响应判断：需要考虑思考内容的情况
+	// 如果发送过思考内容，即使没有普通文本内容，也不应该被认为是空响应
+	hasAnyContent := responseText.Len() > 0 || sentToolCallContent || thoughtsSent
 	isEmptyResponse := (info.SendResponseCount == 0) ||
-		(responseText.Len() == 0 && info.SendResponseCount <= 1) ||
-		(responseText.Len() == 0 && !sentToolCallContent)
+		(!hasAnyContent && info.SendResponseCount <= 1) ||
+		(!hasAnyContent && !sentToolCallContent)
 	if isEmptyResponse {
 		reqBody, _ := c.Get("gemini_request_body")
 		truncatedReq := common.TruncateJsonValues(fmt.Sprintf("%v", reqBody))
@@ -1508,10 +1563,16 @@ func GeminiChatStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *
 		}
 	}
 
+	// 检查是否有截断情况（finishReason 是 MAX_TOKENS 但内容很短）
+	if finishReason == constant.FinishReasonLength && responseText.Len() < 100 {
+		logger.LogWarn(c, fmt.Sprintf("[Gemini] model=%s 响应可能被截断! finishReason=length, 响应文本长度=%d, 建议增加 max_tokens 值",
+			info.UpstreamModelName, responseText.Len()))
+	}
+
 	response := helper.GenerateFinalUsageResponse(id, createAt, info.UpstreamModelName, *usage)
 	err := handleFinalStream(c, info, response)
 	if err != nil {
-		common.SysLog("send final response failed: " + err.Error())
+		logger.LogError(c, "send final response failed: "+err.Error())
 	}
 	//if info.RelayFormat == relaycommon.RelayFormatOpenAI {
 	//	helper.Done(c)

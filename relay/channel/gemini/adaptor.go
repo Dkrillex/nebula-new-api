@@ -516,7 +516,7 @@ func (a *Adaptor) GetRequestURL(info *relaycommon.RelayInfo) (string, error) {
 
 	// 使用 Google 官方 OpenAI 兼容端点（协议适配器）：仅当请求来自 OpenAI 风格路径时使用，请求体保持 OpenAI 格式
 	useCompat := model_setting.GetGeminiSettings().UseOpenAICompatibleEndpoint
-	common.SysLog(fmt.Sprintf("[Gemini] GetRequestURL: UseOpenAICompatibleEndpoint=%v, ChannelBaseUrl=%s", useCompat, info.ChannelBaseUrl))
+	common.SysLog(fmt.Sprintf("[Gemini] GetRequestURL: model=%s, UseOpenAICompatibleEndpoint=%v, ChannelBaseUrl=%s", info.UpstreamModelName, useCompat, info.ChannelBaseUrl))
 	if useCompat && info.RelayMode == constant.RelayModeChatCompletions {
 		info.UseGeminiOpenAICompatibleEndpoint = true
 		baseURL := strings.TrimSuffix(strings.TrimSpace(info.ChannelBaseUrl), "/")
@@ -525,7 +525,7 @@ func (a *Adaptor) GetRequestURL(info *relaycommon.RelayInfo) (string, error) {
 			const publishersGoogle = "/publishers/google"
 			if idx := strings.LastIndex(baseURL, publishersGoogle); idx != -1 {
 				baseURL = baseURL[:idx] + "/endpoints/openapi/chat/completions"
-				common.SysLog(fmt.Sprintf("[Gemini] 使用 OpenAI 兼容端点 URL: %s", baseURL))
+				common.SysLog(fmt.Sprintf("[Gemini] 模型 %s 使用 OpenAI 兼容端点 URL: %s", info.UpstreamModelName, baseURL))
 				return baseURL, nil
 			}
 		}
@@ -535,11 +535,11 @@ func (a *Adaptor) GetRequestURL(info *relaycommon.RelayInfo) (string, error) {
 				baseURL = "https://" + baseURL
 			}
 			url := fmt.Sprintf("%s/v1beta/openai/chat/completions", strings.TrimSuffix(baseURL, "/"))
-			common.SysLog(fmt.Sprintf("[Gemini] 使用 OpenAI 兼容端点 URL: %s", url))
+			common.SysLog(fmt.Sprintf("[Gemini] 模型 %s 使用 OpenAI 兼容端点 URL: %s", info.UpstreamModelName, url))
 			return url, nil
 		}
 		// 无法推导 openapi base 时不启用兼容端点
-		common.SysLog("[Gemini] 无法从 ChannelBaseUrl 推导 OpenAI 兼容端点，回退到原生端点")
+		common.SysLog(fmt.Sprintf("[Gemini] 模型 %s 无法从 ChannelBaseUrl 推导 OpenAI 兼容端点，回退到原生端点", info.UpstreamModelName))
 		info.UseGeminiOpenAICompatibleEndpoint = false
 	}
 
@@ -550,7 +550,18 @@ func (a *Adaptor) GetRequestURL(info *relaycommon.RelayInfo) (string, error) {
 			info.DisablePing = true
 		}
 	}
-	return fmt.Sprintf("%s/%s/models/%s:%s", info.ChannelBaseUrl, version, info.UpstreamModelName, action), nil
+
+	// 如果 ChannelBaseUrl 为空，使用默认的 Google AI Studio 端点（支持返回思考内容）
+	baseURL := strings.TrimSpace(info.ChannelBaseUrl)
+	if baseURL == "" || baseURL == "/" {
+		// 默认使用 Google AI Studio 端点，支持返回思考内容
+		baseURL = "https://generativelanguage.googleapis.com"
+		common.SysLog(fmt.Sprintf("[Gemini] 模型 %s ChannelBaseUrl 为空，使用默认 Google AI Studio 端点: %s", info.UpstreamModelName, baseURL))
+	}
+
+	nativeURL := fmt.Sprintf("%s/%s/models/%s:%s", baseURL, version, info.UpstreamModelName, action)
+	common.SysLog(fmt.Sprintf("[Gemini] 模型 %s 使用原生端点 URL: %s", info.UpstreamModelName, nativeURL))
+	return nativeURL, nil
 }
 
 func (a *Adaptor) SetupRequestHeader(c *gin.Context, req *http.Header, info *relaycommon.RelayInfo) error {
