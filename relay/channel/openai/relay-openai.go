@@ -19,6 +19,7 @@ import (
 	"one-api/service"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	"one-api/types"
@@ -34,6 +35,15 @@ func sendStreamData(c *gin.Context, info *relaycommon.RelayInfo, data string, fo
 		return nil
 	}
 
+	type toolCallAcc struct {
+		Key       string
+		ID        string
+		Index     *int
+		Type      any
+		Name      string
+		Arguments string
+	}
+
 	var lastStreamResponse dto.ChatCompletionsStreamResponse
 	if err := common.UnmarshalJsonStr(data, &lastStreamResponse); err != nil {
 		// 如果解析失败，直接透传（可能是非 JSON 格式的数据）
@@ -46,7 +56,7 @@ func sendStreamData(c *gin.Context, info *relaycommon.RelayInfo, data string, fo
 	// 检查是否包含工具调用的增量参数（有 tool_calls 但没有 finish_reason: "tool_calls"）
 	hasIncrementalToolCalls := false
 	for _, choice := range lastStreamResponse.Choices {
-		if choice.Delta.ToolCalls != nil && len(choice.Delta.ToolCalls) > 0 {
+		if len(choice.Delta.ToolCalls) > 0 {
 			// 检查是否有 finish_reason，如果没有或者是空，说明是增量参数
 			if choice.FinishReason == nil || *choice.FinishReason == "" {
 				hasIncrementalToolCalls = true
@@ -60,36 +70,51 @@ func sendStreamData(c *gin.Context, info *relaycommon.RelayInfo, data string, fo
 		// 从 gin.Context 获取工具调用累积状态
 		toolCallsKey := "tool_calls_accumulator"
 		toolCallsVal, exists := c.Get(toolCallsKey)
-		var toolCallsAccumulator map[string]map[string]string // map[toolCallID]map["name"|"arguments"]string
+		var toolCallsAccumulator map[string]*toolCallAcc // map[key]*toolCallAcc
 
 		if !exists {
-			toolCallsAccumulator = make(map[string]map[string]string)
+			toolCallsAccumulator = make(map[string]*toolCallAcc)
 		} else {
-			toolCallsAccumulator, _ = toolCallsVal.(map[string]map[string]string)
+			toolCallsAccumulator, _ = toolCallsVal.(map[string]*toolCallAcc)
 			if toolCallsAccumulator == nil {
-				toolCallsAccumulator = make(map[string]map[string]string)
+				toolCallsAccumulator = make(map[string]*toolCallAcc)
 			}
 		}
 
 		// 累积工具调用参数
 		for _, choice := range lastStreamResponse.Choices {
-			if choice.Delta.ToolCalls != nil {
-				for _, toolCall := range choice.Delta.ToolCalls {
-					if toolCall.ID != "" {
-						toolCallID := toolCall.ID
-						if toolCallsAccumulator[toolCallID] == nil {
-							toolCallsAccumulator[toolCallID] = make(map[string]string)
-						}
-						if toolCall.Function.Name != "" {
-							toolCallsAccumulator[toolCallID]["name"] = toolCall.Function.Name
-						}
-						if toolCall.Function.Arguments != "" {
-							// 累积参数
-							currentArgs := toolCallsAccumulator[toolCallID]["arguments"]
-							currentArgs += toolCall.Function.Arguments
-							toolCallsAccumulator[toolCallID]["arguments"] = currentArgs
-						}
-					}
+			for _, toolCall := range choice.Delta.ToolCalls {
+				key := ""
+				// 以 index 为主键更稳定：同一个 tool_call 会被拆分成多段输出，但 index 保持一致；
+				// id/name/arguments 可能分散在不同 chunk，甚至某些段里 id 为空。
+				if toolCall.Index != nil {
+					key = fmt.Sprintf("idx_%d", *toolCall.Index)
+				} else if toolCall.ID != "" {
+					key = toolCall.ID
+				}
+				if key == "" {
+					continue
+				}
+				acc := toolCallsAccumulator[key]
+				if acc == nil {
+					acc = &toolCallAcc{Key: key}
+					toolCallsAccumulator[key] = acc
+				}
+				// 记录基本信息（尽可能补全）
+				if toolCall.ID != "" {
+					acc.ID = toolCall.ID
+				}
+				if toolCall.Index != nil {
+					acc.Index = toolCall.Index
+				}
+				if toolCall.Type != nil {
+					acc.Type = toolCall.Type
+				}
+				if toolCall.Function.Name != "" {
+					acc.Name = toolCall.Function.Name
+				}
+				if toolCall.Function.Arguments != "" {
+					acc.Arguments += toolCall.Function.Arguments
 				}
 			}
 		}
@@ -115,26 +140,91 @@ func sendStreamData(c *gin.Context, info *relaycommon.RelayInfo, data string, fo
 		toolCallsKey := "tool_calls_accumulator"
 		toolCallsVal, exists := c.Get(toolCallsKey)
 		if exists {
-			toolCallsAccumulator, ok := toolCallsVal.(map[string]map[string]string)
+			toolCallsAccumulator, ok := toolCallsVal.(map[string]*toolCallAcc)
 			if ok && toolCallsAccumulator != nil {
+				// 一些上游在 finish_reason: "tool_calls" 的 chunk 中不会再带 delta.tool_calls
+				// 我们需要把之前累积的 tool_calls 合成并注入到当前 chunk，确保客户端能拿到完整 tool_calls。
+
+				buildToolCallsFromAcc := func() []dto.ToolCallResponse {
+					if len(toolCallsAccumulator) == 0 {
+						return nil
+					}
+					keys := make([]string, 0, len(toolCallsAccumulator))
+					for k := range toolCallsAccumulator {
+						keys = append(keys, k)
+					}
+					sort.Strings(keys)
+					out := make([]dto.ToolCallResponse, 0, len(keys))
+					for _, k := range keys {
+						acc := toolCallsAccumulator[k]
+						if acc == nil {
+							continue
+						}
+						tcType := acc.Type
+						if tcType == nil {
+							tcType = "function"
+						}
+						tc := dto.ToolCallResponse{
+							ID:   acc.ID,
+							Type: tcType,
+							Function: dto.FunctionResponse{
+								Name:      acc.Name,
+								Arguments: acc.Arguments,
+							},
+						}
+						if acc.Index != nil {
+							tc.SetIndex(*acc.Index)
+						}
+						out = append(out, tc)
+					}
+					return out
+				}
+
+				// 若当前 chunk 完全没有 tool_calls，则注入到第一个 choice（以及所有 choice，保持一致性）
+				needInject := true
+				for _, choice := range lastStreamResponse.Choices {
+					if len(choice.Delta.ToolCalls) > 0 {
+						needInject = false
+						break
+					}
+				}
+				if needInject {
+					injected := buildToolCallsFromAcc()
+					if len(injected) > 0 {
+						for i := range lastStreamResponse.Choices {
+							lastStreamResponse.Choices[i].Delta.ToolCalls = injected
+						}
+					}
+				}
+
 				// 合并累积的参数到响应中
 				for i, choice := range lastStreamResponse.Choices {
-					if choice.Delta.ToolCalls != nil {
-						for j, toolCall := range choice.Delta.ToolCalls {
-							if toolCall.ID != "" {
-								toolCallID := toolCall.ID
-								if acc, ok := toolCallsAccumulator[toolCallID]; ok {
-									// 使用累积的参数
-									if accArgs, ok := acc["arguments"]; ok && accArgs != "" {
-										lastStreamResponse.Choices[i].Delta.ToolCalls[j].Function.Arguments = accArgs
-									}
-									// 确保 name 也设置（如果之前没有）
-									if toolCall.Function.Name == "" {
-										if accName, ok := acc["name"]; ok && accName != "" {
-											lastStreamResponse.Choices[i].Delta.ToolCalls[j].Function.Name = accName
-										}
-									}
-								}
+					for j, toolCall := range choice.Delta.ToolCalls {
+						key := ""
+						if toolCall.Index != nil {
+							key = fmt.Sprintf("idx_%d", *toolCall.Index)
+						} else if toolCall.ID != "" {
+							key = toolCall.ID
+						}
+						if key == "" {
+							continue
+						}
+						if acc, ok := toolCallsAccumulator[key]; ok && acc != nil {
+							// 使用累积的参数
+							if acc.Arguments != "" {
+								lastStreamResponse.Choices[i].Delta.ToolCalls[j].Function.Arguments = acc.Arguments
+							}
+							// 确保 name 也设置（如果之前没有）
+							if toolCall.Function.Name == "" && acc.Name != "" {
+								lastStreamResponse.Choices[i].Delta.ToolCalls[j].Function.Name = acc.Name
+							}
+							// 确保 type 也设置
+							if lastStreamResponse.Choices[i].Delta.ToolCalls[j].Type == nil && acc.Type != nil {
+								lastStreamResponse.Choices[i].Delta.ToolCalls[j].Type = acc.Type
+							}
+							// 确保 id 也设置（index-only 的情况）
+							if lastStreamResponse.Choices[i].Delta.ToolCalls[j].ID == "" && acc.ID != "" {
+								lastStreamResponse.Choices[i].Delta.ToolCalls[j].ID = acc.ID
 							}
 						}
 					}
@@ -187,7 +277,7 @@ func sendStreamData(c *gin.Context, info *relaycommon.RelayInfo, data string, fo
 		}
 	}
 
-	if lastStreamResponse.Choices == nil || len(lastStreamResponse.Choices) == 0 {
+	if len(lastStreamResponse.Choices) == 0 {
 		return helper.ObjectData(c, lastStreamResponse)
 	}
 
@@ -784,7 +874,7 @@ func OpenaiHandlerWithUsage(c *gin.Context, info *relaycommon.RelayInfo, resp *h
 	// 对于 gpt-image-1，特殊处理 tokens 提取
 	if strings.HasPrefix(info.UpstreamModelName, "gpt-image-1") {
 		if common.DebugEnabled {
-			logger.LogDebug(c, fmt.Sprintf("[OpenaiHandlerWithUsage] 检测到 gpt-image-1 模型，开始特殊处理"))
+			logger.LogDebug(c, "[OpenaiHandlerWithUsage] 检测到 gpt-image-1 模型，开始特殊处理")
 		}
 
 		// 如果没有 InputTokensDetails，需要估算
@@ -823,12 +913,12 @@ func OpenaiHandlerWithUsage(c *gin.Context, info *relaycommon.RelayInfo, resp *h
 			}
 		} else {
 			if common.DebugEnabled {
-				logger.LogDebug(c, fmt.Sprintf("[OpenaiHandlerWithUsage] gpt-image-1 CompletionTokens 为 0，未设置 gpt_image_output_tokens"))
+				logger.LogDebug(c, "[OpenaiHandlerWithUsage] gpt-image-1 CompletionTokens 为 0，未设置 gpt_image_output_tokens")
 			}
 		}
 	} else {
 		if common.DebugEnabled {
-			logger.LogDebug(c, fmt.Sprintf("[OpenaiHandlerWithUsage] 非 gpt-image-1 模型，跳过特殊处理"))
+			logger.LogDebug(c, "[OpenaiHandlerWithUsage] 非 gpt-image-1 模型，跳过特殊处理")
 		}
 	}
 
