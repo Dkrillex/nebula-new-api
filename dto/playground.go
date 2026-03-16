@@ -74,6 +74,16 @@ func (r *SyncImageGenerationRequest) UnmarshalJSON(data []byte) error {
 	}
 	common.SysLog(fmt.Sprintf("[SyncImageGenerationRequest] UnmarshalJSON 收到的所有字段: %v", allKeys))
 
+	// 兼容前端使用驼峰写法的 responseFormat -> 统一映射到 response_format
+	if v, ok := rawMap["responseFormat"]; ok {
+		if _, exists := rawMap["response_format"]; !exists {
+			rawMap["response_format"] = v
+			common.SysLog("[SyncImageGenerationRequest] 兼容字段: responseFormat -> response_format")
+		}
+		// 保证后续 Extra 中不再出现重复的 responseFormat
+		delete(rawMap, "responseFormat")
+	}
+
 	// 定义已知字段
 	knownFields := map[string]struct{}{
 		"user_id":         {},
@@ -92,7 +102,12 @@ func (r *SyncImageGenerationRequest) UnmarshalJSON(data []byte) error {
 	// 正常解析已定义字段
 	type Alias SyncImageGenerationRequest
 	var known Alias
-	if err := json.Unmarshal(data, &known); err != nil {
+	// 使用规范化后的 rawMap 重新反序列化，确保兼容字段能正确映射
+	normalized, err := json.Marshal(rawMap)
+	if err != nil {
+		return err
+	}
+	if err := json.Unmarshal(normalized, &known); err != nil {
 		return err
 	}
 	*r = SyncImageGenerationRequest(known)
@@ -127,6 +142,15 @@ func (r *SyncVideoGenerationRequest) UnmarshalJSON(data []byte) error {
 		return err
 	}
 
+	// 兼容前端使用驼峰写法的 responseFormat -> 统一映射到 response_format
+	if v, ok := rawMap["responseFormat"]; ok {
+		if _, exists := rawMap["response_format"]; !exists {
+			rawMap["response_format"] = v
+			common.SysLog("[SyncVideoGenerationRequest] 兼容字段: responseFormat -> response_format")
+		}
+		delete(rawMap, "responseFormat")
+	}
+
 	// 定义已知字段
 	knownFields := map[string]struct{}{
 		"user_id":         {},
@@ -146,7 +170,11 @@ func (r *SyncVideoGenerationRequest) UnmarshalJSON(data []byte) error {
 	// 正常解析已定义字段
 	type Alias SyncVideoGenerationRequest
 	var known Alias
-	if err := json.Unmarshal(data, &known); err != nil {
+	normalized, err := json.Marshal(rawMap)
+	if err != nil {
+		return err
+	}
+	if err := json.Unmarshal(normalized, &known); err != nil {
 		return err
 	}
 	*r = SyncVideoGenerationRequest(known)

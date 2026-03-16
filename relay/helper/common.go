@@ -156,6 +156,8 @@ func GenerateStartEmptyResponse(id string, createAt int64, model string, systemF
 }
 
 func GenerateStopResponse(id string, createAt int64, model string, finishReason string) *dto.ChatCompletionsStreamResponse {
+	// 标准 OpenAI 格式：stop 响应的 delta 应该是空对象 {}，只有 finish_reason
+	// 确保 Delta 是空的（所有字段都是 nil/空），JSON 序列化时会变成 {}
 	return &dto.ChatCompletionsStreamResponse{
 		Id:                id,
 		Object:            "chat.completion.chunk",
@@ -164,6 +166,8 @@ func GenerateStopResponse(id string, createAt int64, model string, finishReason 
 		SystemFingerprint: nil,
 		Choices: []dto.ChatCompletionsStreamResponseChoice{
 			{
+				Index:        0,
+				Delta:        dto.ChatCompletionsStreamResponseChoiceDelta{}, // 空的 delta，序列化为 {}
 				FinishReason: &finishReason,
 			},
 		},

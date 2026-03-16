@@ -22,6 +22,15 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
+// getMapKeys 获取 map 的所有 key（用于调试）
+func getMapKeys(m map[string]interface{}) []string {
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	return keys
+}
+
 func isNoThinkingRequest(req *dto.GeminiChatRequest) bool {
 	if req.GenerationConfig.ThinkingConfig != nil && req.GenerationConfig.ThinkingConfig.ThinkingBudget != nil {
 		configBudget := req.GenerationConfig.ThinkingConfig.ThinkingBudget
@@ -143,7 +152,9 @@ func GeminiHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *typ
 		if err != nil {
 			return types.NewErrorWithStatusCode(err, types.ErrorCodeReadRequestBodyFailed, http.StatusBadRequest, types.ErrOptionWithSkipRetry())
 		}
+		c.Set("gemini_request_body", string(body))
 		requestBody = bytes.NewReader(body)
+		common.SysLog(fmt.Sprintf("[Gemini] 模型 %s 使用透传模式，跳过 ThinkingConfig 序列化验证", info.UpstreamModelName))
 	} else {
 		// 使用 ConvertGeminiRequest 转换请求格式
 		convertedRequest, err := adaptor.ConvertGeminiRequest(c, info, request)
@@ -166,6 +177,64 @@ func GeminiHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *typ
 		truncatedBody := common.TruncateJsonValues(string(jsonData))
 		logger.LogDebug(c, "Gemini request body: "+truncatedBody)
 
+		// 记录 ThinkingConfig 配置（用于调试思考功能）
+		if request.GenerationConfig.ThinkingConfig != nil {
+			thinkingConfigStr := ""
+			if request.GenerationConfig.ThinkingConfig.ThinkingLevel != "" {
+				thinkingConfigStr = fmt.Sprintf("thinkingLevel=%s", request.GenerationConfig.ThinkingConfig.ThinkingLevel)
+			}
+			if request.GenerationConfig.ThinkingConfig.ThinkingBudget != nil {
+				if thinkingConfigStr != "" {
+					thinkingConfigStr += ", "
+				}
+				thinkingConfigStr += fmt.Sprintf("thinkingBudget=%d", *request.GenerationConfig.ThinkingConfig.ThinkingBudget)
+			}
+			if request.GenerationConfig.ThinkingConfig.IncludeThoughts {
+				if thinkingConfigStr != "" {
+					thinkingConfigStr += ", "
+				}
+				thinkingConfigStr += "includeThoughts=true"
+			}
+			common.SysLog(fmt.Sprintf("[Gemini] 模型 %s 发送请求时的 ThinkingConfig: %s", info.UpstreamModelName, thinkingConfigStr))
+
+			// 检查序列化后的 JSON 中是否包含 thinkingConfig
+			jsonStr := string(jsonData)
+			common.SysLog(fmt.Sprintf("[Gemini] 模型 %s 序列化后的 JSON 长度: %d, 包含 thinkingConfig: %v, 包含 thinking_config: %v",
+				info.UpstreamModelName, len(jsonStr), strings.Contains(jsonStr, "thinkingConfig"), strings.Contains(jsonStr, "thinking_config")))
+
+			if strings.Contains(jsonStr, "thinkingConfig") || strings.Contains(jsonStr, "thinking_config") {
+				// 提取 thinkingConfig 部分
+				var jsonMap map[string]interface{}
+				if err := common.Unmarshal(jsonData, &jsonMap); err == nil {
+					if genConfig, ok := jsonMap["generationConfig"].(map[string]interface{}); ok {
+						if thinkingConfig, ok := genConfig["thinkingConfig"].(map[string]interface{}); ok {
+							thinkingConfigJson, _ := common.Marshal(thinkingConfig)
+							common.SysLog(fmt.Sprintf("[Gemini] 模型 %s 序列化后的 thinkingConfig JSON: %s", info.UpstreamModelName, string(thinkingConfigJson)))
+						} else {
+							common.SysLog(fmt.Sprintf("[Gemini] WARNING: 模型 %s 序列化后的 JSON 中 generationConfig 没有 thinkingConfig 字段！generationConfig keys: %v",
+								info.UpstreamModelName, getMapKeys(genConfig)))
+						}
+					} else {
+						common.SysLog(fmt.Sprintf("[Gemini] WARNING: 模型 %s 序列化后的 JSON 中没有 generationConfig 字段！Top-level keys: %v",
+							info.UpstreamModelName, getMapKeys(jsonMap)))
+					}
+				} else {
+					common.SysLog(fmt.Sprintf("[Gemini] WARNING: 模型 %s 无法解析序列化后的 JSON: %v", info.UpstreamModelName, err))
+				}
+			} else {
+				// 显示 JSON 的前 500 个字符以便调试
+				preview := jsonStr
+				if len(preview) > 500 {
+					preview = preview[:500] + "..."
+				}
+				common.SysLog(fmt.Sprintf("[Gemini] WARNING: 模型 %s 序列化后的 JSON 中没有 thinkingConfig 或 thinking_config 字段！JSON 预览: %s",
+					info.UpstreamModelName, preview))
+			}
+		} else {
+			common.SysLog(fmt.Sprintf("[Gemini] 模型 %s 发送请求时没有 ThinkingConfig", info.UpstreamModelName))
+		}
+
+		c.Set("gemini_request_body", string(jsonData))
 		requestBody = bytes.NewReader(jsonData)
 	}
 
@@ -195,7 +264,13 @@ func GeminiHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *typ
 		return openaiErr
 	}
 
-	postConsumeQuota(c, info, usage.(*dto.Usage), "")
+	extraContent := ""
+	if v, ok := c.Get("gemini_empty_response_extra"); ok {
+		if s, ok := v.(string); ok {
+			extraContent = s
+		}
+	}
+	postConsumeQuota(c, info, usage.(*dto.Usage), extraContent)
 	return nil
 }
 
@@ -290,7 +365,7 @@ func GeminiEmbeddingHandler(c *gin.Context, info *relaycommon.RelayInfo) (newAPI
 		}
 		common.SysLog(fmt.Sprintf("[Vertex][Embedding] Converted request body: %s", string(jsonData)))
 	} else {
-		common.SysLog(fmt.Sprintf("[GeminiEmbedding] Using Gemini native format (not Vertex)"))
+		common.SysLog("[GeminiEmbedding] Using Gemini native format (not Vertex)")
 		jsonData, err = common.Marshal(req)
 		if err != nil {
 			return types.NewError(err, types.ErrorCodeConvertRequestFailed, types.ErrOptionWithSkipRetry())

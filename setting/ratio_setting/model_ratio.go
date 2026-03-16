@@ -384,6 +384,7 @@ type MultiModalPricing struct {
 var defaultImageModelPricePerImage = map[string]float64{
 	"qwen-image-plus":                 0.0246575,
 	"doubao-seedream-4-0-250828":      0.0247,
+	"doubao-seedream-5-0-260128":      0.035, // Seedream 5.0，官方按张计费 $0.035/张，见火山方舟「模型价格」文档
 	"qwen-image-edit-plus":            0.0246575,
 	"qwen-image-edit-plus-2025-10-30": 0.0246575,
 }
