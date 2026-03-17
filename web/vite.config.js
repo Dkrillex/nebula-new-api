@@ -71,14 +71,30 @@ export default defineConfig({
       '/api': {
         target: 'http://localhost:3003',
         changeOrigin: true,
+        // 新增：添加自定义请求头
+        configure: (proxy) => {
+          proxy.on('proxyReq', (proxyReq) => {
+            proxyReq.setHeader('X-Oem-Code', 'nebulaData');
+          });
+        }
       },
       '/mj': {
         target: 'http://localhost:3003',
         changeOrigin: true,
+        configure: (proxy) => {
+          proxy.on('proxyReq', (proxyReq) => {
+            proxyReq.setHeader('X-Oem-Code', 'nebulaData');
+          });
+        }
       },
       '/pg': {
         target: 'http://localhost:3003',
         changeOrigin: true,
+        configure: (proxy) => {
+          proxy.on('proxyReq', (proxyReq) => {
+            proxyReq.setHeader('X-Oem-Code', 'nebulaData');
+          });
+        }
       },
     },
   },
