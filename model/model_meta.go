@@ -1,9 +1,12 @@
 package model
 
 import (
+	"fmt"
 	"one-api/common"
+	"one-api/setting/ratio_setting"
 	"strconv"
 
+	"github.com/bytedance/gopkg/util/gopool"
 	"gorm.io/gorm"
 )
 
@@ -36,8 +39,8 @@ type Model struct {
 	VendorID      int            `json:"vendor_id,omitempty" gorm:"index"`
 	Endpoints     string         `json:"endpoints,omitempty" gorm:"type:text"`
 	Status        int            `json:"status" gorm:"default:1"`
-	Flag          int            `json:"flag" gorm:"default:1"`           // 模型广场展示标识：0-无 1-新发布 2-最先进 3-火爆
-	SortOrder     int            `json:"sort_order" gorm:"default:1"`     // 排序值，越小优先级越高
+	Flag          int            `json:"flag" gorm:"default:1"`       // 模型广场展示标识：0-无 1-新发布 2-最先进 3-火爆
+	SortOrder     int            `json:"sort_order" gorm:"default:1"` // 排序值，越小优先级越高
 	SyncOfficial  int            `json:"sync_official" gorm:"default:1"`
 	CreatedTime   int64          `json:"created_time" gorm:"bigint"`
 	UpdatedTime   int64          `json:"updated_time" gorm:"bigint"`
@@ -56,7 +59,21 @@ func (mi *Model) Insert() error {
 	now := common.GetTimestamp()
 	mi.CreatedTime = now
 	mi.UpdatedTime = now
-	return DB.Create(mi).Error
+	err := DB.Create(mi).Error
+	if err == nil {
+		// 数据库操作成功，异步删除并立即更新缓存，确保下次访问时获取最新数据
+		// 使用 recover 确保缓存更新失败不影响主业务逻辑
+		gopool.Go(func() {
+			defer func() {
+				if r := recover(); r != nil {
+					common.SysLog("failed to refresh cache after model insert: " + fmt.Sprintf("%v", r))
+				}
+			}()
+			ratio_setting.RefreshExposedDataCache()
+			RefreshPricing()
+		})
+	}
+	return err
 }
 
 func IsModelNameDuplicated(id int, name string) (bool, error) {
@@ -92,11 +109,39 @@ func (mi *Model) Update() error {
 		"flag":            mi.Flag,
 		"sort_order":      mi.SortOrder,
 	}
-	return DB.Model(&Model{}).Where("id = ?", mi.Id).Updates(updates).Error
+	err := DB.Model(&Model{}).Where("id = ?", mi.Id).Updates(updates).Error
+	if err == nil {
+		// 数据库操作成功，异步删除并立即更新缓存，确保下次访问时获取最新数据
+		// 使用 recover 确保缓存更新失败不影响主业务逻辑
+		gopool.Go(func() {
+			defer func() {
+				if r := recover(); r != nil {
+					common.SysLog("failed to refresh cache after model update: " + fmt.Sprintf("%v", r))
+				}
+			}()
+			ratio_setting.RefreshExposedDataCache()
+			RefreshPricing()
+		})
+	}
+	return err
 }
 
 func (mi *Model) Delete() error {
-	return DB.Delete(mi).Error
+	err := DB.Delete(mi).Error
+	if err == nil {
+		// 数据库操作成功，异步删除并立即更新缓存，确保下次访问时获取最新数据
+		// 使用 recover 确保缓存更新失败不影响主业务逻辑
+		gopool.Go(func() {
+			defer func() {
+				if r := recover(); r != nil {
+					common.SysLog("failed to refresh cache after model delete: " + fmt.Sprintf("%v", r))
+				}
+			}()
+			ratio_setting.RefreshExposedDataCache()
+			RefreshPricing()
+		})
+	}
+	return err
 }
 
 func GetVendorModelCounts() (map[int64]int64, error) {

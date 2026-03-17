@@ -1335,12 +1335,32 @@ func GeminiChatStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *
 				usage.PromptTokensDetails.CachedTokens = geminiResponse.UsageMetadata.CachedContentTokenCount
 			}
 
+			// 处理输入 tokens 详情
 			for _, detail := range geminiResponse.UsageMetadata.PromptTokensDetails {
 				if detail.Modality == "AUDIO" {
 					usage.PromptTokensDetails.AudioTokens = detail.TokenCount
 				} else if detail.Modality == "TEXT" {
 					usage.PromptTokensDetails.TextTokens = detail.TokenCount
 				}
+			}
+
+			// 处理输出 tokens 详情（从 CandidatesTokensDetails 中提取 text_tokens）
+			var textOutputTokens int
+			for _, detail := range geminiResponse.UsageMetadata.CandidatesTokensDetails {
+				if detail.Modality == "TEXT" {
+					textOutputTokens += detail.TokenCount
+				}
+			}
+			// 设置 text_tokens：completion_tokens - reasoning_tokens
+			// 如果 CandidatesTokensDetails 中有 TEXT，使用它；否则计算差值
+			if textOutputTokens > 0 {
+				usage.CompletionTokenDetails.TextTokens = textOutputTokens
+			} else if usage.CompletionTokens > 0 && usage.CompletionTokenDetails.ReasoningTokens > 0 {
+				// 如果没有 CandidatesTokensDetails，通过计算得出：text_tokens = completion_tokens - reasoning_tokens
+				usage.CompletionTokenDetails.TextTokens = usage.CompletionTokens - usage.CompletionTokenDetails.ReasoningTokens
+			} else if usage.CompletionTokens > 0 {
+				// 如果没有 reasoning_tokens，则所有 completion_tokens 都是 text_tokens
+				usage.CompletionTokenDetails.TextTokens = usage.CompletionTokens
 			}
 		}
 		logger.LogDebug(c, fmt.Sprintf("info.SendResponseCount = %d", info.SendResponseCount))
@@ -1471,6 +1491,16 @@ func GeminiChatStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *
 			if imageOutputTokens > 0 || textOutputTokens > 0 {
 				c.Set("gemini_image_output_tokens", imageOutputTokens)
 				c.Set("gemini_text_output_tokens", textOutputTokens)
+			}
+			// 更新 usage 中的 text_tokens（确保最后一个 chunk 使用最完整的数据）
+			if textOutputTokens > 0 {
+				usage.CompletionTokenDetails.TextTokens = textOutputTokens
+			} else if usage.CompletionTokens > 0 && usage.CompletionTokenDetails.ReasoningTokens > 0 {
+				// 如果没有 CandidatesTokensDetails，通过计算得出：text_tokens = completion_tokens - reasoning_tokens
+				usage.CompletionTokenDetails.TextTokens = usage.CompletionTokens - usage.CompletionTokenDetails.ReasoningTokens
+			} else if usage.CompletionTokens > 0 {
+				// 如果没有 reasoning_tokens，则所有 completion_tokens 都是 text_tokens
+				usage.CompletionTokenDetails.TextTokens = usage.CompletionTokens
 			}
 
 			// 只在真正有思考内容时才发送，如果没有思考内容就不显示

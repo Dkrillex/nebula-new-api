@@ -185,6 +185,8 @@ const LoginForm = () => {
           {
             username,
             password,
+            // LLM 控制台登录：与 Java 管理端一致，通过请求体 skipOemCheck 控制跳过 OEM 验证
+            skipOemCheck: true,
           },
         );
         const { success, message, data } = res.data;

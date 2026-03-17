@@ -8,7 +8,7 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-const exposedDataTTL = 30 * time.Second
+const exposedDataTTL = 30 * time.Second // 保持原有30秒失效时间
 
 type exposedCache struct {
 	data      gin.H
@@ -22,6 +22,26 @@ var (
 
 func InvalidateExposedDataCache() {
 	exposedData.Store((*exposedCache)(nil))
+}
+
+// RefreshExposedDataCache 立即删除并重建 exposed 缓存
+// 用于模型数据更新后立即刷新缓存，确保下次访问时获取最新数据
+func RefreshExposedDataCache() {
+	rebuildMu.Lock()
+	defer rebuildMu.Unlock()
+
+	newData := gin.H{
+		"model_ratio":                        GetModelRatioCopy(),
+		"completion_ratio":                   GetCompletionRatioCopy(),
+		"cache_ratio":                        GetCacheRatioCopy(),
+		"model_price":                        GetModelPriceCopy(),
+		"image_model_price_per_image":        GetImageModelPricePerImageCopy(),
+		"origin_image_model_price_per_image": GetOriginImageModelPricePerImageCopy(),
+	}
+	exposedData.Store(&exposedCache{
+		data:      newData,
+		expiresAt: time.Now().Add(exposedDataTTL),
+	})
 }
 
 func cloneGinH(src gin.H) gin.H {

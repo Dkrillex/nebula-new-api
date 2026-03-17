@@ -2,6 +2,7 @@ package controller
 
 import (
 	"encoding/json"
+	"fmt"
 	"sort"
 	"strconv"
 	"strings"
@@ -9,7 +10,9 @@ import (
 	"one-api/common"
 	"one-api/constant"
 	"one-api/model"
+	"one-api/setting/ratio_setting"
 
+	"github.com/bytedance/gopkg/util/gopool"
 	"github.com/gin-gonic/gin"
 )
 
@@ -132,6 +135,7 @@ func CreateModelMeta(c *gin.Context) {
 		common.ApiError(c, err)
 		return
 	}
+	// Insert() 方法已自动失效缓存，这里保留 RefreshPricing() 作为双重保险（幂等操作）
 	model.RefreshPricing()
 	common.ApiSuccess(c, &m)
 }
@@ -156,6 +160,17 @@ func UpdateModelMeta(c *gin.Context) {
 			common.ApiError(c, err)
 			return
 		}
+		// 直接DB操作成功，异步删除并立即更新缓存
+		// 使用 recover 确保缓存更新失败不影响主业务逻辑
+		gopool.Go(func() {
+			defer func() {
+				if r := recover(); r != nil {
+					common.SysLog("failed to refresh cache after model status update: " + fmt.Sprintf("%v", r))
+				}
+			}()
+			ratio_setting.RefreshExposedDataCache()
+			model.RefreshPricing()
+		})
 	} else {
 		// 名称冲突检查
 		if dup, err := model.IsModelNameDuplicated(m.Id, m.ModelName); err != nil {
@@ -170,6 +185,7 @@ func UpdateModelMeta(c *gin.Context) {
 			common.ApiError(c, err)
 			return
 		}
+		// Update() 方法已自动失效缓存，这里保留 RefreshPricing() 作为双重保险（幂等操作）
 	}
 	model.RefreshPricing()
 	common.ApiSuccess(c, &m)
@@ -183,10 +199,14 @@ func DeleteModelMeta(c *gin.Context) {
 		common.ApiError(c, err)
 		return
 	}
-	if err := model.DB.Delete(&model.Model{}, id).Error; err != nil {
+	// 使用模型的 Delete() 方法以确保自动失效缓存
+	var m model.Model
+	m.Id = id
+	if err := m.Delete(); err != nil {
 		common.ApiError(c, err)
 		return
 	}
+	// Delete() 方法已自动失效缓存，这里保留 RefreshPricing() 作为双重保险（幂等操作）
 	model.RefreshPricing()
 	common.ApiSuccess(c, nil)
 }

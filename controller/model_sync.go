@@ -15,7 +15,9 @@ import (
 
 	"one-api/common"
 	"one-api/model"
+	"one-api/setting/ratio_setting"
 
+	"github.com/bytedance/gopkg/util/gopool"
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
 )
@@ -418,6 +420,20 @@ func SyncUpstreamModels(c *gin.Context) {
 				return nil
 			})
 		}
+	}
+
+	// 批量操作完成后，删除并立即更新相关缓存（如果有任何模型被创建或更新）
+	// 使用 recover 确保缓存更新失败不影响主业务逻辑
+	if createdModels > 0 || updatedModels > 0 {
+		gopool.Go(func() {
+			defer func() {
+				if r := recover(); r != nil {
+					common.SysLog("failed to refresh cache after model sync: " + fmt.Sprintf("%v", r))
+				}
+			}()
+			ratio_setting.RefreshExposedDataCache()
+			model.RefreshPricing()
+		})
 	}
 
 	c.JSON(http.StatusOK, gin.H{

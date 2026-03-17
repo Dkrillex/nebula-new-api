@@ -21,8 +21,9 @@ import (
 )
 
 type LoginRequest struct {
-	Username string `json:"username"`
-	Password string `json:"password"`
+	Username     string `json:"username"`
+	Password     string `json:"password"`
+	SkipOemCheck bool   `json:"skipOemCheck"`
 }
 
 func Login(c *gin.Context) {
@@ -55,11 +56,17 @@ func Login(c *gin.Context) {
 		Username: username,
 		Password: password,
 	}
-	// 从context获取OEM ID
+	// 与 Java 管理端保持一致：通过请求体字段 skipOemCheck 控制是否跳过 OEM 校验
 	var oemId *int64
-	if id, exists := c.Get(string(constant.ContextKeyOemId)); exists {
-		if idInt64, ok := id.(int64); ok {
-			oemId = &idInt64
+	if loginRequest.SkipOemCheck {
+		// 跳过 OEM 验证：不按 oem_id 过滤用户
+		oemId = nil
+	} else {
+		// 默认行为：从 context 获取 OEM ID
+		if id, exists := c.Get(string(constant.ContextKeyOemId)); exists {
+			if idInt64, ok := id.(int64); ok {
+				oemId = &idInt64
+			}
 		}
 	}
 	err = user.ValidateAndFillWithOemId(oemId)
