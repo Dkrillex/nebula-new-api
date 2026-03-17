@@ -36,6 +36,8 @@ var (
 	oemConfigCacheById map[int64]*OemConfig  // key: id
 	oemConfigCacheLock sync.RWMutex
 	oemConfigCacheTime time.Time
+	// cacheExpireDuration 统一缓存失效时间：1分钟
+	cacheExpireDuration = 1 * time.Minute
 )
 
 // InitOemConfig 初始化OEM配置缓存

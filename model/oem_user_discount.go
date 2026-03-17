@@ -62,6 +62,9 @@ func RefreshOemUserDiscountCache() {
 	oemUserDiscountCacheLock.Unlock()
 
 	common.SysLog(fmt.Sprintf("OEM用户折扣配置缓存已刷新，共 %d 条", len(discounts)))
+
+	// 刷新模型价格缓存，确保定价信息及时更新
+	RefreshPricing()
 }
 
 // GetOemUserDiscounts 获取OEM所有用户折扣配置（通过OEM ID）

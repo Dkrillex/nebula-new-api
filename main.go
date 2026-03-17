@@ -247,8 +247,14 @@ func InitResources() error {
 	// Initialize model settings after options are loaded
 	ratio_setting.InitRatioSettings()
 
+	// 设置刷新定价缓存的函数，打破循环导入
+	ratio_setting.SetRefreshPricingFunc(model.RefreshPricing)
+
 	// 初始化模型
 	model.GetPricing()
+
+	// 本地测试：若设置 SEEDREAM5_ARK_KEY 则自动插入 Seedream 5.0 渠道（仅测试用）
+	model.SeedSeedream5ChannelIfNeeded()
 
 	// Initialize SQL Database
 	err = model.InitLogDB()

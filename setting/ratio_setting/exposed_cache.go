@@ -8,7 +8,7 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-const exposedDataTTL = 30 * time.Second
+const exposedDataTTL = 30 * time.Second // 保持原有30秒失效时间
 
 type exposedCache struct {
 	data      gin.H

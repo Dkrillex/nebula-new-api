@@ -28,7 +28,7 @@ var (
 	platformCostCache     []*PlatformCost
 	platformCostCacheLock sync.RWMutex
 	platformCostCacheTime time.Time
-	cacheExpireDuration   = 1 * time.Hour
+	// 注意：cacheExpireDuration 已在 oem_config.go 中统一定义为 1 分钟
 )
 
 // InitPlatformCost 初始化平台成本配置缓存

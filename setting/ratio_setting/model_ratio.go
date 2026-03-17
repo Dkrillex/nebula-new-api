@@ -9,6 +9,14 @@ import (
 	"sync"
 )
 
+// refreshPricingFunc 用于刷新定价缓存的函数变量，由model包设置
+var refreshPricingFunc func()
+
+// SetRefreshPricingFunc 设置刷新定价缓存的函数，由model包调用
+func SetRefreshPricingFunc(fn func()) {
+	refreshPricingFunc = fn
+}
+
 // ImageTokenPricing 图像Token表定价结构
 // 用于 gpt-image-1 等特殊图像模型，支持多价格和固定Token表
 type ImageTokenPricing struct {
@@ -512,6 +520,10 @@ func UpdateModelPriceByJSONString(jsonStr string) error {
 	err := json.Unmarshal([]byte(jsonStr), &modelPriceMap)
 	if err == nil {
 		InvalidateExposedDataCache()
+		// 刷新模型价格缓存，确保定价信息及时更新
+		if refreshPricingFunc != nil {
+			refreshPricingFunc()
+		}
 	}
 	return err
 }
@@ -550,6 +562,10 @@ func UpdateModelRatioByJSONString(jsonStr string) error {
 	err := common.Unmarshal([]byte(jsonStr), &modelRatioMap)
 	if err == nil {
 		InvalidateExposedDataCache()
+		// 刷新模型价格缓存，确保定价信息及时更新
+		if refreshPricingFunc != nil {
+			refreshPricingFunc()
+		}
 	}
 	return err
 }
@@ -641,6 +657,10 @@ func UpdateCompletionRatioByJSONString(jsonStr string) error {
 	err := common.Unmarshal([]byte(jsonStr), &CompletionRatio)
 	if err == nil {
 		InvalidateExposedDataCache()
+		// 刷新模型价格缓存，确保定价信息及时更新
+		if refreshPricingFunc != nil {
+			refreshPricingFunc()
+		}
 	}
 	return err
 }
@@ -912,6 +932,10 @@ func UpdateAudioRatioByJSONString(jsonStr string) error {
 	audioRatioMap = tmp
 	audioRatioMapMutex.Unlock()
 	InvalidateExposedDataCache()
+	// 刷新模型价格缓存，确保定价信息及时更新
+	if refreshPricingFunc != nil {
+		refreshPricingFunc()
+	}
 	return nil
 }
 
@@ -944,6 +968,10 @@ func UpdateAudioCompletionRatioByJSONString(jsonStr string) error {
 	audioCompletionRatioMap = tmp
 	audioCompletionRatioMapMutex.Unlock()
 	InvalidateExposedDataCache()
+	// 刷新模型价格缓存，确保定价信息及时更新
+	if refreshPricingFunc != nil {
+		refreshPricingFunc()
+	}
 	return nil
 }
 
@@ -987,6 +1015,10 @@ func UpdateImageCompletionRatioByJSONString(jsonStr string) error {
 	imageCompletionRatioMap = tmp
 	imageCompletionRatioMapMutex.Unlock()
 	InvalidateExposedDataCache()
+	// 刷新模型价格缓存，确保定价信息及时更新
+	if refreshPricingFunc != nil {
+		refreshPricingFunc()
+	}
 	return nil
 }
 
@@ -1162,6 +1194,10 @@ func UpdateVideoModelPricePerSecondByJSONString(jsonStr string) error {
 	videoModelPricePerSecondMap, videoModelAudioPricePerSecondMap = buildVideoModelPriceCaches(rawMap)
 
 	InvalidateExposedDataCache()
+	// 刷新模型价格缓存，确保定价信息及时更新
+	if refreshPricingFunc != nil {
+		refreshPricingFunc()
+	}
 	return nil
 }
 
@@ -1691,6 +1727,10 @@ func UpdateImageTokenPricingByJSONString(jsonStr string) error {
 	err := common.Unmarshal([]byte(jsonStr), &imageTokenPricingMap)
 	if err == nil {
 		InvalidateExposedDataCache()
+		// 刷新模型价格缓存，确保定价信息及时更新
+		if refreshPricingFunc != nil {
+			refreshPricingFunc()
+		}
 	}
 	return err
 }
@@ -1820,6 +1860,10 @@ func UpdateImageModelPricePerImageByJSONString(jsonStr string) error {
 	err := common.Unmarshal([]byte(jsonStr), &imageModelPricePerImageMap)
 	if err == nil {
 		InvalidateExposedDataCache()
+		// 刷新模型价格缓存，确保定价信息及时更新
+		if refreshPricingFunc != nil {
+			refreshPricingFunc()
+		}
 	}
 	return err
 }
@@ -1938,6 +1982,10 @@ func UpdateMultiModalPricingByJSONString(jsonStr string) error {
 	err := common.Unmarshal([]byte(jsonStr), &multiModalPricingMap)
 	if err == nil {
 		InvalidateExposedDataCache()
+		// 刷新模型价格缓存，确保定价信息及时更新
+		if refreshPricingFunc != nil {
+			refreshPricingFunc()
+		}
 	}
 	return err
 }
